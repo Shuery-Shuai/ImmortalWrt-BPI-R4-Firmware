@@ -10,8 +10,27 @@
 # Description: OpenWrt DIY script part 2 (After Update feeds)
 #
 
+# Modify filogic partition
+FILE="target/linux/mediatek/image/filogic.mk"
+SCOPE_BUILD='/define Build\/mt798x-gpt/,/endef/'
+SCOPE_DEVICE='/define Device\/bananapi_bpi-r4-common/,/endef/'
+sed -i -E \
+  -e "$SCOPE_BUILD { /-N recovery[[:space:]]+-r[[:space:]]+-p /s/32M@12M/72M@12M/ }" \
+  -e "$SCOPE_BUILD { /-N install[[:space:]]+-r[[:space:]]+-p /s/44M/84M/ }" \
+  -e "$SCOPE_BUILD { /-N production[[:space:]]+-p /s/@64M/@104M/g }" \
+  -e "$SCOPE_DEVICE { /append-image-stage initramfs-recovery\.itb \| check-size /s/44m/84m/ }" \
+  -e "$SCOPE_DEVICE { s/pad-to 44M/pad-to 84M/g }" \
+  -e "$SCOPE_DEVICE { s/pad-to 45M/pad-to 85M/g }" \
+  -e "$SCOPE_DEVICE { s/pad-to 51M/pad-to 91M/g }" \
+  -e "$SCOPE_DEVICE { s/pad-to 52M/pad-to 92M/g }" \
+  -e "$SCOPE_DEVICE { s/pad-to 56M/pad-to 96M/g }" \
+  -e "$SCOPE_DEVICE { s/pad-to 64M/pad-to 104M/g }" \
+  -e "$SCOPE_DEVICE { /IMAGE_SIZE := \$\$\(shell expr /s/64/104/ }" \
+  "$FILE"
+
+
 # Modify default IP
-sed -i 's/192.168.1.1/192.168.0.1/g' package/base-files/files/bin/config_generate   # 修改默认ip
+# sed -i 's/192.168.1.1/192.168.0.1/g' package/base-files/files/bin/config_generate   # 修改默认ip
 sed -i 's/\/bin\/ash/\/bin\/bash/' package/base-files/files/etc/passwd    # 替换终端为bash
 
 sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' feeds/luci/collections/luci/Makefile   # 选择argon为默认主题
