@@ -17,4 +17,3 @@
 #echo 'src-git helloworld https://github.com/fw876/helloworld' >>feeds.conf.default
 echo 'src-git sundaqiang https://github.com/sundaqiang/openwrt-packages-backup' >>feeds.conf.default
 echo 'src-git fancontrol https://github.com/rockjake/luci-app-fancontrol.git' >>feeds.conf.default
-echo 'src-git sundaqiang_packages https://github.com/sundaqiang/openwrt-packages.git' >>feeds.conf.default
