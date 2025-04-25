@@ -1,0 +1,2 @@
+sed -i "/sundaqiang/d" /etc/apk/repositories.d/distfeeds.list
+sed -i "/fancontrol/d" /etc/apk/repositories.d/distfeeds.list
