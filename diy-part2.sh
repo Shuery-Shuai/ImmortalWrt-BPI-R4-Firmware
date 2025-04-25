@@ -11,76 +11,117 @@
 #
 
 # Modify filogic partition
-FILE="target/linux/mediatek/image/filogic.mk"
-SCOPE_BUILD='/define Build\/mt798x-gpt/,/endef/'
-SCOPE_DEVICE='/define Device\/bananapi_bpi-r4-common/,/endef/'
+PARTITION_FILE="target/linux/mediatek/image/filogic.mk"
+printf "Modifying $PARTITION_FILE...\n"
+SCOPE_BUILD_START='^define\sBuild\/mt798x-gpt'
+SCOPE_BUILD_END='^endef'
+SCOPE_DEVICE_START='^define\sDevice\/bananapi_bpi-r4-common'
+SCOPE_DEVICE_END='^endef'
 sed -i -E \
-  -e "$SCOPE_BUILD { /-N recovery[[:space:]]+-r[[:space:]]+-p /s/32M@12M/72M@12M/ }" \
-  -e "$SCOPE_BUILD { /-N install[[:space:]]+-r[[:space:]]+-p /s/44M/84M/ }" \
-  -e "$SCOPE_BUILD { /-N production[[:space:]]+-p /s/@64M/@104M/g }" \
-  -e "$SCOPE_DEVICE { /append-image-stage initramfs-recovery\.itb \| check-size /s/44m/84m/ }" \
-  -e "$SCOPE_DEVICE { s/pad-to 44M/pad-to 84M/g }" \
-  -e "$SCOPE_DEVICE { s/pad-to 45M/pad-to 85M/g }" \
-  -e "$SCOPE_DEVICE { s/pad-to 51M/pad-to 91M/g }" \
-  -e "$SCOPE_DEVICE { s/pad-to 52M/pad-to 92M/g }" \
-  -e "$SCOPE_DEVICE { s/pad-to 56M/pad-to 96M/g }" \
-  -e "$SCOPE_DEVICE { s/pad-to 64M/pad-to 104M/g }" \
-  -e "$SCOPE_DEVICE { /IMAGE_SIZE := \$\$\(shell expr /s/64/104/ }" \
-  "$FILE"
+  -e "/$SCOPE_BUILD_START/,/$SCOPE_BUILD_END/ {
+       # 修改分区表
+       /recovery/s/32M@/72M@/
+       /install/s/@44M/@84M/
+       /production/s/@64M/@104M/
+     }" \
+  -e "/$SCOPE_DEVICE_START/,/$SCOPE_DEVICE_END/ {
+       # 修改分区大小
+       /append-image-stage\s+initramfs-recovery\.itb/s/44m/84m/
+       /mt7988-bl2\s+spim-nand-ubi-comb/s/44M/84M/
+       /mt7988-bl31-uboot\s+.*-snand/s/45M/85M/
+       /mt7988-bl2\s+emmc-comb/s/51M/91M/
+       /mt7988-bl31-uboot\s+.*-emmc/s/52M/92M/
+       /mt798x-gpt\s+emmc/s/56M/96M/
+       /append-image\s+squashfs-sysupgrade\.itb/s/64M/104M/
+       /IMAGE_SIZE/s/64/104/
+     }" \
+  "$PARTITION_FILE"
+printf "Done. Result:\n"
+scope_grep() {
+  local file=$1
+  local start=$2
+  local end=$3
+  local patterns=$4
+  echo "━━━━━━━━━━━━━━━━━━━━ Partition info from $start to $end ━━━━━━━━━━━━━━━━━━━━"
+  sed -n -e "/$start/,/$end/p" "$file" | grep -E --color=always "$patterns"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+}
+scope_grep "$PARTITION_FILE" "$SCOPE_BUILD_START" "$SCOPE_BUILD_END" \
+  'recovery|install|production'
+scope_grep "$PARTITION_FILE" "$SCOPE_DEVICE_START" "$SCOPE_DEVICE_END" \
+  'append-image-stage\s+initramfs-recovery\.itb|mt7988-bl2\s+spim-nand-ubi-comb|mt7988-bl31-uboot\s+.*-snand|mt7988-bl2\s+emmc-comb|mt7988-bl31-uboot\s+.*-emmc|mt798x-gpt\s+emmc|append-image\s+squashfs-sysupgrade\.itb|IMAGE_SIZE'
 
+# Modify IP
+sed -i 's/192.168.1.1/192.168.0.1/g' package/base-files/files/bin/config_generate
 
-# Modify default IP
-# sed -i 's/192.168.1.1/192.168.0.1/g' package/base-files/files/bin/config_generate   # 修改默认ip
-sed -i 's/\/bin\/ash/\/bin\/bash/' package/base-files/files/etc/passwd    # 替换终端为bash
+# Modify shell to bash
+sed -i 's/\/bin\/ash/\/bin\/bash/' package/base-files/files/etc/passwd
 
-sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' feeds/luci/collections/luci/Makefile   # 选择argon为默认主题
-sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' feeds/luci/collections/luci-light/Makefile   # 选择argon为默认主题
-sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' feeds/luci/collections/luci-nginx/Makefile   # 选择argon为默认主题
-sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' feeds/luci/collections/luci-ssl-nginx/Makefile   # 选择argon为默认主题
-sed -i 's/+uhttpd +uhttpd-mod-ubus //g' feeds/luci/collections/luci/Makefile    # 删除uhttpd
-sed -i '/CYXluq4wUazHjmCDBCqXF/d' package/lean/default-settings/files/zzz-default-settings    # 设置密码为空
-# sed -i 's/PATCHVER:=5.10/PATCHVER:=5.15/g' target/linux/x86/Makefile   # x86机型,默认内核5.10，修改内核为5.15
-# rm -rf feeds/packages/utils/runc/Makefile   # 临时删除run1.0.3
-# svn export https://github.com/openwrt/packages/trunk/utils/runc/Makefile feeds/packages/utils/runc/Makefile   # 添加runc1.0.2
-git clone --depth 1 https://github.com/vernesong/OpenClash package/luci-app-openclash
-rm -rf feeds/luci/themes/luci-theme-argon    # 删除自带argon
-git clone -b master https://github.com/jerrykuku/luci-theme-argon.git feeds/luci/themes/luci-theme-argon    # 替换新版argon
-# 调整argon登录框为居中
-sed -i "/.login-page {/i\\
-.login-container {\n\
-  margin: auto;\n\
-  height: 420px\!important;\n\
-  min-height: 420px\!important;\n\
-  left: 0;\n\
-  right: 0;\n\
-  bottom: 0;\n\
-  margin-left: auto\!important;\n\
-  border-radius: 15px;\n\
-  width: 350px\!important;\n\
-}\n\
-.login-form {\n\
-  background-color: rgba(255, 255, 255, 0)\!important;\n\
-  border-radius: 15px;\n\
-}\n\
-.login-form .brand {\n\
-  margin: 15px auto\!important;\n\
-}\n\
-.login-form .form-login {\n\
-    padding: 10px 50px\!important;\n\
-}\n\
-.login-form .errorbox {\n\
-  padding: 10px\!important;\n\
-}\n\
-.login-form .cbi-button-apply {\n\
-  margin: 15px auto\!important;\n\
-}\n\
-.input-group {\n\
-  margin-bottom: 1rem\!important;\n\
-}\n\
-.input-group input {\n\
-  margin-bottom: 0\!important;\n\
-}\n\
-.ftc {\n\
-  bottom: 0\!important;\n\
-}" feeds/luci/themes/luci-theme-argon/htdocs/luci-static/argon/css/cascade.css
-sed -i "s/margin-left: 0rem \!important;/margin-left: auto\!important;/g" feeds/luci/themes/luci-theme-argon/htdocs/luci-static/argon/css/cascade.css
+# Modify password to empty
+# sed -i '/CYXluq4wUazHjmCDBCqXF/d' package/lean/default-settings/files/zzz-default-setting
+
+# Change to official master source of applications including luci-app-openclash and luci-theme-argon
+rm -rf feeds/luci/applications/luci-app-openclash
+rm -rf feeds/luci/themes/luci-theme-argon
+clone_repo() {
+  local repo=$1 target=$2
+  printf "Cloning $repo to $target...\n"
+  for i in {1..3}; do
+    git clone --depth 1 -b master "$repo" "$target" && break || {
+      echo "Clone attempt $i failed, retrying..."
+      sleep $((i * 2))
+      rm -rf "$target"
+    }
+  done
+}
+clone_repo https://github.com/vernesong/OpenClash \
+  feeds/luci/applications/luci-app-openclash
+clone_repo https://github.com/jerrykuku/luci-theme-argon.git \
+  feeds/luci/themes/luci-theme-argon
+
+replace_collections() {
+  local -n _replacements=$1
+  local file pattern escaped_pattern escaped_replacement
+  local -a sed_script
+  for pattern in "${!_replacements[@]}"; do
+    escaped_pattern=$(sed 's/[\/&]/\\&/g' <<<"$pattern")
+    escaped_replacement=$(sed 's/[\/&]/\\&/g' <<<"${_replacements[$pattern]}")
+    sed_script+=("-e" "s/${escaped_pattern}/${escaped_replacement}/g")
+  done
+  for file in feeds/luci/collections/*/Makefile; do
+    [[ -e "$file" ]] || continue # 跳过不存在的文件
+    printf "Modifying %s...\n" "$file"
+    sed -i "${sed_script[@]}" "$file"
+  done
+}
+declare -A replacements=(
+  ["luci-theme-bootstrap"]="luci-theme-argon"
+  ["+uhttpd +uhttpd-mod-ubus"]=""
+)
+replace_collections replacements
+
+# Modify Argon login page from float left to center
+THEME_CSS_FILE="feeds/luci/themes/luci-theme-argon/htdocs/luci-static/argon/css/cascade.css"
+printf "Modifying $THEME_CSS_FILE...\n"
+sed -i -E '
+# 修改 .login-page .login-container 下的属性
+s/(\.login-page \.login-container)\s*\{([^}]*)\}/{\2; height:420px !important; margin:auto !important; top:0; bottom:0; left:0; right:0; min-height:420px !important; width:350px !important; border-radius:15px; }/;
+# 修改 .login-form 背景和圆角
+s/(\.login-page \.login-container \.login-form)\s*\{([^}]*)\}/{\2; border-radius:15px; background-color:rgba(255,255,255,0) !important; }/;
+# 修改 .brand 的 margin
+s/(\.login-page \.login-container \.login-form \.brand)\s*\{([^}]*)\}/{\2; margin:15px auto !important; }/;
+# 修改 .form-login 的 padding
+s/(\.login-page \.login-container \.login-form \.form-login)\s*\{([^}]*)\}/{\2; padding:10px 50px !important; }/;
+# 修改 .errorbox 的 padding
+s/(\.login-page \.login-container \.login-form \.form-login \.errorbox)\s*\{([^}]*)\}/{\2; padding:10px !important; }/;
+# 修改 .cbi-button-apply 的 margin
+s/(\.login-page \.login-container \.login-form \.cbi-button-apply)\s*\{([^}]*)\}/{\2; margin:15px auto !important; }/;
+# 修改 .input-group 的 margin-bottom
+s/(\.login-page \.login-container \.login-form \.form-login \.input-group)\s*\{([^}]*)\}/{\2; margin-bottom:1rem !important; }/;
+# 修改 input 的 margin
+s/(\.login-page \.login-container \.login-form \.form-login \.input-group input)\s*\{([^}]*)\}/{\2; margin-bottom:0 !important; }/;
+# 修改 footer .ftc 的 bottom
+s/(\.login-page \.login-container footer \.ftc)\s*\{([^}]*)\}/{\2; bottom:0 !important; }/;
+# 全局替换 margin-left
+s/margin-left:\s*0rem\s*!important/margin-left:auto !important/g;
+' $THEME_CSS_FILE
