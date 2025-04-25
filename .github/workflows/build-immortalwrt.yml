@@ -8,7 +8,7 @@
 # Description: Build OpenWrt using GitHub Actions
 #
 
-name: Build OpenWrt
+name: Build ImmortalWrt
 
 on:
   repository_dispatch:
@@ -32,7 +32,7 @@ env:
   DIY_P2_SH: diy-part2.sh
   UPLOAD_BIN_DIR: false
   UPLOAD_FIRMWARE: true
-  UPLOAD_COWTRANSFER: true
+  UPLOAD_COWTRANSFER: false
   UPLOAD_WETRANSFER: false
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
@@ -118,43 +118,35 @@ jobs:
       working-directory: ./
       run: |
         df -hT $PWD
-        git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
+        git clone --depth 1 $REPO_URL -b $REPO_BRANCH immortalwrt
         
     - name: cache
       if: github.event.inputs.cache == 'true' && github.event.inputs.cache != 'false'
       uses: klever1988/cachewrtbuild@main
       with:
         ccache: 'true'
-        prefix: ${{ github.workspace }}/openwrt
+        prefix: ${{ github.workspace }}/immortalwrt
         
     - name: Load custom feeds
       run: |
-        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF immortalwrt/feeds.conf.default
         chmod +x $DIY_P1_SH
-        cd openwrt
+        cd immortalwrt
         $GITHUB_WORKSPACE/$DIY_P1_SH
         
     - name: Update feeds
-      run: cd openwrt && ./scripts/feeds update -a
+      run: cd immortalwrt && ./scripts/feeds update -a
       
     - name: Install feeds
-      run: cd openwrt && ./scripts/feeds install -a -f
+      run: cd immortalwrt && ./scripts/feeds install -a -f
 
     - name: ImmortalWrt AutoUpdate
       run: |
         TEMP=$(date +"ImmortalWrt_%Y%m%d_%H%M%S_")$(git rev-parse --short HEAD)
         echo "RELEASE_TAG=$TEMP" >> $GITHUB_ENV
-        #required>>add "DISTRIB_GITHUB" to "zzz-default-settings"
-        mkdir -p openwrt/files/etc/uci-defaults
-        touch openwrt/files/etc/uci-defaults/99-release-info
-        # sed -i "/DISTRIB_DESCRIPTION=/a\sed -i '/DISTRIB_GITHUB/d' /etc/openwrt_release" openwrt/package/lean/default-settings/files/zzz-default-settings
-        # sed -i "/DISTRIB_GITHUB/a\echo \"DISTRIB_GITHUB=\'https://github.com/${{github.repository}}\'\" >> /etc/openwrt_release" openwrt/package/lean/default-settings/files/zzz-default-settings
-        #required>>add "DISTRIB_VERSIONS" to "zzz-default-settings"
-        # sed -i "/DISTRIB_DESCRIPTION=/a\sed -i '/DISTRIB_VERSIONS/d' /etc/openwrt_release" openwrt/package/lean/default-settings/files/zzz-default-settings
-        # sed -i "/DISTRIB_VERSIONS/a\echo \"DISTRIB_VERSIONS=\'${TEMP:8}\'\" >> /etc/openwrt_release" openwrt/package/lean/default-settings/files/zzz-default-settings
-        #nonessential>>add "github.actor" to "DISTRIB_DESCRIPTION" in "zzz-default-settings"
-        # sed -i "s/OpenWrt /${{github.actor}} compiled (${TEMP:8}) \/ OpenWrt /g" openwrt/package/lean/default-settings/files/zzz-default-settings
-        cat > openwrt/files/etc/uci-defaults/99-release-info << EOF
+        mkdir -p immortalwrt/files/etc/uci-defaults
+        touch immortalwrt/files/etc/uci-defaults/99-release-info
+        cat > immortalwrt/files/etc/uci-defaults/99-release-info << EOF
         #!/bin/sh
         sed -i '/DISTRIB_GITHUB/d; /DISTRIB_VERSIONS/d' /etc/openwrt_release
         echo "DISTRIB_GITHUB='https://github.com/${{github.repository}}'" >> /etc/openwrt_release
@@ -164,12 +156,11 @@ jobs:
 
     - name: Load custom configuration
       run: |
-        [ -e files ] && mv files openwrt/files
-        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+        [ -e files ] && mv files immortalwrt/files
+        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE immortalwrt/.config
         chmod +x $DIY_P2_SH
-        cd openwrt
+        cd immortalwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
-        # cat package/lean/default-settings/files/zzz-default-settings
         
     - name: SSH connection to Actions
       uses: P3TERX/ssh2actions@v1.0.0
@@ -181,7 +172,7 @@ jobs:
     - name: Download package
       id: package
       run: |
-        cd openwrt
+        cd immortalwrt
         make defconfig
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
@@ -190,7 +181,7 @@ jobs:
     - name: Compile the firmware
       id: compile
       run: |
-        cd openwrt
+        cd immortalwrt
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 || make -j1 V=s
         echo "::set-output name=status::success"
@@ -206,14 +197,14 @@ jobs:
       uses: actions/upload-artifact@main
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true' && !cancelled()
       with:
-        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-        path: openwrt/bin
+        name: ImmortalWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: immortalwrt/bin
         
     - name: Get environment path
       id: environment
       if: env.UPLOAD_BIN_DIR == 'true' && !cancelled()
       run: |
-        cd openwrt/bin/
+        cd immortalwrt/bin/
         echo "WORKSPACE_DIR=$PWD" >> $GITHUB_ENV
         cd  targets/*/*
         echo "UPLOAD_PATH=$PWD" >> $GITHUB_ENV
@@ -226,7 +217,7 @@ jobs:
         type: tar
         path: packages/
         directory: ${{ env.UPLOAD_PATH }}/
-        filename: ${{ env.UPLOAD_PATH }}/OpenWrt_firmware_kernel_packages${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}.tar.gz
+        filename: ${{ env.UPLOAD_PATH }}/ImmortalWrt_firmware_kernel_packages${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}.tar.gz
         
     - name: Compressed firmware packages
       uses: thedoctor0/zip-release@master
@@ -235,13 +226,13 @@ jobs:
         type: tar
         path: packages/
         directory: ${{ env.WORKSPACE_DIR }}/
-        filename: ${{ env.UPLOAD_PATH }}/OpenWrt_firmware_packages${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}.tar.gz
+        filename: ${{ env.UPLOAD_PATH }}/ImmortalWrt_firmware_packages${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}.tar.gz
         
     - name: Organize files
       id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && steps.compile.outputs.status == 'success' && !cancelled()
       run: |
-        cd openwrt/bin/targets/*/*
+        cd immortalwrt/bin/targets/*/*
         rm -rf packages
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "::set-output name=status::success"
@@ -250,7 +241,7 @@ jobs:
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
-        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        name: ImmortalWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
 
     - name: Upload firmware to cowtransfer
