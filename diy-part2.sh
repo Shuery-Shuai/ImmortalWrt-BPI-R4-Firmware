@@ -10,6 +10,9 @@
 # Description: OpenWrt DIY script part 2 (After Update feeds)
 #
 
+# Clone custom packages
+git clone --depth 1 https://github.com/zhanghua000/luci-app-nginx package/luci-app-nginx 
+
 # Modify filogic partition
 PARTITION_FILE="target/linux/mediatek/image/filogic.mk"
 printf "Modifying $PARTITION_FILE...\n"
