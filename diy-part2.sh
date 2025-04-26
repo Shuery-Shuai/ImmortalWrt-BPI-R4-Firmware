@@ -11,7 +11,7 @@
 #
 
 # Clone custom packages
-git clone --depth 1 https://github.com/zhanghua000/luci-app-nginx package/luci-app-nginx 
+git clone --depth 1 https://github.com/zhanghua000/luci-app-nginx package/luci-app-nginx
 
 # Modify filogic partition
 PARTITION_FILE="target/linux/mediatek/image/filogic.mk"
@@ -62,6 +62,22 @@ sed -i 's/\/bin\/ash/\/bin\/bash/' package/base-files/files/etc/passwd
 
 # Modify password to empty
 # sed -i '/CYXluq4wUazHjmCDBCqXF/d' package/lean/default-settings/files/zzz-default-setting
+
+# Add distfeeds.list
+DISTFEEDSLIST_FILE="package/base-files/files/etc/apk/repositories.d/distfeeds.list"
+printf "Adding $DISTFEEDSLIST_FILE...\n"
+mkdir -p "$(dirname "$DISTFEEDSLIST_FILE")"
+touch "$DISTFEEDSLIST_FILE"
+cat <<EOF >"$DISTFEEDSLIST_FILE"
+https://downloads.immortalwrt.org/snapshots/targets/mediatek/filogic/packages/packages.adb
+https://downloads.immortalwrt.org/snapshots/targets/mediatek/filogic/kmods/6.6.69-1-3473b6e8d4b8e52c8a162605aece30af/packages.adb
+https://downloads.immortalwrt.org/snapshots/packages/aarch64_cortex-a53/base/packages.adb
+https://downloads.immortalwrt.org/snapshots/packages/aarch64_cortex-a53/luci/packages.adb
+https://downloads.immortalwrt.org/snapshots/packages/aarch64_cortex-a53/packages/packages.adb
+https://downloads.immortalwrt.org/snapshots/packages/aarch64_cortex-a53/routing/packages.adb
+https://downloads.immortalwrt.org/snapshots/packages/aarch64_cortex-a53/telephony/packages.adb
+https://downloads.immortalwrt.org/snapshots/packages/aarch64_cortex-a53/video/packages.adb
+EOF
 
 # Change to official master source of applications including luci-app-openclash and luci-theme-argon
 rm -rf feeds/luci/applications/luci-app-openclash
