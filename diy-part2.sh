@@ -125,3 +125,21 @@ s/(\.login-page \.login-container footer \.ftc)\s*\{([^}]*)\}/{\2; bottom:0 !imp
 # 全局替换 margin-left
 s/margin-left:\s*0rem\s*!important/margin-left:auto !important/g;
 ' $THEME_CSS_FILE
+
+# Modify easyupdate.sh to support ImmortalWrt
+EASYUPDATE_FILE="feeds/sundaqiang/luci/applications/luci-app-easyupdate/root/usr/bin/easyupdate.sh"
+printf "Modifying %s...\n" "$EASYUPDATE_FILE"
+# 修改 OpenWrt 为 ImmortalWrt
+# 修改 fileName 截取范围
+# 修改 suffix 为 squashfs-sysupgrade.itb
+sed -i -E \
+  -e '/curl|filename/s/OpenWrt/ImmortalWrt/g' \
+  -e '/curl|filename/s/openwrt/immortalwrt/g' \
+  -e '/curl|filename/s/Openwrt/Immortalwrt/g' \
+  -e '/file[Nn]ame/s/\[7\]/\[11\]/g' \
+  -e '/file[Nn]ame/s/0:7/0:11/g' \
+  -e '/Check\s+whether\s+EFI\s+firmware/,/^\s+fi/ {
+      /^\s+fi/a\  suffix="squashfs-sysupgrade.itb"
+      s/^/#/
+    }' \
+  "$EASYUPDATE_FILE"
