@@ -103,28 +103,60 @@ replace_collections replacements
 # Modify Argon login page from float left to center
 THEME_CSS_FILE="feeds/luci/themes/luci-theme-argon/htdocs/luci-static/argon/css/cascade.css"
 printf "Modifying $THEME_CSS_FILE...\n"
-sed -i -E '
-# 修改 .login-page .login-container 下的属性
-s/(\.login-page \.login-container)\s*\{([^}]*)\}/{\2; height:420px !important; margin:auto !important; top:0; bottom:0; left:0; right:0; min-height:420px !important; width:350px !important; border-radius:15px; }/;
-# 修改 .login-form 背景和圆角
-s/(\.login-page \.login-container \.login-form)\s*\{([^}]*)\}/{\2; border-radius:15px; background-color:rgba(255,255,255,0) !important; }/;
-# 修改 .brand 的 margin
-s/(\.login-page \.login-container \.login-form \.brand)\s*\{([^}]*)\}/{\2; margin:15px auto !important; }/;
-# 修改 .form-login 的 padding
-s/(\.login-page \.login-container \.login-form \.form-login)\s*\{([^}]*)\}/{\2; padding:10px 50px !important; }/;
-# 修改 .errorbox 的 padding
-s/(\.login-page \.login-container \.login-form \.form-login \.errorbox)\s*\{([^}]*)\}/{\2; padding:10px !important; }/;
-# 修改 .cbi-button-apply 的 margin
-s/(\.login-page \.login-container \.login-form \.cbi-button-apply)\s*\{([^}]*)\}/{\2; margin:15px auto !important; }/;
-# 修改 .input-group 的 margin-bottom
-s/(\.login-page \.login-container \.login-form \.form-login \.input-group)\s*\{([^}]*)\}/{\2; margin-bottom:1rem !important; }/;
-# 修改 input 的 margin
-s/(\.login-page \.login-container \.login-form \.form-login \.input-group input)\s*\{([^}]*)\}/{\2; margin-bottom:0 !important; }/;
-# 修改 footer .ftc 的 bottom
-s/(\.login-page \.login-container footer \.ftc)\s*\{([^}]*)\}/{\2; bottom:0 !important; }/;
-# 全局替换 margin-left
-s/margin-left:\s*0rem\s*!important/margin-left:auto !important/g;
-' $THEME_CSS_FILE
+awk -i inplace -v RS='}' '
+  # 主容器样式修改
+  $0 ~ /\.login-page\s+\.login-container\s*\{/ {
+    # 替换属性
+    gsub(/height:\s*100%;?/, "height:420px;");
+    gsub(/margin-left:\s*4\.5rem;?/, "margin:auto;");
+    gsub(/top:\s*0;?/, "top:0; bottom:0; left:0; right:0;");
+    gsub(/min-height:\s*100%;?/, "min-height:420px;");
+    gsub(/width:\s*420px;?/, "width:350px;");
+    gsub(/box-shadow/, "border-radius:15px; box-shadow");
+    gsub(/margin-left:\s*5%;?/, "margin-left:auto;");
+  }
+  # 登录表单背景和圆角
+  $0 ~ /\.login-page\s+\.login-container\s+\.login-form\s*\{/ {
+    gsub(/background-color:\s*#fff;?/, "background-color:rgba(255,255,255,0);");
+    if (!/border-radius/) {
+      sub(/\{/, "{ border-radius:15px; ");
+    }
+  }
+  # 品牌标志边距
+  $0 ~ /\.login-page\s+\.login-container\s+\.login-form\s+\.brand\s*\{/ {
+    gsub(/margin:\s*50px\s+auto\s+100px\s+50px;?/, "margin:15px auto;");
+  }
+  # 表单内边距
+  $0 ~ /\.login-page\s+\.login-container\s+\.login-form\s+\.form-login\s*\{/ {
+    gsub(/padding:\s*20px\s+50px;?/, "padding:10px 50px;");
+  }
+  # 错误框样式
+  $0 ~ /\.login-page\s+\.login-container\s+\.login-form\s+\.form-login\s+\.errorbox\s*\{/ {
+    gsub(/padding-bottom:\s*2rem;?/, "padding:10px;");
+  }
+  # 按钮边距
+  $0 ~ /\.login-page\s+\.login-container\s+\.login-form\s+\.cbi-button-apply\s*\{/ {
+    gsub(/margin:\s*30px\s+0px\s+100px;?/, "margin:15px auto;");
+  }
+  # 输入组边距
+  $0 ~ /\.login-page\s+\.login-container\s+\.login-form\s+\.form-login\s+\.input-group\s*\{/ {
+    gsub(/margin-bottom:\s*1\.25rem;?/, "margin-bottom:1rem;");
+  }
+  # 输入框边距修正
+  $0 ~ /\.login-page\s+\.login-container\s+\.login-form\s+\.form-login\s+\.input-group input\s*\{/ {
+    gsub(/margin:\s*[0|.]825rem\s+0;?/, "margin-bottom:0;");
+  }
+  # 页脚位置
+  $0 ~ /\.login-page\s+\.login-container\s+footer\s+\.ftc\s*\{/ {
+    gsub(/bottom:\s*30px;?/, "bottom:0;");
+  }
+  # 全局替换 margin-left:0rem
+  {
+    gsub(/margin-left:\s*0rem\s*!important/, "margin-left:auto !important");
+  }
+  # 输出修改后的内容并补回 }
+  { print $0 RT }
+' "$THEME_CSS_FILE"
 
 # Modify easyupdate.sh to support ImmortalWrt
 EASYUPDATE_FILE="feeds/sundaqiang/luci/applications/luci-app-easyupdate/root/usr/bin/easyupdate.sh"
