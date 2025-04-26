@@ -172,8 +172,11 @@ sed -i -E \
   -e '/curl|filename/s/openwrt/immortalwrt/g' \
   -e '/curl|filename/s/Openwrt/Immortalwrt/g' \
   -e '/file[Nn]ame/s/0:7/0:11/g' \
-  -e '/Check\s+whether\s+EFI\s+firmware/,/^\s+fi/ {
+  -e '/Check\s+whether\s+EFI\s+firmware/,/^\s*fi/ {
       /^\s+fi/a\  suffix="squashfs-sysupgrade.itb"
       s/^/#/
+    }' \
+  -e '/^\s*function\s+checkSha/,/^\s*\}/ {
+      s/img\.gz/\itb/
     }' \
   "$EASYUPDATE_FILE"
