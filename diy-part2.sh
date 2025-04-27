@@ -126,11 +126,11 @@ awk -i inplace -v RS='}' '
   # 主容器样式修改
   $0 ~ /\.login-page\s+\.login-container\s*\{/ {
     # 替换属性
-    gsub(/height:\s*100%;?/, "height:420px;");
+    gsub(/height:\s*100%;?/, "height:400px;");
     gsub(/margin-left:\s*4\.5rem;?/, "margin:auto;");
     gsub(/top:\s*0;?/, "top:0; bottom:0; left:0; right:0;");
-    gsub(/min-height:\s*100%;?/, "min-height:420px;");
-    gsub(/width:\s*420px;?/, "width:350px;");
+    gsub(/min-height:\s*100%;?/, "min-height:400px;");
+    gsub(/width:\s*420px;?/, "width:400px;");
     gsub(/box-shadow/, "border-radius:15px; box-shadow");
     gsub(/margin-left:\s*5%;?/, "margin-left:auto;");
   }
