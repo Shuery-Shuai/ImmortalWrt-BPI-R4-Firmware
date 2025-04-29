@@ -23,20 +23,20 @@ SCOPE_DEVICE_END='^endef'
 sed -i -E \
   -e "/$SCOPE_BUILD_START/,/$SCOPE_BUILD_END/ {
        # 修改分区表
-       /recovery/s/32M@/72M@/
-       /install/s/@44M/@84M/
-       /production/s/@64M/@104M/
+       /recovery/s/32M@/82M@/
+       /install/s/@44M/@94M/
+       /production/s/@64M/@114M/
      }" \
   -e "/$SCOPE_DEVICE_START/,/$SCOPE_DEVICE_END/ {
        # 修改分区大小
-       /append-image-stage\s+initramfs-recovery\.itb/s/44m/84m/
-       /mt7988-bl2\s+spim-nand-ubi-comb/s/44M/84M/
-       /mt7988-bl31-uboot\s+.*-snand/s/45M/85M/
-       /mt7988-bl2\s+emmc-comb/s/51M/91M/
-       /mt7988-bl31-uboot\s+.*-emmc/s/52M/92M/
-       /mt798x-gpt\s+emmc/s/56M/96M/
-       /append-image\s+squashfs-sysupgrade\.itb/s/64M/104M/
-       /IMAGE_SIZE/s/64/104/
+       /append-image-stage\s+initramfs-recovery\.itb/s/44m/94m/
+       /mt7988-bl2\s+spim-nand-ubi-comb/s/44M/94M/
+       /mt7988-bl31-uboot\s+.*-snand/s/45M/95M/
+       /mt7988-bl2\s+emmc-comb/s/51M/101M/
+       /mt7988-bl31-uboot\s+.*-emmc/s/52M/102M/
+       /mt798x-gpt\s+emmc/s/56M/106M/
+       /append-image\s+squashfs-sysupgrade\.itb/s/64M/114M/
+       /IMAGE_SIZE/s/64/114/
      }" \
   "$PARTITION_FILE"
 printf "Done. Result:\n"
