@@ -8,10 +8,7 @@
 # https://github.com/P3TERX/Actions-OpenWrt
 # File name: diy-part2.sh
 # Description: OpenWrt DIY script part 2 (After Update feeds)
-#
-
-# Clone custom packages
-git clone --depth 1 https://github.com/zhanghua000/luci-app-nginx package/luci-app-nginx 
+# 
 
 # Modify filogic partition
 PARTITION_FILE="target/linux/mediatek/image/filogic.mk"
@@ -63,24 +60,29 @@ sed -i 's/\/bin\/ash/\/bin\/bash/' package/base-files/files/etc/passwd
 # Modify password to empty
 # sed -i '/CYXluq4wUazHjmCDBCqXF/d' package/lean/default-settings/files/zzz-default-setting
 
-# Change to official master source of applications including luci-app-openclash and luci-theme-argon
-rm -rf feeds/luci/applications/luci-app-openclash
-rm -rf feeds/luci/themes/luci-theme-argon
 clone_repo() {
-  local repo=$1 target=$2
-  printf "Cloning $repo to $target...\n"
+  local repo=$1 branch=$2 target=$3
+  printf "Cloning $repo $branch to $target...\n"
   for i in {1..3}; do
-    git clone --depth 1 -b master "$repo" "$target" && break || {
+    git clone --depth 1 -b $branch "$repo" "$target" && break || {
       echo "Clone attempt $i failed, retrying..."
       sleep $((i * 2))
       rm -rf "$target"
     }
   done
 }
-clone_repo https://github.com/vernesong/OpenClash \
+
+# Change to official custom branch source of applications including luci-app-openclash and luci-theme-argon
+rm -rf feeds/luci/applications/luci-app-openclash
+rm -rf feeds/luci/themes/luci-theme-argon
+clone_repo https://github.com/vernesong/OpenClash dev \
   feeds/luci/applications/luci-app-openclash
-clone_repo https://github.com/jerrykuku/luci-theme-argon.git \
+clone_repo https://github.com/jerrykuku/luci-theme-argon.git dev \
   feeds/luci/themes/luci-theme-argon
+
+# Clone custom packages
+clone_repo https://github.com/zhanghua000/luci-app-nginx master \
+  package/luci-app-nginx 
 
 replace_collections() {
   local -n _replacements=$1
