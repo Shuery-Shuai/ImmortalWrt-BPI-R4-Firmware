@@ -23,20 +23,20 @@ SCOPE_DEVICE_END='^endef'
 sed -i -E \
   -e "/$SCOPE_BUILD_START/,/$SCOPE_BUILD_END/ {
        # 修改分区表
-       /recovery/s/32M@/82M@/
-       /install/s/@44M/@94M/
-       /production/s/@64M/@114M/
+       /recovery/s/32M@/102M@/
+       /install/s/@44M/@114M/
+       /production/s/@64M/@134M/
      }" \
   -e "/$SCOPE_DEVICE_START/,/$SCOPE_DEVICE_END/ {
        # 修改分区大小
-       /append-image-stage\s+initramfs-recovery\.itb/s/44m/94m/
-       /mt7988-bl2\s+spim-nand-ubi-comb/s/44M/94M/
-       /mt7988-bl31-uboot\s+.*-snand/s/45M/95M/
-       /mt7988-bl2\s+emmc-comb/s/51M/101M/
-       /mt7988-bl31-uboot\s+.*-emmc/s/52M/102M/
+       /append-image-stage\s+initramfs-recovery\.itb/s/44m/114m/
+       /mt7988-bl2\s+spim-nand-ubi-comb/s/44M/114M/
+       /mt7988-bl31-uboot\s+.*-snand/s/45M/115M/
+       /mt7988-bl2\s+emmc-comb/s/51M/121M/
+       /mt7988-bl31-uboot\s+.*-emmc/s/52M/122M/
        /mt798x-gpt\s+emmc/s/56M/106M/
-       /append-image\s+squashfs-sysupgrade\.itb/s/64M/114M/
-       /IMAGE_SIZE/s/64/114/
+       /append-image\s+squashfs-sysupgrade\.itb/s/64M/134M/
+       /IMAGE_SIZE/s/64/134/
      }" \
   "$PARTITION_FILE"
 printf "Done. Result:\n"
