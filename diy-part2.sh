@@ -82,7 +82,11 @@ clone_repo https://github.com/jerrykuku/luci-theme-argon.git dev \
 
 # Clone custom packages
 clone_repo https://github.com/zhanghua000/luci-app-nginx master \
-  package/luci-app-nginx 
+  package/luci-app-nginx
+clone_repo https://github.com/sundaqiang/openwrt-packages-backup main \
+  package/sundaqiang
+clone_repo https://github.com/rockjake/luci-app-fancontrol.git main \
+  package/fancontrol
 
 replace_collections() {
   local -n _replacements=$1
@@ -106,7 +110,8 @@ declare -A replacements=(
 replace_collections replacements
 
 # Modify Argon login page from float left to center
-THEME_CSS_FILE="feeds/luci/themes/luci-theme-argon/htdocs/luci-static/argon/css/cascade.css"
+# THEME_CSS_FILE="feeds/luci/themes/luci-theme-argon/htdocs/luci-static/argon/css/cascade.css"
+THEME_CSS_FILE="feeds/luci/themes/luci-theme-argon/htdocs/luci-static/argon/css/style.css"
 printf "Modifying $THEME_CSS_FILE...\n"
 awk -i inplace -v RS='}' '
   # 主容器样式修改
@@ -164,7 +169,7 @@ awk -i inplace -v RS='}' '
 ' "$THEME_CSS_FILE"
 
 # Modify easyupdate.sh to support ImmortalWrt
-EASYUPDATE_FILE="feeds/sundaqiang/luci/applications/luci-app-easyupdate/root/usr/bin/easyupdate.sh"
+EASYUPDATE_FILE="package/sundaqiang/luci/applications/luci-app-easyupdate/root/usr/bin/easyupdate.sh"
 printf "Modifying %s...\n" "$EASYUPDATE_FILE"
 # 修改 OpenWrt 为 ImmortalWrt
 # 修改 fileName 截取范围
