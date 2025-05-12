@@ -77,7 +77,7 @@ rm -rf feeds/luci/applications/luci-app-openclash
 rm -rf feeds/luci/themes/luci-theme-argon
 clone_repo https://github.com/vernesong/OpenClash dev \
   feeds/luci/applications/luci-app-openclash
-clone_repo https://github.com/jerrykuku/luci-theme-argon.git dev \
+clone_repo https://github.com/jerrykuku/luci-theme-argon.git master \
   feeds/luci/themes/luci-theme-argon
 
 # Clone custom packages
@@ -110,8 +110,7 @@ declare -A replacements=(
 replace_collections replacements
 
 # Modify Argon login page from float left to center
-# THEME_CSS_FILE="feeds/luci/themes/luci-theme-argon/htdocs/luci-static/argon/css/cascade.css"
-THEME_CSS_FILE="feeds/luci/themes/luci-theme-argon/htdocs/luci-static/argon/css/style.css"
+THEME_CSS_FILE="feeds/luci/themes/luci-theme-argon/htdocs/luci-static/argon/css/cascade.css"
 printf "Modifying $THEME_CSS_FILE...\n"
 awk -i inplace -v RS='}' '
   # 主容器样式修改
