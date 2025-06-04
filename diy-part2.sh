@@ -187,3 +187,6 @@ sed -i -E \
       s/img\.gz/\itb/
     }' \
   "$EASYUPDATE_FILE"
+
+# Set Rust build arg llvm.download-ci-llvm to false.
+sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' feeds/packages/lang/rust/Makefile
