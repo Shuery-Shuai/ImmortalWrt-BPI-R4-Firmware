@@ -159,6 +159,7 @@ PACKAGES=(
     "luci-app-fancontrol" # 风扇控制
     "luci-app-nginx"      # Nginx 前端引擎
     "luci-app-acme"       # ACME 证书管理
+    "luci-app-ddns-go"    # DDNS-Go 动态域名服务
     "luci-app-easyupdate" # 简易系统更新
     "luci-app-ttyd"       # TTYd 终端
     "luci-app-zerotier"   # ZeroTier 虚拟网络
