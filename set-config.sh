@@ -156,15 +156,15 @@ PACKAGES=(
     ##############################################
     #                   自定义                   #
     ##############################################
-    "luci-app-fancontrol"  # 风扇控制
-    "luci-app-nginx"       # Nginx 前端引擎
-    "luci-app-acme"        # ACME 证书管理
-    "luci-app-easyupdate"  # 简易系统更新
-    "luci-app-ttyd"        # TTYd 终端
-    "luci-app-zerotier"    # ZeroTier 虚拟网络
-    "luci-app-openclash"   # OpenClash 代理
-    "luci-app-alist"       # Alist 文档
-    "luci-app-qbittorrent" # 丘比特下载器
+    "luci-app-fancontrol" # 风扇控制
+    "luci-app-nginx"      # Nginx 前端引擎
+    "luci-app-acme"       # ACME 证书管理
+    "luci-app-easyupdate" # 简易系统更新
+    "luci-app-ttyd"       # TTYd 终端
+    "luci-app-zerotier"   # ZeroTier 虚拟网络
+    "luci-app-openclash"  # OpenClash 代理
+    # "luci-app-alist"       # Alist 文档
+    # "luci-app-qbittorrent" # 丘比特下载器
 )
 
 # 其他系统级配置
@@ -198,7 +198,6 @@ fi
 BACKUP_FILE="${CONFIG_FILE}.bak_$(date +%Y%m%d%H%M%S)"
 cp "$CONFIG_FILE" "$BACKUP_FILE"
 echo "已创建备份: $BACKUP_FILE"
-
 
 # 设备锁定功能 - 防止defconfig覆盖
 lock_device_config() {
