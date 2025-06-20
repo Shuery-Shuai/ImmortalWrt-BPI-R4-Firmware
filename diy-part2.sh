@@ -62,7 +62,7 @@ sed -i 's/\/bin\/ash/\/bin\/bash/' package/base-files/files/etc/passwd
 
 clone_repo() {
   local repo=$1 branch=$2 target=$3
-  if [ -d "$target"]; then
+  if [ -d "$target" ]; then
     printf "Pulling $repo at $target...\n"
     for i in {1..3}; do
       git -C "$target" pull && break || {
