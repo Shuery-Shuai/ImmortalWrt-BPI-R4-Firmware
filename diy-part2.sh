@@ -8,7 +8,7 @@
 # https://github.com/P3TERX/Actions-OpenWrt
 # File name: diy-part2.sh
 # Description: OpenWrt DIY script part 2 (After Update feeds)
-# 
+#
 
 # Modify filogic partition
 # PARTITION_FILE="target/linux/mediatek/image/filogic.mk"
@@ -62,14 +62,24 @@ sed -i 's/\/bin\/ash/\/bin\/bash/' package/base-files/files/etc/passwd
 
 clone_repo() {
   local repo=$1 branch=$2 target=$3
-  printf "Cloning $repo $branch to $target...\n"
-  for i in {1..3}; do
-    git clone --depth 1 -b $branch "$repo" "$target" && break || {
-      echo "Clone attempt $i failed, retrying..."
-      sleep $((i * 2))
-      rm -rf "$target"
-    }
-  done
+  if [ -d "$target"]; then
+    printf "Pulling $repo at $target...\n"
+    for i in {1..3}; do
+      git -C "$target" pull && break || {
+        echo "Pull attempt $i failed, retrying..."
+        sleep $((i * 2))
+      }
+    done
+  else
+    printf "Cloning $repo $branch to $target...\n"
+    for i in {1..3}; do
+      git clone --depth 1 -b $branch "$repo" "$target" && break || {
+        echo "Clone attempt $i failed, retrying..."
+        sleep $((i * 2))
+        rm -rf "$target"
+      }
+    done
+  fi
 }
 
 # Change to official custom branch source of applications including luci-app-openclash and luci-theme-argon
