@@ -204,6 +204,14 @@ BACKUP_FILE="${CONFIG_FILE}.bak_$(date +%Y%m%d%H%M%S)"
 cp "$CONFIG_FILE" "$BACKUP_FILE"
 echo "已创建备份: $BACKUP_FILE"
 
+# 更新仓库
+git restore .
+git pull
+bash ./diy-part1.sh
+./scripts/feeds update -a -f
+bash ./diy-part2.sh
+./scripts/feeds install -a -f
+
 # 设备锁定功能 - 防止defconfig覆盖
 lock_device_config() {
     local device="$1"
