@@ -169,7 +169,7 @@ PACKAGES=(
     "luci-app-ttyd"         # TTYd 终端
     "luci-app-openclash"    # OpenClash 代理
     "luci-app-alist"        # Alist 文档
-    "luci-app-qbittorrent"  # 丘比特下载器
+    # "luci-app-qbittorrent"  # 丘比特下载器
 )
 
 # 其他系统级配置
