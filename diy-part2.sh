@@ -97,6 +97,8 @@ clone_repo https://github.com/sundaqiang/openwrt-packages-backup main \
   package/sundaqiang
 clone_repo https://github.com/rockjake/luci-app-fancontrol.git main \
   package/fancontrol
+clone_repo https://github.com/gdy666/luci-app-lucky.git main \
+  package/lucky
 
 replace_collections() {
   local -n _replacements=$1

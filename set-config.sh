@@ -161,9 +161,10 @@ PACKAGES=(
     "luci-app-diskman"      # 磁盘管理
     "luci-app-fancontrol"   # 风扇控制
     "luci-app-nginx"        # Nginx 前端引擎
+    "luci-app-easyupdate"   # 简易系统更新
+    "luci-app-lucky"        # 内网穿透工具包
     # "luci-app-acme"         # ACME 证书管理
     # "luci-app-ddns-go"      # DDNS-Go 动态域名服务
-    "luci-app-easyupdate" # 简易系统更新
     # "luci-app-zerotier"     # ZeroTier 虚拟网络
     # "luci-app-samba4"       # Samba 4 共享文件系统
     # "luci-app-ttyd"         # TTYd 终端
