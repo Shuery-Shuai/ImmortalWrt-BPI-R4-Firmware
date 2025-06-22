@@ -13,7 +13,7 @@ TARGET_DEVICE="bananapi_bpi-r4" # 修改为您需要的设备
 
 # 要启用的内核选项
 KERNEL_OPTIONS=(
-    "TESTING_KERNEL" # 启用测试内核
+    # "TESTING_KERNEL" # 启用测试内核
     # "KERNEL_PERF_EVENTS" # 性能监控支持
     # "KERNEL_PROFILING"   # 性能分析工具
 )
@@ -156,20 +156,20 @@ PACKAGES=(
     ##############################################
     #                   自定义                   #
     ##############################################
-    "luci-theme-argon"        # Argon 主题
+    "luci-theme-argon"      # Argon 主题
     "luci-app-argon-config" # Argon 主题配置
     "luci-app-diskman"      # 磁盘管理
     "luci-app-fancontrol"   # 风扇控制
     "luci-app-nginx"        # Nginx 前端引擎
-    "luci-app-acme"         # ACME 证书管理
-    "luci-app-ddns-go"      # DDNS-Go 动态域名服务
-    "luci-app-easyupdate"   # 简易系统更新
-    "luci-app-zerotier"     # ZeroTier 虚拟网络
-    "luci-app-samba4"       # Samba 4 共享文件系统
-    "luci-app-ttyd"         # TTYd 终端
-    "luci-app-openclash"    # OpenClash 代理
-    "luci-app-alist"        # Alist 文档
-    "luci-app-qbittorrent"  # 丘比特下载器
+    # "luci-app-acme"         # ACME 证书管理
+    # "luci-app-ddns-go"      # DDNS-Go 动态域名服务
+    "luci-app-easyupdate" # 简易系统更新
+    # "luci-app-zerotier"     # ZeroTier 虚拟网络
+    # "luci-app-samba4"       # Samba 4 共享文件系统
+    # "luci-app-ttyd"         # TTYd 终端
+    # "luci-app-openclash"    # OpenClash 代理
+    # "luci-app-alist"        # Alist 文档
+    # "luci-app-qbittorrent"  # 丘比特下载器
 )
 
 # 其他系统级配置

@@ -83,10 +83,10 @@ clone_repo() {
 }
 
 # Change to official custom branch source of applications including luci-app-openclash and luci-theme-argon
-rm -rf feeds/luci/applications/luci-app-openclash
+# rm -rf feeds/luci/applications/luci-app-openclash
 rm -rf feeds/luci/themes/luci-theme-argon
-clone_repo https://github.com/vernesong/OpenClash dev \
-  feeds/luci/applications/luci-app-openclash
+# clone_repo https://github.com/vernesong/OpenClash dev \
+#   feeds/luci/applications/luci-app-openclash
 clone_repo https://github.com/jerrykuku/luci-theme-argon.git master \
   feeds/luci/themes/luci-theme-argon
 
