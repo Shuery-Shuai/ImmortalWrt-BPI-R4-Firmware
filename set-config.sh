@@ -176,7 +176,7 @@ PACKAGES=(
 # 其他系统级配置
 declare -A SYSTEM_CONFIGS=(
     # 存储设置
-    ["TARGET_ROOTFS_PARTSIZE"]="405" # 根分区大小(MB)
+    ["TARGET_ROOTFS_PARTSIZE"]="858" # 根分区大小(MB)
     # ["TARGET_IMAGES_GZIP"]="y"       # 压缩固件镜像
 
     # 网络优化
