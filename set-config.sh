@@ -349,28 +349,6 @@ echo " - 内核选项: ${#KERNEL_OPTIONS[@]} 个"
 echo " - 系统配置: ${#SYSTEM_CONFIGS[@]} 个"
 echo " - 软件包: ${#PACKAGES[@]} 个"
 
-cat <<EOF
-
-********************** 后续步骤 **********************
-1. 运行依赖解析命令:
-   make defconfig
-
-2. 验证内核配置:
-   make kernel_menuconfig
-
-3. 开始编译:
-   make -j\$(nproc) V=s
-
-4. 检查测试内核功能:
-   # 编译后运行
-   grep CONFIG_TESTING_KERNEL build_dir/target-*/linux-*/.config
-   
-   # 在设备上验证
-   uname -a
-   cat /proc/config.gz | gunzip | grep TESTING
-*****************************************************
-EOF
-
 # 可选：自动运行defconfig
 read -p "是否立即运行 'make defconfig'? [y/N] " run_defconfig
 if [[ "$run_defconfig" =~ [yY] ]]; then
