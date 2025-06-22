@@ -13,7 +13,7 @@ TARGET_DEVICE="bananapi_bpi-r4" # 修改为您需要的设备
 
 # 要启用的内核选项
 KERNEL_OPTIONS=(
-    # "TESTING_KERNEL" # 启用测试内核
+    "TESTING_KERNEL" # 启用测试内核
     # "KERNEL_PERF_EVENTS" # 性能监控支持
     # "KERNEL_PROFILING"   # 性能分析工具
 )
