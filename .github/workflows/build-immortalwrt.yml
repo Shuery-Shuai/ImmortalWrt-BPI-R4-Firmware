@@ -30,6 +30,7 @@ env:
   CONFIG_FILE: .config
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
+  GEN_INDEX_SH: generate-index.sh
   UPLOAD_BIN_DIR: true
   DEPLOY_TO_PAGES: false
   UPLOAD_FIRMWARE: true
@@ -314,6 +315,13 @@ jobs:
       with:
         name: ImmortalWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: site
+
+    - name: Generate index.html
+      run: |
+        chmod +x $GEN_INDEX_SH
+        mv $GEN_INDEX_SH site/
+        cd site
+        ./$GEN_INDEX_SH
 
     - name: Deploy to GitHub Pages
       id: deployment
