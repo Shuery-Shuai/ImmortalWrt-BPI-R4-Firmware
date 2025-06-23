@@ -171,21 +171,20 @@ declare -r FIRMWARE_CONFIG_PACKAGES=(
     # "luci-app-ttyd"         # TTYd 终端
 )
 
-git restore .
-git pull
-bash ./diy-part1.sh
-./scripts/feeds update -a -f
-bash ./diy-part2.sh
-./scripts/feeds install -a -f
-
 if [ -f $FIRMWARE_CONFIG_FILE ]; then
     mv $FIRMWARE_CONFIG_FILE $FIRMWARE_CONFIG_FILE.bak
 fi
 if [ -f .config ]; then
     cp .config .config.bak
 else
+    git restore .
+    git pull
+    bash ./diy-part1.sh
+    ./scripts/feeds update -a -f
+    bash ./diy-part2.sh
+    ./scripts/feeds install -a -f
     touch $FIRMWARE_CONFIG_FILE
-    echo $FIRMWARE_CONFIG_FILE $FIRMWARE_CONFIG_TARGET_SNIPPET $FIRMWARE_CONFIG_SNIPPET >>$FIRMWARE_CONFIG_FILE
+    echo $FIRMWARE_CONFIG_TARGET_SNIPPET $FIRMWARE_CONFIG_SNIPPET >>$FIRMWARE_CONFIG_FILE
     cp $FIRMWARE_CONFIG_FILE .config
     make defconfig
 fi

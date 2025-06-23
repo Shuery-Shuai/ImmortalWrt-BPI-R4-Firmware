@@ -9,6 +9,7 @@ CONFIG_TARGET_mediatek_filogic_DEVICE_bananapi_bpi-r4=y
 CONFIG_TARGET_BOARD=\"mediatek\"
 CONFIG_TARGET_SUBTARGET=\"filogic\"
 CONFIG_TARGET_PROFILE=\"DEVICE_bananapi_bpi-r4\"
+CONFIG_TARGET_ROOTFS_PARTSIZE=796
 "
 
 declare -r KMOD_CONFIG_SNIPPET="
