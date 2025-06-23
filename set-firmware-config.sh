@@ -1,29 +1,26 @@
 #!/bin/bash
 
-# 启用指定软件包的配置脚本
-# 用法：./set-config.sh [配置文件路径，默认为当前目录下的.config]
+declare -r FIRMWARE_CONFIG_FILE=firmware.config
 
-# ========================
-# 用户可配置区域 - 按需修改
-# ========================
+declare -r FIRMWARE_CONFIG_TARGET_SNIPPET="
+CONFIG_TARGET_mediatek=y
+CONFIG_TARGET_mediatek_filogic=y
+CONFIG_TARGET_mediatek_filogic_DEVICE_bananapi_bpi-r4=y
+CONFIG_TARGET_BOARD=\"mediatek\"
+CONFIG_TARGET_SUBTARGET=\"filogic\"
+CONFIG_TARGET_PROFILE=\"DEVICE_bananapi_bpi-r4\"
+CONFIG_TARGET_ROOTFS_PARTSIZE=796
+"
 
-# 设备型号设置
-TARGET_DEVICE="bananapi_bpi-r4" # 修改为您需要的设备
-# KERNEL_VERSION="6.6"             # 内核版本
+declare -r FIRMWARE_CONFIG_SNIPPET="
+CONFIG_TESTING_KERNEL=y
+"
 
-# 要启用的内核选项
-KERNEL_OPTIONS=(
-    "TESTING_KERNEL" # 启用测试内核
-    # "KERNEL_PERF_EVENTS" # 性能监控支持
-    # "KERNEL_PROFILING"   # 性能分析工具
-)
-
-# 要启用的软件包列表
-PACKAGES=(
+declare -r FIRMWARE_CONFIG_PACKAGES=(
     ##############################################
     #                   稳定版                   #
     ##############################################
-    # # === 系统核心组件 ===
+    # === 系统核心组件 ===
     "autocore" # 自动显示CPU负载/温度等硬件状态信息（系统监控核心）
     # "base-files"     # 基础文件系统结构和设备配置文件（/etc目录必需文件）
     # "libc"           # C标准库（所有程序运行的基础依赖）
@@ -34,7 +31,7 @@ PACKAGES=(
     # "logd"           # 系统日志守护进程（日志持久化存储）
     # "uboot-envtools" # U-Boot环境变量管理工具（修改启动参数）
 
-    # # === 网络基础服务 ===
+    # === 网络基础服务 ===
     # "bridger"         # 用户态网络桥接工具（替代传统内核桥接）
     # "dnsmasq-full"    # 完整版DNS/DHCP服务器（支持DoT/DoH等高级功能）
     # "firewall4"       # 基于nftables的下一代防火墙
@@ -46,7 +43,7 @@ PACKAGES=(
     # "wpad-openssl"    # WPA3无线认证守护程序（使用OpenSSL后端）
     # "dropbear"        # 轻量级SSH服务器（远程管理）
 
-    # # === 存储管理系统 ===
+    # === 存储管理系统 ===
     # "block-mount" # 存储设备分区挂载管理（支持USB/SD卡等外部存储）
     # "fstools"     # 存储设备管理工具集（格式化/分区等操作）
     # "e2fsprogs"   # EXT2/3/4文件系统工具（mkfs/ext2resize等）
@@ -54,7 +51,7 @@ PACKAGES=(
     # "mkf2fs"      # F2FS文件系统创建工具（为eMMC/SD卡优化）
     # "fitblk"      # FIT映像解析器（U-Boot固件加载支持）
 
-    # # === 硬件支持模块 ===
+    # === 硬件支持模块 ===
     # "kmod-crypto-hw-safexcel"  # 硬件加密引擎驱动（提升VPN/IPsec性能）
     # "kmod-gpio-button-hotplug" # GPIO按键事件处理（复位键/WPS键支持）
     # "kmod-leds-gpio"           # GPIO控制的LED指示灯驱动
@@ -69,30 +66,30 @@ PACKAGES=(
     # "kmod-sfp"                 # SFP光模块热插拔支持
     # "kmod-usb3"                # USB 3.0主机控制器驱动
 
-    # # === 无线网络支持 ===
+    # === 无线网络支持 ===
     # "kmod-mt7996-firmware"     # MT7996 WiFi 7基础固件（2.4G/5G频段）
     # "kmod-mt7996-233-firmware" # MT7996 6GHz频段固件（WiFi 7三频支持）
     # "mt7988-wo-firmware"       # MT7988无线优化固件（信号增强）
 
-    # # === 安全与加密  ===
+    # === 安全与加密  ===
     # "ca-bundle"          # CA根证书集合（HTTPS/SSL通信必备）
     # "libustream-openssl" # 基于OpenSSL的HTTP客户端（安全更新源访问）
 
-    # #            系统管理与配置工具              #
+    # === 系统管理与配置工具 ===
     # "uci"           # 统一配置接口（命令行系统配置）
     # "uclient-fetch" # 轻量级网络下载工具（脚本自动化依赖）
     # "opkg"          # OpenWrt包管理系统（软件安装/更新）
     # "mtd"           # Flash存储操作工具（固件刷写/备份）
     # "netifd"        # 网络接口管理守护进程（核心网络服务）
 
-    # # === LuCI Web界面 ===
+    # === LuCI Web界面 ===
     "luci-app-package-manager" # 图形化软件包管理界面
     "luci-compat"              # LuCI兼容层（支持旧版插件）
     "luci-lib-base"            # LuCI基础库（Web界面核心）
     "luci-lib-ipkg"            # LuCI包管理接口（opkg集成）
     "luci-light"               # 轻量级LuCI核心（基础Web界面）
 
-    # # === 本地化优化  ===
+    # === 本地化优化  ===
     "default-settings-chn" # 中国用户优化预设（汉化+国内源）
 
     ##############################################
@@ -174,41 +171,6 @@ PACKAGES=(
     # "luci-app-ttyd"         # TTYd 终端
 )
 
-# 其他系统级配置
-declare -A SYSTEM_CONFIGS=(
-    # 存储设置
-    ["TARGET_ROOTFS_PARTSIZE"]="796" # 根分区大小(MB)
-    # ["TARGET_IMAGES_GZIP"]="y"       # 压缩固件镜像
-
-    # 网络优化
-    # ["DEFAULT_br-lan_IGMP_SNOOPING"]="y"
-    # ["DEFAULT_br-lan_MLD_SNOOPING"]="y"
-
-    # 本地化设置
-    # ["DEFAULT_TIMEZONE"]="CST-8"
-    # ["DEFAULT_LANGUAGE"]="zh_CN"
-)
-
-CONFIG_FILE="${1:-firmware.config}"
-
-# ========================
-# 脚本核心逻辑
-# ========================
-
-# 备份原始配置文件
-if [ ! -f .config ]; then
-    echo "错误: 配置文件 .config 不存在，请先运行 make menuconfig 生成配置文件。"
-    exit 1
-else
-    if [ -f $CONFIG_FILE ]; then
-        cp $CONFIG_FILE $CONFIG_FILE.bak
-        echo "已创建备份: $CONFIG_FILE.bak"
-    fi
-    cp .config .config.bak
-    echo "已创建备份: .config.bak"
-fi
-
-# 更新仓库
 git restore .
 git pull
 bash ./diy-part1.sh
@@ -216,84 +178,56 @@ bash ./diy-part1.sh
 bash ./diy-part2.sh
 ./scripts/feeds install -a -f
 
-# 设备锁定功能 - 防止defconfig覆盖
-lock_device_config() {
-    local device="$1"
+if [ -f $FIRMWARE_CONFIG_FILE ]; then
+    mv $FIRMWARE_CONFIG_FILE $FIRMWARE_CONFIG_FILE.bak
+fi
+if [ -f .config ]; then
+    mv .config .config.bak
+fi
 
-    # 禁用默认设备
-    sed -i '/CONFIG_TARGET_mediatek_filogic_DEVICE_openwrt_one/d' "$CONFIG_FILE"
-    echo "# CONFIG_TARGET_mediatek_filogic_DEVICE_openwrt_one is not set" >>"$CONFIG_FILE"
+touch $FIRMWARE_CONFIG_FILE
 
-    # 启用目标设备
-    echo "CONFIG_TARGET_mediatek_filogic_DEVICE_${device}=y" >>"$CONFIG_FILE"
+cat <<EOF >$FIRMWARE_CONFIG_FILE
+$FIRMWARE_CONFIG_TARGET_SNIPPET
+$FIRMWARE_CONFIG_SNIPPET
+EOF
 
-    # 设置TARGET_PROFILE
-    sed -i '/CONFIG_TARGET_PROFILE/d' "$CONFIG_FILE"
-    echo "CONFIG_TARGET_PROFILE=\"DEVICE_${device}\"" >>"$CONFIG_FILE"
+cp $FIRMWARE_CONFIG_FILE .config
+make defconfig
 
-    # 添加保护注释
-    echo "# !! DEVICE LOCKED BY SCRIPT - DO NOT MODIFY MANUALLY !!" >>"$CONFIG_FILE"
-}
-
-# 函数：安全设置配置项
 safe_set_config() {
     local key="$1"
     local value="$2"
     local comment="$3"
 
-    # 转义特殊字符
     local escaped_key=$(printf '%s\n' "$key" | sed 's/[]\.|$(){}?+*^]/\\&/g')
 
-    if grep -q "^${escaped_key}=" "$CONFIG_FILE"; then
-        # 更新现有配置
-        sed -i "s|^${escaped_key}=.*|${key}=${value}|" "$CONFIG_FILE"
+    if grep -q "^${escaped_key}=" ".config"; then
+        sed -i "s|^${escaped_key}=.*|${key}=${value}|" ".config"
         echo "已启用: ${key}=${value} ${comment}"
-    elif grep -q "^# ${escaped_key} is not set" "$CONFIG_FILE"; then
-        # 替换禁用行
-        sed -i "s|^# ${escaped_key} is not set|${key}=${value}|" "$CONFIG_FILE"
+    elif grep -q "^# ${escaped_key} is not set" ".config"; then
+        sed -i "s|^# ${escaped_key} is not set|${key}=${value}|" ".config"
         echo "已设置: ${key}=${value} ${comment}"
     else
-        # 添加新配置项
-        echo "${key}=${value}" >>"$CONFIG_FILE"
+        echo "${key}=${value}" >>".config"
         echo "已添加: ${key}=${value} ${comment}"
     fi
 }
 
-echo -e "\n===== 锁定设备配置 ====="
-lock_device_config "$TARGET_DEVICE"
-echo "已锁定设备: $TARGET_DEVICE"
-
-# 处理内核选项
-echo -e "\n===== 设置内核选项 ====="
-for option in "${KERNEL_OPTIONS[@]}"; do
-    safe_set_config "CONFIG_$option" "y" "// 内核功能"
-done
-
-# 处理系统级配置
-echo -e "\n===== 设置系统配置 ====="
-for key in "${!SYSTEM_CONFIGS[@]}"; do
-    safe_set_config "CONFIG_$key" "${SYSTEM_CONFIGS[$key]}" "// 系统参数"
-done
-
-# 处理软件包
-echo -e "\n===== 设置软件包 ====="
-for pkg in "${PACKAGES[@]}"; do
+for pkg in "${FIRMWARE_CONFIG_PACKAGES[@]}"; do
     echo -e "\n处理软件包: $pkg"
 
-    # 转义特殊字符
     escaped_pkg=$(printf '%s\n' "$pkg" | sed 's/[]\.|$(){}?+*^]/\\&/g')
 
-    # 尝试自动检测格式
     detected_prefix=""
-    if grep -q "^CONFIG_DEFAULT_${escaped_pkg}=" "$CONFIG_FILE" ||
-        grep -q "^# CONFIG_DEFAULT_${escaped_pkg} is not set" "$CONFIG_FILE"; then
+    if grep -q "^CONFIG_DEFAULT_${escaped_pkg}=" ".config" ||
+        grep -q "^# CONFIG_DEFAULT_${escaped_pkg} is not set" ".config"; then
         detected_prefix="CONFIG_DEFAULT_"
-    elif grep -q "^CONFIG_PACKAGE_${escaped_pkg}=" "$CONFIG_FILE" ||
-        grep -q "^# CONFIG_PACKAGE_${escaped_pkg} is not set" "$CONFIG_FILE"; then
+    elif grep -q "^CONFIG_PACKAGE_${escaped_pkg}=" ".config" ||
+        grep -q "^# CONFIG_PACKAGE_${escaped_pkg} is not set" ".config"; then
         detected_prefix="CONFIG_PACKAGE_"
     fi
 
-    # 如果未检测到，让用户选择
     if [ -z "$detected_prefix" ]; then
         echo "未找到 $pkg 的配置项，请选择格式:"
         echo "1) CONFIG_DEFAULT_${pkg}"
@@ -322,45 +256,8 @@ for pkg in "${PACKAGES[@]}"; do
         config_name="${detected_prefix}${pkg}"
     fi
 
-    # 安全设置配置
     safe_set_config "$config_name" "y"
 done
 
-# 确保核心配置存在
-# declare -A CORE_CONFIGS=(
-#     ["CONFIG_HAS_SUBTARGETS"]="y"
-#     ["CONFIG_HAS_DEVICES"]="y"
-#     ["CONFIG_TARGET_BOARD"]="\"mediatek\""
-#     ["CONFIG_TARGET_SUBTARGET"]="\"filogic\""
-#     ["CONFIG_TARGET_ARCH_PACKAGES"]="\"aarch64_cortex-a53\""
-#     ["CONFIG_DEFAULT_TARGET_OPTIMIZATION"]="\"-Os -pipe -mcpu=cortex-a53\""
-#     ["CONFIG_CPU_TYPE"]="\"cortex-a53\""
-#     ["CONFIG_LINUX_6_6"]="y"
-# )
-
-# echo -e "\n===== 设置核心配置 ====="
-# for key in "${!CORE_CONFIGS[@]}"; do
-#     safe_set_config "$key" "${CORE_CONFIGS[$key]}" "// 系统核心"
-# done
-
-# ========================
-# 后续处理建议
-# ========================
-echo -e "\n配置完成! 已处理:"
-echo " - 设备型号: 1 个"
-echo " - 内核选项: ${#KERNEL_OPTIONS[@]} 个"
-echo " - 系统配置: ${#SYSTEM_CONFIGS[@]} 个"
-echo " - 软件包: ${#PACKAGES[@]} 个"
-
-# 可选：自动运行defconfig
-read -p "是否立即运行 'make defconfig'? [y/N] " run_defconfig
-if [[ "$run_defconfig" =~ [yY] ]]; then
-    echo "运行 make defconfig..."
-    make defconfig
-    echo "defconfig 已完成！"
-fi
-
-echo "将使用 make menuconfig 验证配置……"
-make menuconfig
-cp .config $CONFIG_FILE
-echo "完成！"
+make defconfig
+cp .config $FIRMWARE_CONFIG_FILE
