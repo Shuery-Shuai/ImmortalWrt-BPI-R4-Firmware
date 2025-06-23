@@ -32,10 +32,15 @@ clone_repo() {
   else
     printf "Cloning $repo $branch to $target...\n"
     for i in {1..3}; do
+      echo "Clone attempt $i..."
       git clone --depth 1 -b $branch "$repo" "$target" && break || {
-        echo "Clone attempt $i failed, retrying..."
+        echo "Clone attempt $i failed!"
         sleep $((i * 2))
         rm -rf "$target"
+        if [ $i -eq 3 ]; then
+          echo "Failed to clone $repo after $i attempts."
+          exit 1
+        fi
       }
     done
   fi
