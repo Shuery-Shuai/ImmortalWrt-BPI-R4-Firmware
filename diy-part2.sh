@@ -10,47 +10,6 @@
 # Description: OpenWrt DIY script part 2 (After Update feeds)
 #
 
-# Modify filogic partition
-# PARTITION_FILE="target/linux/mediatek/image/filogic.mk"
-# printf "Modifying $PARTITION_FILE...\n"
-# SCOPE_BUILD_START='^define\sBuild\/mt798x-gpt'
-# SCOPE_BUILD_END='^endef'
-# SCOPE_DEVICE_START='^define\sDevice\/bananapi_bpi-r4-common'
-# SCOPE_DEVICE_END='^endef'
-# sed -i -E \
-#   -e "/$SCOPE_BUILD_START/,/$SCOPE_BUILD_END/ {
-#        # 修改分区表
-#        /recovery/s/32M@/82M@/
-#        /install/s/@44M/@94M/
-#        /production/s/@64M/@114M/
-#      }" \
-#   -e "/$SCOPE_DEVICE_START/,/$SCOPE_DEVICE_END/ {
-#        # 修改分区大小
-#        /append-image-stage\s+initramfs-recovery\.itb/s/44m/94m/
-#        /mt7988-bl2\s+spim-nand-ubi-comb/s/44M/94M/
-#        /mt7988-bl31-uboot\s+.*-snand/s/45M/95M/
-#        /mt7988-bl2\s+emmc-comb/s/51M/101M/
-#        /mt7988-bl31-uboot\s+.*-emmc/s/52M/102M/
-#        /mt798x-gpt\s+emmc/s/56M/106M/
-#        /append-image\s+squashfs-sysupgrade\.itb/s/64M/114M/
-#        /IMAGE_SIZE/s/64/114/
-#      }" \
-#   "$PARTITION_FILE"
-# printf "Done. Result:\n"
-# scope_grep() {
-#   local file=$1
-#   local start=$2
-#   local end=$3
-#   local patterns=$4
-#   echo "━━━━━━━━━━━━━━━━━━━━ Partition info from $start to $end ━━━━━━━━━━━━━━━━━━━━"
-#   sed -n -e "/$start/,/$end/p" "$file" | grep -E --color=always "$patterns"
-#   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-# }
-# scope_grep "$PARTITION_FILE" "$SCOPE_BUILD_START" "$SCOPE_BUILD_END" \
-#   'recovery|install|production'
-# scope_grep "$PARTITION_FILE" "$SCOPE_DEVICE_START" "$SCOPE_DEVICE_END" \
-#   'append-image-stage\s+initramfs-recovery\.itb|mt7988-bl2\s+spim-nand-ubi-comb|mt7988-bl31-uboot\s+.*-snand|mt7988-bl2\s+emmc-comb|mt7988-bl31-uboot\s+.*-emmc|mt798x-gpt\s+emmc|append-image\s+squashfs-sysupgrade\.itb|IMAGE_SIZE'
-
 # Modify IP
 sed -i 's/192.168.1.1/192.168.0.1/g' package/base-files/files/bin/config_generate
 
