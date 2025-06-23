@@ -182,18 +182,13 @@ if [ -f $FIRMWARE_CONFIG_FILE ]; then
     mv $FIRMWARE_CONFIG_FILE $FIRMWARE_CONFIG_FILE.bak
 fi
 if [ -f .config ]; then
-    mv .config .config.bak
+    cp .config .config.bak
+else
+    touch $FIRMWARE_CONFIG_FILE
+    echo $FIRMWARE_CONFIG_FILE $FIRMWARE_CONFIG_TARGET_SNIPPET $FIRMWARE_CONFIG_SNIPPET >>$FIRMWARE_CONFIG_FILE
+    cp $FIRMWARE_CONFIG_FILE .config
+    make defconfig
 fi
-
-touch $FIRMWARE_CONFIG_FILE
-
-cat <<EOF >$FIRMWARE_CONFIG_FILE
-$FIRMWARE_CONFIG_TARGET_SNIPPET
-$FIRMWARE_CONFIG_SNIPPET
-EOF
-
-cp $FIRMWARE_CONFIG_FILE .config
-make defconfig
 
 safe_set_config() {
     local key="$1"
