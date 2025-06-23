@@ -89,13 +89,14 @@ generate_index() {
         echo "<!DOCTYPE html>"
         echo "<html lang='zh-CN'>"
         echo "<head>"
-        echo "<meta charset='utf-8'/>"
-        echo "<meta name='viewport' content='width=device-width, initial-scale=1.0'>"
-        echo "<link rel='stylesheet' href='https://downloads.immortalwrt.org/openwrt.css' />"
+        echo "  <meta charset='utf-8'/>"
+        echo "  <meta name='viewport' content='width=device-width, initial-scale=1.0' />"
+        echo "  <link rel='icon' href='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text x=%2250%%22 y=%2250%%22 style=%22dominant-baseline:central;text-anchor:middle;font-size:90px;%22>⚙️</text></svg>' />"
+        echo "  <link rel='stylesheet' href='https://downloads.immortalwrt.org/openwrt.css' />"
         if [ "$base_url" = "" ]; then
-            echo "<title>自编译的 ImmortalWrt 固件</title>"
+            echo "  <title>自编译的 ImmortalWrt 固件</title>"
         else
-            echo "<title>$base_url 的索引</title>"
+            echo "  <title>$base_url 的索引</title>"
         fi
         echo "</head>"
         echo "<body>"
