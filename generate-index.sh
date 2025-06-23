@@ -44,6 +44,17 @@ format_date_cn() {
     echo "${year} 年 ${cn_month} ${day} 日 ${cn_weekday} ${time}"
 }
 
+# 计算文件的SHA256值
+calculate_sha256() {
+    local file="$1"
+    if [ -f "$file" ]; then
+        # 计算SHA256并提取哈希值部分
+        sha256sum "$file" | awk '{print $1}'
+    else
+        echo "-"
+    fi
+}
+
 # 递归为目录生成索引
 generate_index() {
     local handle_path="$1"
@@ -103,7 +114,13 @@ generate_index() {
         # 文件表格
         echo "<table>"
         echo "  <thead>"
-        echo "    <tr><th class='n'>文件名</th><th class='m'>类型</th><th class='s'>大小</th><th class='d'>修改日期</th></tr>"
+        echo "    <tr>"
+        echo "      <th class='n'>文件名</th>"
+        echo "      <th class='m'>类型</th>"
+        echo "      <th class='s'>大小</th>"
+        echo "      <th class='h'>SHA256</th>"
+        echo "      <th class='d'>修改日期</th>"
+        echo "    </tr>"
         echo "  </thead>"
         echo "  <tbody>"
 
@@ -113,6 +130,7 @@ generate_index() {
             echo "    <td class='n'>↩️ <a href='../'>上级目录</a>/</td>"
             echo "    <td class='m'>目录</td>"
             echo "    <td class='s'>-</td>"
+            echo "    <td class='sh'>-</td>"
             echo "    <td class='d'>-</td>"
             echo "  </tr>"
         fi
@@ -142,7 +160,7 @@ generate_index() {
 
         # 检查是否为空目录
         if [ ${#sorted_items[@]} -eq 0 ]; then
-            echo "  <tr><td colspan='4' class='n'>╮(╯▽╰)╭ 此处空空如也~</td></tr>"
+            echo "  <tr><td colspan='5' class='n'>╮(╯▽╰)╭ 此处空空如也~</td></tr>"
         fi
 
         # 遍历目录内容（目录在前）
@@ -157,9 +175,11 @@ generate_index() {
                 size="-"
                 suffix="/"
                 icon="📁"
+                sha_value="-"
             else
                 item_type=$(file -b --mime-type "$item_path" | awk -F'/' '{print $2}')
                 size=$(du -h "$item_path" | awk '{print $1}')
+                sha_value=$(calculate_sha256 "$item_path")
                 suffix=""
                 case "$item" in
                 *.apk) icon="📦" ;;
@@ -175,6 +195,7 @@ generate_index() {
             echo "    <td class='n'>$icon <a href='$item$suffix'>$item$suffix</a></td>"
             echo "    <td class='m'>$item_type</td>"
             echo "    <td class='s'>$size</td>"
+            echo "    <td class='sh'>$sha_value</td>"
             echo "    <td class='d'>$item_date</td>"
             echo "  </tr>"
         done
@@ -208,5 +229,6 @@ generate_index() {
     done
 }
 
-# 从当前目录开始生成索引
+# 从 bin 目录开始生成索引
+cd bin
 generate_index "." "" ""
