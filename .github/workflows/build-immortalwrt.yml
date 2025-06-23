@@ -195,8 +195,8 @@ jobs:
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true' && env.DEPLOY_TO_PAGES == 'true' && !cancelled()
       run: |
         chmod +x $GEN_INDEX_SH
-        mv $GEN_INDEX_SH $GITHUB_WORKSPACE/immortalwrt/bin/
-        cd $GITHUB_WORKSPACE/immortalwrt/bin
+        mv $GEN_INDEX_SH $GITHUB_WORKSPACE/immortalwrt/
+        cd $GITHUB_WORKSPACE/immortalwrt/
         ./$GEN_INDEX_SH
         
     - name: Check space usage
