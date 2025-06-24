@@ -144,6 +144,14 @@ jobs:
       - name: Install feeds
         run: cd immortalwrt && ./scripts/feeds install -a -f
 
+      - name: Load custom configuration
+        run: |
+          [ -e files ] && mv files immortalwrt/files
+          [ -e $CONFIG_FILE ] && mv $CONFIG_FILE immortalwrt/.config
+          chmod +x $DIY_P2_SH
+          cd immortalwrt
+          $GITHUB_WORKSPACE/$DIY_P2_SH
+
       - name: ImmortalWrt AutoUpdate
         run: |
           TEMP=$(date +"ImmortalWrt_%Y%m%d_%H%M%S_")$(git rev-parse --short HEAD)
@@ -157,14 +165,6 @@ jobs:
           echo "DISTRIB_VERSIONS='${TEMP:12}'" >> /etc/openwrt_release
           sed -i "/^DISTRIB_DESCRIPTION=/s/=ImmortalWrt/=${{github.actor}} compiled (${TEMP:12}) \/ ImmortalWrt/g" /etc/openwrt_release
           EOF
-
-      - name: Load custom configuration
-        run: |
-          [ -e files ] && mv files immortalwrt/files
-          [ -e $CONFIG_FILE ] && mv $CONFIG_FILE immortalwrt/.config
-          chmod +x $DIY_P2_SH
-          cd immortalwrt
-          $GITHUB_WORKSPACE/$DIY_P2_SH
 
       - name: SSH connection to Actions
         uses: P3TERX/ssh2actions@v1.0.0
