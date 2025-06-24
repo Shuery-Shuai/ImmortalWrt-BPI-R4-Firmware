@@ -1,10 +1,10 @@
 # add your custom package feeds here
 #
 # http://www.example.com/path/to/files/packages.adb
-http://immortalwrt.shuery.lssa.fun/packages/aarch64_cortex-a53/packages/packages.adb
-http://immortalwrt.shuery.lssa.fun/packages/aarch64_cortex-a53/base/packages.adb
-http://immortalwrt.shuery.lssa.fun/packages/aarch64_cortex-a53/luci/packages.adb
-#http://immortalwrt.shuery.lssa.fun/packages/aarch64_cortex-a53/routing/packages.adb
-#http://immortalwrt.shuery.lssa.fun/packages/aarch64_cortex-a53/telephony/packages.adb
-#http://immortalwrt.shuery.lssa.fun/packages/aarch64_cortex-a53/video/packages.adb
-http://immortalwrt.shuery.lssa.fun/targets/mediatek/filogic/packages/packages.adb
+https://immortalwrt.shuery.lssa.fun/packages/aarch64_cortex-a53/packages/packages.adb
+https://immortalwrt.shuery.lssa.fun/packages/aarch64_cortex-a53/base/packages.adb
+https://immortalwrt.shuery.lssa.fun/packages/aarch64_cortex-a53/luci/packages.adb
+#https://immortalwrt.shuery.lssa.fun/packages/aarch64_cortex-a53/routing/packages.adb
+#https://immortalwrt.shuery.lssa.fun/packages/aarch64_cortex-a53/telephony/packages.adb
+#https://immortalwrt.shuery.lssa.fun/packages/aarch64_cortex-a53/video/packages.adb
+https://immortalwrt.shuery.lssa.fun/targets/mediatek/filogic/packages/packages.adb
