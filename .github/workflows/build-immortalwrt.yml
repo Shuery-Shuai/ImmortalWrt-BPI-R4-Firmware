@@ -322,6 +322,10 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
+      - name: Checkout
+        if: env.UPLOAD_BIN_DIR == 'true' && env.DEPLOY_TO_PAGES == 'true'
+        uses: actions/checkout@v4
+
       - name: Download artifact
         if: env.UPLOAD_BIN_DIR == 'true' && env.DEPLOY_TO_PAGES == 'true'
         uses: actions/download-artifact@v4
