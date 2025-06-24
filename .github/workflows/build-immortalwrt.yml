@@ -300,7 +300,6 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     needs: build
-    if: github.env.UPLOAD_BIN_DIR == 'true' && github.env.DEPLOY_TO_PAGES == 'true'
     permissions:
       pages: write
       id-token: write
@@ -310,12 +309,14 @@ jobs:
 
     steps:
       - name: Download artifact
+        if: env.UPLOAD_BIN_DIR == 'true' && env.DEPLOY_TO_PAGES == 'true'
         uses: actions/download-artifact@v4
         with:
           name: ImmortalWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
           path: site
 
       - name: Generate index.html
+        if: env.UPLOAD_BIN_DIR == 'true' && env.DEPLOY_TO_PAGES == 'true'
         run: |
           chmod +x $GEN_INDEX_SH
           mv $GEN_INDEX_SH site/
@@ -323,10 +324,12 @@ jobs:
           ./$GEN_INDEX_SH
 
       - name: Upload pages artifact
+        if: env.UPLOAD_BIN_DIR == 'true' && env.DEPLOY_TO_PAGES == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: site
 
       - name: Deploy to GitHub Pages
+        if: env.UPLOAD_BIN_DIR == 'true' && env.DEPLOY_TO_PAGES == 'true'
         id: deployment
         uses: actions/deploy-pages@v4
