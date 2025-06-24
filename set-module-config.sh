@@ -1,6 +1,6 @@
 #!/bin/bash
 
-declare -r KMOD_CONFIG_FILE=kmod.config
+declare -r KMOD_CONFIG_FILE=module.config
 
 declare -r KMOD_CONFIG_TARGET_SNIPPET="
 CONFIG_TARGET_mediatek=y
