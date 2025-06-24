@@ -157,10 +157,11 @@ declare -r FIRMWARE_CONFIG_PACKAGES=(
     "luci-app-argon-config" # Argon 主题配置
     "luci-app-diskman"      # 磁盘管理
     "luci-app-fancontrol"   # 风扇控制
-    "luci-app-nginx"        # Nginx 前端引擎
+    "luci-nginx"            # Nginx 前端引擎
+    "luci-app-nginx"        # Nginx 前端管理
     "luci-app-zerotier"     # ZeroTier 虚拟网络
     "luci-app-easyupdate"   # 简易系统更新
-    "luci-app-lucky"        # 内网穿透工具包
+    # "luci-app-lucky"        # 内网穿透工具包
     # "luci-app-acme"         # ACME 证书管理
     # "luci-app-alist"        # Alist 文档
     # "luci-app-dae"          # 大鹅
