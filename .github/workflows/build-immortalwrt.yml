@@ -198,7 +198,6 @@ jobs:
         mv $GEN_INDEX_SH $GITHUB_WORKSPACE/immortalwrt/
         cd $GITHUB_WORKSPACE/immortalwrt/
         ./$GEN_INDEX_SH
-        cd $GITHUB_WORKSPACE
         
     - name: Check space usage
       if: (!cancelled())
