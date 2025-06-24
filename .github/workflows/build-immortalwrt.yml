@@ -331,21 +331,19 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ImmortalWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-          path: site
+          path: bin
 
       - name: Generate index.html
         if: env.UPLOAD_BIN_DIR == 'true' && env.DEPLOY_TO_PAGES == 'true'
         run: |
           chmod +x $GEN_INDEX_SH
-          mv $GEN_INDEX_SH site/
-          cd site
           ./$GEN_INDEX_SH
 
       - name: Upload pages artifact
         if: env.UPLOAD_BIN_DIR == 'true' && env.DEPLOY_TO_PAGES == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: bin
 
       - name: Deploy to GitHub Pages
         if: env.UPLOAD_BIN_DIR == 'true' && env.DEPLOY_TO_PAGES == 'true'
