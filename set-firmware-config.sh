@@ -172,6 +172,14 @@ declare -r FIRMWARE_CONFIG_PACKAGES=(
     # "luci-app-ttyd"         # TTYd 终端
 )
 
+if [ -d "immortalwrt" ]; then
+    echo "进入 'immortalwrt' 目录..."
+    cd immortalwrt
+elif [ "$(basename "$(pwd)")" != "immortalwrt" ]; then
+    echo "当前目录不是或不存在 'immortalwrt'，请先进入正确的目录。"
+    exit 1
+fi
+
 if [ -f $FIRMWARE_CONFIG_FILE ]; then
     mv $FIRMWARE_CONFIG_FILE $FIRMWARE_CONFIG_FILE.bak
 fi

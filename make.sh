@@ -1,4 +1,11 @@
 #!/bin/bash
+if [ -d "immortalwrt" ]; then
+    echo "进入 'immortalwrt' 目录..."
+    cd immortalwrt
+elif [ "$(basename "$(pwd)")" != "immortalwrt" ]; then
+    git clone --depth 1 https://github.com/immortalwrt/immortalwrt.git
+    cd immortalwrt
+fi
 git restore .
 git pull
 bash ./diy-part1.sh

@@ -7,6 +7,14 @@ total_count=0
 total_size=0
 declare -A type_count
 
+if [ -d "immortalwrt" ]; then
+    echo "进入 'immortalwrt' 目录..."
+    cd immortalwrt
+elif [ "$(basename "$(pwd)")" != "immortalwrt" ]; then
+    echo "当前目录不是或不存在 'immortalwrt'，请先进入正确的目录。"
+    exit 1
+fi
+
 echo "检测固件文件大小:"
 echo "----------------------------------------"
 
