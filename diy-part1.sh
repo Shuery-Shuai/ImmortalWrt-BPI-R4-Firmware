@@ -80,8 +80,8 @@ $(eval $(call KernelPackage,xdp-sockets-diag))
 ' >>package/kernel/linux/modules/netsupport.mk
 
 # Add tx power patch
-rm package/firmware/wireless-regdb/patches/500-.*.patch
-rm package/firmware/wireless-regdb/patches/700-.*.patch
+rm package/firmware/wireless-regdb/patches/500-*.patch
+rm package/firmware/wireless-regdb/patches/600-*.patch
 wget https://raw.githubusercontent.com/Rahzadan/openwrt_bpi-r4_mtk_builder/main/files/500-tx_power.patch \
   -O package/firmware/wireless-regdb/patches/500-tx_power.patch
 # Support BE14000
