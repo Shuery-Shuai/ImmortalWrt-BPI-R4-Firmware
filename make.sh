@@ -4,6 +4,8 @@ if [ -d "immortalwrt" ]; then
     cp diy-part*.sh immortalwrt/
     cp generate-index.sh immortalwrt/
     cd immortalwrt
+    git restore .
+    git pull
 elif [ "$(basename "$(pwd)")" != "immortalwrt" ]; then
     git clone --depth 1 https://github.com/immortalwrt/immortalwrt.git || {
         echo "克隆 'immortalwrt' 仓库失败，请检查网络连接或仓库地址。"
@@ -13,8 +15,6 @@ elif [ "$(basename "$(pwd)")" != "immortalwrt" ]; then
     cp generate-index.sh immortalwrt/
     cd immortalwrt
 fi
-git restore .
-git pull
 bash ./diy-part1.sh
 ./scripts/feeds update -a -f
 bash ./diy-part2.sh
