@@ -149,7 +149,6 @@ jobs:
           [ -e files ] && {
             cp -r files immortalwrt/
             rm -r files
-            echo "已移动 files 至 immortalwrt/。"
             ls -al immortalwrt/files
           }
           [ -e $CONFIG_FILE ] && mv $CONFIG_FILE immortalwrt/.config
