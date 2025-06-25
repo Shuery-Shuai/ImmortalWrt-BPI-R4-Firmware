@@ -77,3 +77,38 @@ endef
 
 $(eval $(call KernelPackage,xdp-sockets-diag))
 ' >>package/kernel/linux/modules/netsupport.mk
+
+# Add tx power patch
+wget https://raw.githubusercontent.com/Rahzadan/openwrt_bpi-r4_mtk_builder/main/files/500-tx_power.patch \
+  -O package/firmware/wireless-regdb/patches/700-tx_power.patch
+# Support BE14000
+# cd ..
+# if [ -d "openwrt_bpi-r4_mtk_builder" ]; then
+#   cd openwrt_bpi-r4_mtk_builder
+#   git restore .
+#   git pull
+#   cd ..
+# else
+#   git clone --depth 1 https://github.com/Rahzadan/openwrt_bpi-r4_mtk_builder.git
+# fi
+# chmod 776 -R openwrt_bpi-r4_mtk_builder
+# cd openwrt_bpi-r4_mtk_builder
+# sed -i -E \
+#   -e '/^\s*rm\s+-rf\s+openwrt\s*$/s/^/#/' \
+#   -e '\|^\s*git\s+clone.*openwrt\.git|s/^/#/' \
+#   -e '\|^\s*cd\s+openwrt\s*[;&]|s/^/#/' \
+#   -e '\|^\s*git\s+clone\s+http|s|clone|clone --depth 1|' \
+#   -e '\|^\s*rm\s+-rf\s+openwrt/package|s|openwrt|immortalwrt|' \
+#   -e '\|^\s*\\cp\s+-r\s+files/regdb\.Makefile|s|openwrt|immortalwrt|' \
+#   -e '\|^\s*-O\s+openwrt/package|s|openwrt|immortalwrt|' \
+#   -e '\|^\s*cd\s+openwrt\s*$|s|openwrt|immortalwrt|' \
+#   build1.sh
+# sed -i -E \
+#   -e '\|^\s*cd\s+openwrt\s*$|s|openwrt|immortalwrt|' \
+#   -e '\|^\s*git\s+clone\s+http|s|clone|clone --depth 1|' \
+#   -e '\|^\s*./scripts/feeds|s/^/#/' \
+#   -e '\|^\s*\\cp.*config|s/^/#/' \
+#   -e '\|^\s*make|s/^/#/' \
+#   build2.sh
+# bash ./build1.sh
+# bash ./build2.sh
