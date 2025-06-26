@@ -395,7 +395,7 @@ install_and_verify_packages() {
     # 安装内核模块
     log_info "$log_file" "=== 安装内核模块 ==="
     if [ -s "$kernel_pkgs" ]; then
-        xargs -a "$kernel_pkgs" apk add --force-reinstall --no-cache >>"$log_file" 2>&1
+        xargs -a "$kernel_pkgs" apk add --no-cache >>"$log_file" 2>&1
         if ! verify_packages "$kernel_pkgs" "$log_file"; then
             log_info "$log_file" "警告：部分内核模块未正确安装"
         fi
