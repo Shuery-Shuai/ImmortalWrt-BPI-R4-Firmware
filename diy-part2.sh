@@ -147,12 +147,14 @@ awk -i inplace -v RS='}' '
 EASYUPDATE_FILE="package/sundaqiang/luci/applications/luci-app-easyupdate/root/usr/bin/easyupdate.sh"
 printf "Modifying %s...\n" "$EASYUPDATE_FILE"
 # 修改 OpenWrt 为 ImmortalWrt
+# 修改更新操作，更新是备份软件包列表
 # 修改 fileName 截取范围
 # 修改 suffix 为 squashfs-sysupgrade.itb
 sed -i -E \
   -e '/curl|filename/s/OpenWrt/ImmortalWrt/g' \
   -e '/curl|filename/s/openwrt/immortalwrt/g' \
   -e '/curl|filename/s/Openwrt/Immortalwrt/g' \
+  -e '/sysupgrade \$keepconfig\$file/s/sysupgrade/sysupgrade -k/g' \
   -e '/file[Nn]ame/s/0:7/0:11/g' \
   -e '/^\s*file/s/\$\{checkShaRet/\/tmp\/\$\{checkShaRet/g' \
   -e '/Check\s+whether\s+EFI\s+firmware/,/^\s*fi/ {
