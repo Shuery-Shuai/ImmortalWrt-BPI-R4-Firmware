@@ -24,7 +24,7 @@ clone_repo() {
   if [ -d "$target" ]; then
     printf "Pulling $repo at $target...\n"
     for i in {1..3}; do
-      git -C "$target" pull && break || {
+      git -C "$target" restore . && git -C "$target" pull && break || {
         echo "Pull attempt $i failed, retrying..."
         sleep $((i * 2))
       }
