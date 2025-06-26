@@ -1,6 +1,8 @@
 #!/bin/bash
 if [ -d "immortalwrt" ]; then
     echo "进入 'immortalwrt' 目录..."
+    rm -rf immortalwrt/files
+    cp -r files immortalwrt/
     cp diy-part*.sh immortalwrt/
     cp generate-index.sh immortalwrt/
     cd immortalwrt
@@ -11,6 +13,8 @@ elif [ "$(basename "$(pwd)")" != "immortalwrt" ]; then
         echo "克隆 'immortalwrt' 仓库失败，请检查网络连接或仓库地址。"
         exit 1
     }
+    rm -rf immortalwrt/files
+    cp -r files immortalwrt/
     cp diy-part*.sh immortalwrt/
     cp generate-index.sh immortalwrt/
     cd immortalwrt
