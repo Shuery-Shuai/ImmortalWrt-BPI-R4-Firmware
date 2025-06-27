@@ -168,3 +168,6 @@ sed -i -E \
 
 # Set Rust build arg llvm.download-ci-llvm to false.
 sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' feeds/packages/lang/rust/Makefile
+
+# Give restore-packages execution permissions
+chmod +x files/usr/bin/restore-packages.sh
