@@ -10,9 +10,9 @@
 set -euo pipefail
 
 #######################################
-# 主函数 - 所有逻辑通过参数传递
+# 主函数
 # Globals:
-#   None
+#   backup_resolv_flag, backup_firewall_flag, firewall_type, firewall_backup
 # Arguments:
 #   $1: 备份文件路径 (默认: /etc/backup/installed_packages.txt)
 # Outputs:
@@ -21,10 +21,20 @@ set -euo pipefail
 #   0: 成功, 1: 失败
 #######################################
 main() {
+    # 配置恢复标记
+    local backup_resolv_flag=0
+    local backup_firewall_flag=0
+    local firewall_type=""
+    local firewall_backup=""
+
+    # 初始化路径
     local backup_file="${1:-/etc/backup/installed_packages.txt}"
     local test_url="https://immortalwrt.shuery.lssa.fun"
     local log_file="/var/log/package-restore-$(date +'%Y%m%d%H%M%S').log"
     local installed_flag="/tmp/packages-has-installed"
+
+    # 设置退出时自动恢复配置
+    trap 'restore_original_config "$backup_resolv_flag" "$backup_firewall_flag" "$firewall_type" "$firewall_backup" "$log_file"' EXIT
 
     # 初始化日志
     log_header "$log_file" "开始恢复软件包" "backup_file=$backup_file"
@@ -42,11 +52,6 @@ main() {
     fi
 
     # 网络状态检测
-    local backup_resolv_flag=0
-    local backup_firewall_flag=0
-    local firewall_type=""
-    local firewall_backup=""
-
     if ! check_network "$test_url" "$log_file"; then
         # 第一次检测失败时备份并修改设置
         backup_resolv_flag=1
@@ -63,8 +68,6 @@ main() {
         # 第二次检测
         if ! check_network "$test_url" "$log_file"; then
             log_error "$log_file" "无法连接软件源，恢复中止"
-            restore_original_config "$backup_resolv_flag" "$backup_firewall_flag" \
-                "$firewall_type" "$firewall_backup" "$log_file"
             return 1
         fi
     fi
@@ -72,22 +75,14 @@ main() {
     # 更新软件源
     if ! update_package_lists "$log_file"; then
         log_error "$log_file" "软件源更新失败"
-        restore_original_config "$backup_resolv_flag" "$backup_firewall_flag" \
-            "$firewall_type" "$firewall_backup" "$log_file"
         return 1
     fi
 
     # 安装并验证软件包
     if ! install_and_verify_packages "$backup_file" "$log_file"; then
         log_error "$log_file" "软件包安装验证失败"
-        restore_original_config "$backup_resolv_flag" "$backup_firewall_flag" \
-            "$firewall_type" "$firewall_backup" "$log_file"
         return 1
     fi
-
-    # 恢复原始配置
-    restore_original_config "$backup_resolv_flag" "$backup_firewall_flag" \
-        "$firewall_type" "$firewall_backup" "$log_file"
 
     # 删除备份文件（安装验证成功后）
     rm -f "$backup_file" && log_info "$log_file" "已删除备份文件: $backup_file"
@@ -186,26 +181,26 @@ log_error() {
 check_all_packages_installed() {
     local backup_file="$1"
     local log_file="$2"
+    local user_pkgs="/tmp/user-pkgs-check.list"
+    local all_installed=1
 
     # 检查备份文件是否存在
-    if [ ! -f "$backup_file" ]; then
+    [ ! -f "$backup_file" ] && {
         log_info "$log_file" "备份文件不存在，跳过预检查"
         return 1
-    fi
+    }
 
     # 提取所有用户安装包
-    local user_pkgs="/tmp/user-pkgs-check.list"
     grep '\toverlay' "$backup_file" | awk '{print $1}' >"$user_pkgs"
 
     # 没有用户包时直接返回成功
-    if [ ! -s "$user_pkgs" ]; then
+    [ ! -s "$user_pkgs" ] && {
         log_info "$log_file" "无用户安装包需要检查"
         rm -f "$user_pkgs"
         return 0
-    fi
+    }
 
     # 检查每个包是否已安装
-    local all_installed=1
     while IFS= read -r pkg; do
         if ! apk info --installed "$pkg" >/dev/null 2>&1; then
             log_info "$log_file" "包未安装: $pkg"
@@ -215,12 +210,10 @@ check_all_packages_installed() {
 
     # 清理临时文件
     rm -f "$user_pkgs"
-
-    if [ "$all_installed" -eq 1 ]; then
+    [ "$all_installed" -eq 1 ] && {
         log_info "$log_file" "所有用户安装包已存在"
         return 0
-    fi
-
+    }
     return 1
 }
 
@@ -264,8 +257,10 @@ backup_resolv_config() {
     local log_file="$1"
     log_info "$log_file" "备份DNS配置..."
     cp /etc/resolv.conf /tmp/resolv.conf.backup
-    echo "nameserver 8.8.8.8" >/etc/resolv.conf
-    echo "nameserver 1.1.1.1" >>/etc/resolv.conf
+    {
+        echo "nameserver 8.8.8.8"
+        echo "nameserver 1.1.1.1"
+    } >/etc/resolv.conf
 }
 
 #######################################
@@ -441,9 +436,7 @@ install_pkgs_with_retry() {
         verify_packages "$pkg_list" "$log_file" "$failed_file"
 
         # 检查是否全部成功
-        if [ ! -s "$failed_file" ]; then
-            return 0
-        fi
+        [ ! -s "$failed_file" ] && return 0
 
         # 准备重试
         retry_count=$((retry_count + 1))
@@ -481,11 +474,10 @@ verify_packages() {
         fi
     done <"$pkg_list"
 
-    if [ "$all_success" -eq 0 ]; then
+    [ "$all_success" -eq 0 ] && {
         log_info "$log_file" "所有软件包验证成功"
         return 0
-    fi
-
+    }
     return 1
 }
 
@@ -509,26 +501,31 @@ restore_original_config() {
 
     # 恢复DNS配置
     if [ "$backup_resolv_flag" -eq 1 ]; then
-        log_info "$log_file" "恢复原始DNS配置..."
-        mv /tmp/resolv.conf.backup /etc/resolv.conf
+        [ -f "/tmp/resolv.conf.backup" ] && {
+            log_info "$log_file" "恢复原始DNS配置..."
+            mv -f "/tmp/resolv.conf.backup" "/etc/resolv.conf"
+        }
     fi
 
     # 恢复防火墙配置
     if [ "$backup_firewall_flag" -eq 1 ] && [ -n "$firewall_backup" ]; then
-        log_info "$log_file" "恢复原始防火墙配置 ($firewall_type)..."
+        [ -f "$firewall_backup" ] && {
+            log_info "$log_file" "恢复原始防火墙配置 ($firewall_type)..."
 
-        case "$firewall_type" in
-        iptables)
-            iptables-restore <"$firewall_backup"
-            ;;
-        nftables)
-            nft flush ruleset
-            nft -f "$firewall_backup"
-            ;;
-        esac
+            case "$firewall_type" in
+            iptables)
+                iptables-restore <"$firewall_backup"
+                ip6tables-restore <"$firewall_backup"
+                ;;
+            nftables)
+                nft flush ruleset
+                nft -f "$firewall_backup"
+                ;;
+            esac
 
-        # 删除防火墙备份
-        rm -f "$firewall_backup"
+            # 删除防火墙备份
+            rm -f "$firewall_backup"
+        }
     fi
 }
 
