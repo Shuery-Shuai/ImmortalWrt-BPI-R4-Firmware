@@ -185,6 +185,7 @@ declare -r FIRMWARE_CONFIG_PACKAGES=(
 )
 
 if [ -d "immortalwrt" ]; then
+    cp ./diy-part*.sh ./immortalwrt/
     echo "进入 'immortalwrt' 目录..."
     cd immortalwrt
 elif [ "$(basename "$(pwd)")" != "immortalwrt" ]; then
