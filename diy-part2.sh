@@ -84,6 +84,8 @@ clone_repo https://github.com/rockjake/luci-app-fancontrol.git main \
   package/fancontrol
 clone_repo https://github.com/gdy666/luci-app-lucky.git main \
   package/lucky
+clone_repo https://github.com/sbwml/openwrt-qBittorrent master \
+  package/qbittorrent
 
 replace_collections() {
   local -n _replacements="$1"

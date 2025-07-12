@@ -96,6 +96,8 @@ CONFIG_PACKAGE_kmod-inet-diag=m
 CONFIG_PACKAGE_kmod-nft-tproxy=m
 CONFIG_PACKAGE_kmod-nf-tproxy=m
 CONFIG_PACKAGE_kmod-tun=m
+# luci-app-qbittorrent
+CONFIG_PACKAGE_luci-app-qbittorrent=m
 # luci-app-samba4
 CONFIG_PACKAGE_samba4-admin=m
 CONFIG_PACKAGE_samba4-client=m
