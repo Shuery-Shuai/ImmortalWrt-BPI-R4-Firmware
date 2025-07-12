@@ -98,6 +98,51 @@ generate_index() {
         else
             echo "  <title>$base_url 的索引</title>"
         fi
+        echo "  <style>"
+        echo "    .copy-btn {"
+        echo "      cursor: pointer;"
+        echo "      margin-left: 5px;"
+        echo "      display: inline-block;"
+        echo "      transition: all 0.2s ease;"
+        echo "    }"
+        echo "    .copy-btn.success {"
+        echo "      color: #4CAF50;"
+        echo "      transform: scale(1.2);"
+        echo "      animation: pop 0.3s ease-in-out;"
+        echo "    }"
+        echo "    @keyframes pop {"
+        echo "      0% { transform: scale(1); }"
+        echo "      50% { transform: scale(1.3); }"
+        echo "      100% { transform: scale(1); }"
+        echo "    }"
+        echo "  </style>"
+        echo "  <script>"
+        echo "    function copyToClipboard(sha, btnElement) {"
+        echo "      if (navigator.clipboard) {"
+        echo "        navigator.clipboard.writeText(sha)"
+        echo "          .then(() => {"
+        echo "            const originalText = btnElement.textContent;"
+        echo "            btnElement.textContent = '✔';"
+        echo "            btnElement.classList.add('success');"
+        echo "            setTimeout(() => {"
+        echo "              btnElement.textContent = originalText;"
+        echo "              btnElement.classList.remove('success');"
+        echo "            }, 1000);"
+        echo "          })"
+        echo "          .catch(() => showTooltip('复制失败', event));"
+        echo "      } else {"
+        echo "        prompt('请手动复制完整 SHA256：', sha);"
+        echo "      }"
+        echo "    }"
+        echo "    function showTooltip(text, e) {"
+        echo "      const tooltip = document.getElementById('tooltip');"
+        echo "      tooltip.textContent = text;"
+        echo "      tooltip.style.display = 'block';"
+        echo "      tooltip.style.left = (e.clientX + 10) + 'px';"
+        echo "      tooltip.style.top = (e.clientY + 10) + 'px';"
+        echo "      setTimeout(() => tooltip.style.display = 'none', 1000);"
+        echo "    }"
+        echo "  </script>"
         echo "</head>"
         echo "<body>"
         echo "<div class='container'>"
@@ -180,7 +225,13 @@ generate_index() {
             else
                 item_type=$(file -b --mime-type "$item_path" | awk -F'/' '{print $2}')
                 size=$(du -h "$item_path" | awk '{print $1}')
-                sha_value=$(calculate_sha256 "$item_path")
+                sha_full=$(calculate_sha256 "$item_path")
+                if [ "$sha_full" != "-" ]; then
+                    sha_short="${sha_full:0:7}..."
+                    sha_display="${sha_short}<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard(\"${sha_full}\", this)'>📋</span>"
+                else
+                    sha_display="-"
+                fi
                 suffix=""
                 case "$item" in
                 *.apk) icon="📦" ;;
@@ -196,7 +247,7 @@ generate_index() {
             echo "    <td class='n'>$icon <a href='$item$suffix'>$item$suffix</a></td>"
             echo "    <td class='m'>$item_type</td>"
             echo "    <td class='s'>$size</td>"
-            echo "    <td class='sh'>$sha_value</td>"
+            echo "    <td class='sh'>$sha_display</td>"
             echo "    <td class='d'>$item_date</td>"
             echo "  </tr>"
         done
