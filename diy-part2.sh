@@ -66,6 +66,7 @@ clone_repo() {
 
 # Change to official custom branch source of applications including luci-app-openclash and luci-theme-argon
 # rm -rf feeds/luci/applications/luci-app-openclash
+rm -rf feeds/luci/applications/luci-app-qbittorrent
 ARGON_THEME_DIR="feeds/luci/themes/luci-theme-argon"
 if [[ -d "${ARGON_THEME_DIR}" ]]; then
   rm -rf "${ARGON_THEME_DIR}"
