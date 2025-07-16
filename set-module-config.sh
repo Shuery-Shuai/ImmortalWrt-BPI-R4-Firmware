@@ -76,6 +76,8 @@ CONFIG_PACKAGE_kmod-nft-offload=m
 CONFIG_PACKAGE_kmod-nf-flow=m
 CONFIG_PACKAGE_kmod-ipt-fullconenat=m
 CONFIG_PACKAGE_kmod-ipt-conntrack=m
+# luci-app-fancontrol
+CONFIG_PACKAGE_luci-app-fancontrol=m
 # luci-app-lucky
 CONFIG_PACKAGE_luci-app-lucky=m
 # luci-app-openclash

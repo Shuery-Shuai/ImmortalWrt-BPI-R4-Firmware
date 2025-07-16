@@ -168,7 +168,7 @@ declare -r FIRMWARE_CONFIG_PACKAGES=(
     "luci-theme-argon"      # Argon 主题
     "luci-app-argon-config" # Argon 主题配置
     "luci-app-diskman"      # 磁盘管理
-    "luci-app-fancontrol"   # 风扇控制
+    # "luci-app-fancontrol"   # 风扇控制
     "luci-nginx"            # Nginx 前端引擎
     "luci-app-nginx"        # Nginx 前端管理
     "luci-app-easyupdate"   # 简易系统更新
