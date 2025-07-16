@@ -29,6 +29,8 @@ CONFIG_USE_LLVM_HOST=y
 "
 
 declare -r KMOD_CONFIG_PACKAGE_SNIPPET="
+# bpi-r4-pwm-fan
+CONFIG_PACKAGE_bpi-r4-pwm-fan=m
 # luci-app-alist
 CONFIG_PACKAGE_kmod-fuse=m
 # luci-app-dae

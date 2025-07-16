@@ -87,6 +87,8 @@ clone_repo https://github.com/gdy666/luci-app-lucky.git main \
   package/lucky
 clone_repo https://github.com/sbwml/openwrt-qBittorrent master \
   package/qbittorrent
+clone_repo https://github.com/anoixa/bpi-r4-pwm-fan main \
+  package/bpi-r4-pwm-fan
 
 replace_collections() {
   local -n _replacements="$1"
