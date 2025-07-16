@@ -210,6 +210,7 @@ fi
 # Set Rust build arg llvm.download-ci-llvm to false.
 RUST_MAKEFILE="feeds/packages/lang/rust/Makefile"
 if [[ -f "${RUST_MAKEFILE}" ]]; then
+  printf "Modifying %s...\n" "${RUST_MAKEFILE}"
   sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' "${RUST_MAKEFILE}"
 else
   echo "File ${RUST_MAKEFILE} does not exist." >&2
@@ -218,6 +219,7 @@ fi
 # Give restore-packages execution permissions
 RESTORE_PACKAGES_FILE="files/usr/bin/restore-packages.sh"
 if [[ -f "${RESTORE_PACKAGES_FILE}" ]]; then
+  printf "Modifying %s...\n" "${RESTORE_PACKAGES_FILE}"
   chmod +x "${RESTORE_PACKAGES_FILE}"
 else
   echo "File ${RESTORE_PACKAGES_FILE} does not exist." >&2
