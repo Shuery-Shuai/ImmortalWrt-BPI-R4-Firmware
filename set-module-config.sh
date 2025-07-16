@@ -31,14 +31,12 @@ CONFIG_USE_LLVM_HOST=y
 declare -r KMOD_CONFIG_PACKAGE_SNIPPET="
 # bpi-r4-pwm-fan
 CONFIG_PACKAGE_bpi-r4-pwm-fan=m
-# luci-app-alist
-CONFIG_PACKAGE_kmod-fuse=m
-# luci-app-dae
+# dae
 CONFIG_PACKAGE_kmod-sched-bpf=m
 CONFIG_PACKAGE_kmod-sched-core=m
 CONFIG_PACKAGE_kmod-veth=m
 CONFIG_PACKAGE_kmod-xdp-sockets-diag=m
-# luci-app-docker
+# docker
 CONFIG_PACKAGE_kmod-fs-btrfs=m
 CONFIG_PACKAGE_kmod-crypto-blake2b=m
 CONFIG_PACKAGE_kmod-crypto-hash=m
@@ -78,11 +76,11 @@ CONFIG_PACKAGE_kmod-nft-offload=m
 CONFIG_PACKAGE_kmod-nf-flow=m
 CONFIG_PACKAGE_kmod-ipt-fullconenat=m
 CONFIG_PACKAGE_kmod-ipt-conntrack=m
-# luci-app-fancontrol
+# fancontrol
 CONFIG_PACKAGE_luci-app-fancontrol=m
-# luci-app-lucky
+# lucky
 CONFIG_PACKAGE_luci-app-lucky=m
-# luci-app-openclash
+# openclash
 CONFIG_PACKAGE_kmod-nf-conntrack-netlink=m
 CONFIG_PACKAGE_kmod-nf-conntrack=m
 CONFIG_PACKAGE_kmod-nfnetlink=m
@@ -100,9 +98,11 @@ CONFIG_PACKAGE_kmod-inet-diag=m
 CONFIG_PACKAGE_kmod-nft-tproxy=m
 CONFIG_PACKAGE_kmod-nf-tproxy=m
 CONFIG_PACKAGE_kmod-tun=m
-# luci-app-qbittorrent
+# openlist
+CONFIG_PACKAGE_kmod-fuse=m
+# qbittorrent
 CONFIG_PACKAGE_luci-app-qbittorrent=m
-# luci-app-samba4
+# samba4
 CONFIG_PACKAGE_samba4-admin=m
 CONFIG_PACKAGE_samba4-client=m
 CONFIG_PACKAGE_samba4-libs=m
