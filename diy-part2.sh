@@ -73,6 +73,9 @@ if [[ -d "${ARGON_THEME_DIR}" ]]; then
 fi
 # clone_repo https://github.com/vernesong/OpenClash dev \
 #   feeds/luci/applications/luci-app-openclash
+clone_repo https://github.com/sbwml/openwrt-qBittorrent master \
+  package/qbittorrent
+mv package/qbittorrent/luci-app-qbittorrent feeds/luci/applications/luci-app-qbittorrent
 clone_repo https://github.com/jerrykuku/luci-theme-argon.git master \
   feeds/luci/themes/luci-theme-argon
 
@@ -85,8 +88,6 @@ clone_repo https://github.com/rockjake/luci-app-fancontrol.git main \
   package/fancontrol
 clone_repo https://github.com/gdy666/luci-app-lucky.git main \
   package/lucky
-clone_repo https://github.com/sbwml/openwrt-qBittorrent master \
-  package/qbittorrent
 clone_repo https://github.com/anoixa/bpi-r4-pwm-fan main \
   package/bpi-r4-pwm-fan
 
