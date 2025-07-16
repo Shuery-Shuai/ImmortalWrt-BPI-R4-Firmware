@@ -38,7 +38,7 @@ clone_repo() {
   if [[ -d "${target}" ]]; then
     printf "Pulling %s at %s...\n" "${repo}" "${target}"
     for attempt in {1..3}; do
-      if git -C "${target}" restore . && git -C "${target}" pull; then
+      if git -C "${target}" clean -f . && git -C "${target}" pull; then
         break
       else
         echo "Pull attempt ${attempt} failed, retrying..."
