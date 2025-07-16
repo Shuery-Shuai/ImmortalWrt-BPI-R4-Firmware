@@ -66,16 +66,12 @@ clone_repo() {
 
 # Change to official custom branch source of applications including luci-app-openclash and luci-theme-argon
 # rm -rf feeds/luci/applications/luci-app-openclash
-rm -rf feeds/luci/applications/luci-app-qbittorrent
 ARGON_THEME_DIR="feeds/luci/themes/luci-theme-argon"
 if [[ -d "${ARGON_THEME_DIR}" ]]; then
   rm -rf "${ARGON_THEME_DIR}"
 fi
 # clone_repo https://github.com/vernesong/OpenClash dev \
 #   feeds/luci/applications/luci-app-openclash
-clone_repo https://github.com/sbwml/openwrt-qBittorrent master \
-  package/qbittorrent
-mv package/qbittorrent/luci-app-qbittorrent feeds/luci/applications/luci-app-qbittorrent
 clone_repo https://github.com/jerrykuku/luci-theme-argon.git master \
   feeds/luci/themes/luci-theme-argon
 
@@ -90,6 +86,8 @@ clone_repo https://github.com/gdy666/luci-app-lucky.git main \
   package/lucky
 clone_repo https://github.com/anoixa/bpi-r4-pwm-fan main \
   package/bpi-r4-pwm-fan
+clone_repo https://github.com/sbwml/openwrt-qBittorrent master \
+  package/qbittorrent
 
 replace_collections() {
   local -n _replacements="$1"
@@ -223,4 +221,14 @@ if [[ -f "${RESTORE_PACKAGES_FILE}" ]]; then
   chmod +x "${RESTORE_PACKAGES_FILE}"
 else
   echo "File ${RESTORE_PACKAGES_FILE} does not exist." >&2
+fi
+
+# Change luci-app-qbittorrent name to luci-app-qbittorrent-original
+QBIT_APP_PATH="package/qbittorrent"
+if [[ -d "${QBIT_APP_PATH}" ]]; then
+  printf "Modifying %s...\n" "${QBIT_APP_PATH}"
+  mv ${QBIT_APP_PATH}/luci-app-qbittorrent ${QBIT_APP_PATH}/luci-app-qbittorrent-original
+  sed -i 's/luci-app-qbittorrent/luci-app-qbittorrent-original/' "${QBIT_APP_PATH}/luci-app-qbittorrent-original/Makefile"
+else
+  echo "Dir ${QBIT_APP_PATH} does not exist." >&2
 fi

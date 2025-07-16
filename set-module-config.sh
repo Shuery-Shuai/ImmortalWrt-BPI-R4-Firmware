@@ -101,7 +101,7 @@ CONFIG_PACKAGE_kmod-tun=m
 # openlist
 CONFIG_PACKAGE_kmod-fuse=m
 # qbittorrent
-CONFIG_PACKAGE_luci-app-qbittorrent=m
+CONFIG_PACKAGE_luci-app-qbittorrent-original=m
 # samba4
 CONFIG_PACKAGE_samba4-admin=m
 CONFIG_PACKAGE_samba4-client=m
