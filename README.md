@@ -21,8 +21,10 @@
 >
 > 2. **特定软件配置保存**
 >
->    - 使用 qbittorrent-original 时，需要将 `/etc/qbittorrent` 目录添加至系统升级保存列表
->    - 编辑 `/etc/sysupgrade.conf` 添加以下内容：
+>    - 使用 qbittorrent-original 时，需要将 `/etc/qbittorrent` 目录添加至系统升级保存列表：
+>
+>      编辑 `/etc/sysupgrade.conf` 添加以下内容：
+>
 >      ```
 >      /etc/qbittorrent/
 >      ```
@@ -48,17 +50,17 @@
 
 下表列出已预编译或支持从官方仓库安装的软件包：
 
-| 分类     | 软件包                        | 说明             |
-| -------- | ----------------------------- | ---------------- |
-| 系统工具 | bpi-r4-pwm-fan                | 风扇控制         |
-|          | luci-app-fancontrol           | 简易风扇控制     |
-| 网络应用 | luci-app-dae                  | 大鹅网络工具     |
-|          | luci-app-docker               | Docker 容器管理  |
-|          | luci-app-lucky                | 内网穿透         |
-|          | luci-app-openclash            | 代理工具         |
-| 存储共享 | luci-app-openlist             | 文件列表         |
-|          | luci-app-samba4               | 网络共享         |
-| 下载工具 | luci-app-qbittorrent-original | 原版丘比特下载器 |
+| 分类     | 软件包                        | 说明                |
+| -------- | ----------------------------- | ------------------- |
+| 系统工具 | bpi-r4-pwm-fan                | 风扇控制            |
+|          | luci-app-fancontrol           | 简易风扇控制        |
+| 网络应用 | luci-app-dae                  | 大鹅网络工具        |
+|          | luci-app-docker               | Docker 容器管理     |
+|          | luci-app-lucky                | 大吉内网穿透工具    |
+|          | luci-app-openclash            | OpenClash 代理工具  |
+| 存储共享 | luci-app-openlist             | OpenList 文件服务器 |
+|          | luci-app-samba4               | 网络共享存储        |
+| 下载工具 | luci-app-qbittorrent-original | 原版丘比特下载器    |
 
 > [!NOTE]
 >
@@ -70,5 +72,5 @@
 
 ## 致谢
 
-感谢 ImmortalWrt 项目团队的持续贡献。
-感谢 Banana Pi 社区对 BPI-R4 硬件的支持。
+- 感谢 ImmortalWrt 项目团队的持续贡献。
+- 感谢 Banana Pi 社区对 BPI-R4 硬件的支持。
