@@ -66,9 +66,11 @@
 
 ## 许可证
 
-本项目采用 GPL-3.0 许可证。
+- 本项目脚本采用 MIT 许可证。
+- 本项目 Actions 更改自 P3TERX，采用 MIT 许可证。
 
 ## 致谢
 
 - 感谢 ImmortalWrt 项目团队的持续贡献。
 - 感谢 Banana Pi 社区对 BPI-R4 硬件的支持。
+- 感谢 P3TERX 与 sundaqiang 提供的 Actions 工作流模板。
