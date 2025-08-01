@@ -234,3 +234,13 @@ if [[ -d "${QBIT_APP_PATH}" ]]; then
 else
   echo "Dir ${QBIT_APP_PATH} does not exist." >&2
 fi
+
+# Solve gettext infrastructure mismatch
+RPCSVC_PROTO_PATH="feeds/packages/libs/rpcsvc-proto"
+if [[ -d "${RPCSVC_PROTO_PATH}" ]]; then
+  printf "Modifying %s...\n" "${RPCSVC_PROTO_PATH}"
+  cd "${RPCSVC_PROTO_PATH}" || exit 1
+  autoreconf -fi
+else
+  echo "Dir ${RPCSVC_PATH} does not exist." >&2
+fi
