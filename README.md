@@ -1,44 +1,74 @@
-**English** | [中文](https://p3terx.com/archives/build-openwrt-with-github-actions.html)
+# ImmortalWrt BPI-R4 固件构建项目
 
-# Actions-OpenWrt
+本项目用于构建香蕉派 BPI-R4 路由器的 ImmortalWrt 固件。
 
-[![LICENSE](https://img.shields.io/github/license/mashape/apistatus.svg?style=flat-square&label=LICENSE)](https://github.com/P3TERX/Actions-OpenWrt/blob/master/LICENSE)
-![GitHub Stars](https://img.shields.io/github/stars/P3TERX/Actions-OpenWrt.svg?style=flat-square&label=Stars&logo=github)
-![GitHub Forks](https://img.shields.io/github/forks/P3TERX/Actions-OpenWrt.svg?style=flat-square&label=Forks&logo=github)
+## 项目特点
 
-A template for building OpenWrt with GitHub Actions
+- 基于 ImmortalWrt 最新源码构建
+- 使用测试版内核
+- 极简固件设计，仅包含基础组件
+- 支持固件更新时自动恢复已安装软件包
+- 支持自动更新
+- 针对 BPI-R4 硬件优化的内核配置
 
-## Usage
+> [!WARNING]
+>
+> 1. **固件更新相关**
+>
+>    - 手动更新固件时，请在更新选项中勾选"备份已安装软件包"
+>    - 更新完成后系统将自动恢复之前安装的软件包
+>    - 软件包恢复过程中请勿断电或重启
+>
+> 2. **特定软件配置保存**
+>
+>    - 使用 qbittorrent-original 时，需要将 `/etc/qbittorrent` 目录添加至系统升级保存列表
+>    - 编辑 `/etc/sysupgrade.conf` 添加以下内容：
+>      ```
+>      /etc/qbittorrent/
+>      ```
+>
+> 3. **其他提醒**
+>
+>    - 首次安装后建议修改默认密码
+>    - 建议定期备份配置文件
+>    - 如遇网络问题，可尝试重置防火墙设置
 
-- Click the [Use this template](https://github.com/P3TERX/Actions-OpenWrt/generate) button to create a new repository.
-- Generate `.config` files using [Lean's OpenWrt](https://github.com/coolsnowwolf/lede) source code. ( You can change it through environment variables in the workflow file. )
-- Push `.config` file to the GitHub repository.
-- Select `Build OpenWrt` on the Actions page.
-- Click the `Run workflow` button.
-- When the build is complete, click the `Artifacts` button in the upper right corner of the Actions page to download the binaries.
+## 固件内置组件
 
-## Tips
+| 分类     | 软件包                | 说明           |
+| -------- | --------------------- | -------------- |
+| 界面相关 | luci-theme-argon      | Argon 主题     |
+|          | luci-app-argon-config | Argon 主题配置 |
+| 网络组件 | luci-nginx            | Nginx 前端引擎 |
+|          | luci-app-nginx        | Nginx 前端管理 |
+| 系统管理 | luci-app-diskman      | 磁盘管理       |
+|          | luci-app-easyupdate   | 系统简易更新   |
 
-- It may take a long time to create a `.config` file and build the OpenWrt firmware. Thus, before create repository to build your own firmware, you may check out if others have already built it which meet your needs by simply [search `Actions-Openwrt` in GitHub](https://github.com/search?q=Actions-openwrt).
-- Add some meta info of your built firmware (such as firmware architecture and installed packages) to your repository introduction, this will save others' time.
+## 支持安装的扩展包
 
-## Credits
+下表列出已预编译或支持从官方仓库安装的软件包：
 
-- [Microsoft Azure](https://azure.microsoft.com)
-- [GitHub Actions](https://github.com/features/actions)
-- [OpenWrt](https://github.com/openwrt/openwrt)
-- [Lean's OpenWrt](https://github.com/coolsnowwolf/lede)
-- [tmate](https://github.com/tmate-io/tmate)
-- [mxschmitt/action-tmate](https://github.com/mxschmitt/action-tmate)
-- [csexton/debugger-action](https://github.com/csexton/debugger-action)
-- [Cowtransfer](https://cowtransfer.com)
-- [WeTransfer](https://wetransfer.com/)
-- [Mikubill/transfer](https://github.com/Mikubill/transfer)
-- [softprops/action-gh-release](https://github.com/softprops/action-gh-release)
-- [ActionsRML/delete-workflow-runs](https://github.com/ActionsRML/delete-workflow-runs)
-- [dev-drprasad/delete-older-releases](https://github.com/dev-drprasad/delete-older-releases)
-- [peter-evans/repository-dispatch](https://github.com/peter-evans/repository-dispatch)
+| 分类     | 软件包                        | 说明             |
+| -------- | ----------------------------- | ---------------- |
+| 系统工具 | bpi-r4-pwm-fan                | 风扇控制         |
+|          | luci-app-fancontrol           | 简易风扇控制     |
+| 网络应用 | luci-app-dae                  | 大鹅网络工具     |
+|          | luci-app-docker               | Docker 容器管理  |
+|          | luci-app-lucky                | 内网穿透         |
+|          | luci-app-openclash            | 代理工具         |
+| 存储共享 | luci-app-openlist             | 文件列表         |
+|          | luci-app-samba4               | 网络共享         |
+| 下载工具 | luci-app-qbittorrent-original | 原版丘比特下载器 |
 
-## License
+> [!NOTE]
+>
+> 大部分软件包都不需要另外支持，如果有需要另外支持的软件包，请在 Issues 中提出。
 
-[MIT](https://github.com/P3TERX/Actions-OpenWrt/blob/main/LICENSE) © [**P3TERX**](https://p3terx.com)
+## 许可证
+
+本项目采用 GPL-3.0 许可证。
+
+## 致谢
+
+感谢 ImmortalWrt 项目团队的持续贡献。
+感谢 Banana Pi 社区对 BPI-R4 硬件的支持。
