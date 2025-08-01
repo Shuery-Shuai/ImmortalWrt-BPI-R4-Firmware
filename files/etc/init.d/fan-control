@@ -4,36 +4,62 @@ START=99
 STOP=10
 
 USE_PROCD=1
+PROG=/usr/bin/fan-control.sh
 
-start_service() {
+# 设置权限
+setup_permissions() {
     # 确保必要的目录存在并可访问
-    [ -d /sys/class/hwmon/hwmon0 ] || exit 1
-    [ -d /sys/class/hwmon/hwmon1 ] || exit 1
+    [ -d /sys/class/hwmon/hwmon0 ] || return 1
+    [ -d /sys/class/hwmon/hwmon1 ] || return 1
 
     # 设置正确的权限
     chmod 666 /sys/class/hwmon/hwmon1/pwm1 2>/dev/null
     chmod 444 /sys/class/hwmon/hwmon0/temp1_input 2>/dev/null
-
-    procd_open_instance
-    procd_set_param command /bin/sh /usr/bin/fan-control.sh  # 明确使用 /bin/sh 运行
-    procd_set_param respawn
-    procd_set_param respawn_threshold 3600 5
-    procd_set_param stdout 1
-    procd_set_param stderr 1
-    # 添加工作目录
-    procd_set_param file /usr/bin/fan-control.sh
-    procd_set_param pidfile /var/run/fan-control.pid
-    procd_close_instance
+    return 0
 }
 
-stop_service() {
-    # 停止时将风扇设为安全速度
+# 设置安全速度
+set_safe_speed() {
     if [ -w /sys/class/hwmon/hwmon1/pwm1 ]; then
         echo 150 > /sys/class/hwmon/hwmon1/pwm1 2>/dev/null
     fi
 }
 
+start_service() {
+    if ! setup_permissions; then
+        echo "无法访问必要的硬件设备"
+        return 1
+    fi
+
+    procd_open_instance
+    procd_set_param command /bin/sh "$PROG"
+    procd_set_param respawn
+    procd_set_param respawn_threshold 3600 5
+    procd_set_param stdout 1
+    procd_set_param stderr 1
+    procd_set_param file "$PROG"
+    procd_set_param pidfile /var/run/fan-control.pid
+    procd_close_instance
+}
+
+stop_service() {
+    # 停止服务时设置安全速度
+    set_safe_speed
+}
+
 reload_service() {
     stop
     start
+}
+
+# 支持 restart 命令
+restart() {
+    set_safe_speed              # 先设置安全速度
+    trap '' TERM               # 忽略 TERM 信号
+    stop
+    start
+}
+
+service_triggers() {
+    procd_add_reload_trigger "fan-control"
 }
