@@ -6,6 +6,54 @@ LOGGER="/usr/bin/logger"
 PWM_MIN=0      # 最小 PWM 值
 PWM_MAX=255    # 最大 PWM 值
 
+# 温度和风扇速度控制点（可调整）
+TEMP_MIN=35    # 最低温度阈值（°C）
+TEMP_MAX=75    # 最高温度阈值（°C）
+PWM_START=30   # 起始转速百分比
+PWM_END=100    # 最高转速百分比
+
+# 计算平滑曲线 PWM 值
+# 使用三次贝塞尔曲线实现平滑过渡
+# 参数：当前温度
+calculate_curve_pwm() {
+    local temp=$1
+    local t
+    
+    # 如果温度低于最低阈值，使用最低转速
+    if [ $temp -le $TEMP_MIN ]; then
+        echo $(percent_to_pwm $PWM_START)
+        return
+    fi
+    
+    # 如果温度高于最高阈值，使用最高转速
+    if [ $temp -ge $TEMP_MAX ]; then
+        echo $(percent_to_pwm $PWM_END)
+        return
+    fi
+    
+    # 计算温度在范围内的位置（0-1000）
+    # 使用 1000 而不是 1 来提高精度
+    t=$(( (temp - TEMP_MIN) * 1000 / (TEMP_MAX - TEMP_MIN) ))
+    
+    # 使用三次贝塞尔曲线公式计算
+    # 控制点：(0,PWM_START), (0.25,PWM_START+10), (0.75,PWM_END-10), (1,PWM_END)
+    local t2=$(( t * t / 1000 ))
+    local t3=$(( t2 * t / 1000 ))
+    local mt=$(( 1000 - t ))
+    local mt2=$(( mt * mt / 1000 ))
+    local mt3=$(( mt2 * mt / 1000 ))
+    
+    # 计算曲线上的点
+    local p1=$(( PWM_START * mt3 ))
+    local p2=$(( (PWM_START + 10) * 3 * mt2 * t / 1000 ))
+    local p3=$(( (PWM_END - 10) * 3 * mt * t2 / 1000 ))
+    local p4=$(( PWM_END * t3 ))
+    
+    # 计算最终百分比并转换为 PWM 值
+    local percent=$(( (p1 + p2 + p3 + p4) / 1000 ))
+    echo $(percent_to_pwm $percent)
+}
+
 # 将百分比转换为 PWM 值
 percent_to_pwm() {
     local percent=$1
@@ -177,10 +225,10 @@ fi
 echo 1 > "${PWM_PATH}_enable" 2>/dev/null
 
 # 初始化变量（使用百分比设置）
-initial_percent=30
+initial_percent=$PWM_START
 current_pwm=$(percent_to_pwm $initial_percent)
 target_pwm=$current_pwm
-step_size=5
+step_size=2          # 步进值使过渡更平滑
 last_log_time=0      # 上次记录完整状态的时间
 log_interval=300     # 完整状态日志间隔（秒）
 last_temp_c=0        # 上次记录的温度
@@ -202,7 +250,7 @@ if ! printf '%d' "$current_pwm" > "$PWM_PATH" 2>/dev/null; then
     exit 1
 fi
 
-$LOGGER -t FAN_CONTROL "风扇控制启动成功（PWM 范围：$PWM_MIN-$PWM_MAX, 初始值：${current_pwm}(${initial_percent}%)）"
+$LOGGER -t FAN_CONTROL "风扇控制启动成功（PWM 范围：$PWM_MIN-$PWM_MAX，温度范围：${TEMP_MIN}°C-${TEMP_MAX}°C）"
 
 # 主控制循环
 while true; do
@@ -225,21 +273,9 @@ while true; do
     # 转换温度
     temp_c=$((temp/1000))
     
-    # 设置目标转速百分比
-    if [ $temp_c -lt 40 ]; then
-        target_percent=30
-    elif [ $temp_c -lt 50 ]; then
-        target_percent=45
-    elif [ $temp_c -lt 60 ]; then
-        target_percent=60
-    elif [ $temp_c -lt 70 ]; then
-        target_percent=80
-    else
-        target_percent=100
-    fi
-    
-    # 转换目标百分比为 PWM 值
-    target_pwm=$(percent_to_pwm $target_percent)
+    # 根据温度计算目标 PWM 值（使用曲线）
+    target_pwm=$(calculate_curve_pwm $temp_c)
+    target_percent=$(pwm_to_percent $target_pwm)
     
     # 平滑过渡
     last_pwm=$current_pwm
