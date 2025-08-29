@@ -384,7 +384,7 @@ install_and_verify_packages() {
     # 安装用户包
     log_info "$log_file" "=== 安装用户软件包 ==="
     if ! install_pkgs_with_retry "$user_pkgs" "$max_retries" "$log_file"; then
-        return 1
+        log_info "$log_file" "警告：部分用户软件包未正确安装"
     fi
 
     # 安装内核模块
@@ -430,7 +430,7 @@ install_pkgs_with_retry() {
         : >"$failed_file"
 
         # 安装尝试
-        xargs <"$pkg_list" apk add --no-cache >>"$log_file" 2>&1 || true
+        xargs -n 1 <"$pkg_list" apk add --no-cache >>"$log_file" 2>&1 || true
 
         # 验证安装
         verify_packages "$pkg_list" "$log_file" "$failed_file"
