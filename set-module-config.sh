@@ -113,7 +113,10 @@ CONFIG_PACKAGE_samba4-utils=m
 if [ -d "immortalwrt" ]; then
     cp ./diy-part*.sh ./immortalwrt/
     echo "进入 'immortalwrt' 目录..."
-    cd immortalwrt
+    cd immortalwrt || {
+        echo "无法进入 'immortalwrt' 目录！"
+        exit 1
+    }
 elif [ "$(basename "$(pwd)")" != "immortalwrt" ]; then
     echo "当前目录不是或不存在 'immortalwrt'，请先进入正确的目录。"
     exit 1

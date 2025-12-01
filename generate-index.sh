@@ -282,5 +282,8 @@ generate_index() {
 }
 
 # 从 bin 目录开始生成索引
-cd bin
+cd bin || {
+    echo "无法进入 'bin' 目录！"
+    exit 1
+}
 generate_index "." "" ""

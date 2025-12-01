@@ -169,9 +169,9 @@ declare -r FIRMWARE_CONFIG_PACKAGES=(
     "luci-app-argon-config" # Argon 主题配置
     "luci-app-diskman"      # 磁盘管理
     # "luci-app-fancontrol"   # 风扇控制
-    "luci-nginx"            # Nginx 前端引擎
-    "luci-app-nginx"        # Nginx 前端管理
-    "luci-app-easyupdate"   # 简易系统更新
+    "luci-nginx"          # Nginx 前端引擎
+    "luci-app-nginx"      # Nginx 前端管理
+    "luci-app-easyupdate" # 简易系统更新
     # "luci-app-zerotier"     # ZeroTier 虚拟网络
     # "luci-app-lucky"        # 内网穿透工具包
     # "luci-app-acme"         # ACME 证书管理
@@ -187,7 +187,10 @@ declare -r FIRMWARE_CONFIG_PACKAGES=(
 if [ -d "immortalwrt" ]; then
     cp ./diy-part*.sh ./immortalwrt/
     echo "进入 'immortalwrt' 目录..."
-    cd immortalwrt
+    cd immortalwrt || {
+        echo "无法进入 'immortalwrt' 目录！"
+        exit 1
+    }
 elif [ "$(basename "$(pwd)")" != "immortalwrt" ]; then
     echo "当前目录不是或不存在 'immortalwrt'，请先进入正确的目录。"
     exit 1

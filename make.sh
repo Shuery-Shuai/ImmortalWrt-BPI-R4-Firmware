@@ -5,7 +5,10 @@ if [ -d "immortalwrt" ]; then
     cp -r files immortalwrt/
     cp diy-part*.sh immortalwrt/
     cp generate-index.sh immortalwrt/
-    cd immortalwrt
+    cd immortalwrt || {
+        echo "无法进入 'immortalwrt' 目录！"
+        exit 1
+    }
     git restore .
     git pull
 elif [ "$(basename "$(pwd)")" != "immortalwrt" ]; then
@@ -17,7 +20,10 @@ elif [ "$(basename "$(pwd)")" != "immortalwrt" ]; then
     cp -r files immortalwrt/
     cp diy-part*.sh immortalwrt/
     cp generate-index.sh immortalwrt/
-    cd immortalwrt
+    cd immortalwrt || {
+        echo "无法进入 'immortalwrt' 目录！"
+        exit 1
+    }
 fi
 bash ./diy-part1.sh
 ./scripts/feeds update -a -f
