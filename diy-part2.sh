@@ -90,16 +90,15 @@ clone_repo https://github.com/sbwml/openwrt-qBittorrent master \
   package/qbittorrent
 
 replace_collections() {
-  local -n _replacements="$1"
   local file
   local pattern
   local escaped_pattern
   local escaped_replacement
   local -a sed_script
 
-  for pattern in "${!_replacements[@]}"; do
+  for pattern in "${!replacements[@]}"; do
     escaped_pattern=$(sed "s/[\/&]/\\&/g" <<<"${pattern}")
-    escaped_replacement=$(sed "s/[\/&]/\\&/g" <<<"${_replacements[$pattern]}")
+    escaped_replacement=$(sed "s/[\/&]/\\&/g" <<<"${replacements[$pattern]}")
     sed_script+=("-e" "s/${escaped_pattern}/${escaped_replacement}/g")
   done
 
@@ -116,7 +115,7 @@ declare -A replacements=(
   ["luci-theme-bootstrap"]="luci-theme-argon"
   ["+uhttpd +uhttpd-mod-ubus"]=""
 )
-replace_collections replacements
+replace_collections
 
 # Modify Argon login page from float left to center
 # THEME_CSS_FILE="feeds/luci/themes/luci-theme-argon/htdocs/luci-static/argon/css/cascade.css"

@@ -4,7 +4,8 @@
 format_date_cn() {
     local file="$1"
     # 获取英文日期
-    local en_date=$(date -r "$file" '+%a %b %d %H:%M:%S %Y')
+    local en_date
+    en_date=$(date -r "$file" '+%a %b %d %H:%M:%S %Y')
 
     # 星期映射表
     declare -A weekdays=(
@@ -64,7 +65,8 @@ generate_index() {
     echo "父路径: $parent_path"
     echo "基础 URL: $base_url"
     # 获取当前目录名称
-    local dir_name=$(basename "$handle_path")
+    local dir_name
+    dir_name=$(basename "$handle_path")
     echo "当前目录名称: $dir_name"
 
     # 创建面包屑导航路径
@@ -183,10 +185,10 @@ generate_index() {
 
         # 获取目录内容并排序（目录在前，文件在后）
         items=()
-        while IFS= read -r item; do
+        while IFS= read -r -d '' item; do
             [ "$item" = "index.html" ] && continue
             items+=("$item")
-        done < <(ls -1 "$handle_path" | sort)
+        done < <(find "$handle_path" -maxdepth 1 -mindepth 1 -print0 | sort -z)
 
         # 分离目录和文件
         directories=()
@@ -200,8 +202,8 @@ generate_index() {
         done
 
         # 排序：目录按名称排序，文件按名称排序
-        sorted_directories=($(printf "%s\n" "${directories[@]}" | sort))
-        sorted_files=($(printf "%s\n" "${files[@]}" | sort))
+        mapfile -t sorted_directories < <(printf "%s\n" "${directories[@]}" | sort)
+        mapfile -t sorted_files < <(printf "%s\n" "${files[@]}" | sort)
         sorted_items=("${sorted_directories[@]}" "${sorted_files[@]}")
 
         # 检查是否为空目录
@@ -221,12 +223,12 @@ generate_index() {
                 size="-"
                 suffix="/"
                 icon="📁"
-                sha_value="-"
+                sha_display="-"
             else
                 item_type=$(file -b --mime-type "$item_path" | awk -F'/' '{print $2}')
                 size=$(du -h "$item_path" | awk '{print $1}')
                 sha_full=$(calculate_sha256 "$item_path")
-                if [ "$sha_full" != "-" ]; then
+                if [ "$sha_display" != "-" ]; then
                     sha_short="${sha_full:0:7}..."
                     sha_display="${sha_short}<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard(\"${sha_full}\", this)'>📋</span>"
                 else
@@ -266,7 +268,7 @@ generate_index() {
     } >"$handle_path/index.html"
 
     # 递归处理子目录
-    for child_dir in $(find "$handle_path" -maxdepth 1 -type d); do
+    while IFS= read -r -d '' child_dir; do
         if [ "$child_dir" != "$handle_path" ]; then
             # 计算新的父路径
             local new_parent_path
@@ -278,7 +280,7 @@ generate_index() {
 
             generate_index "$child_dir" "$new_parent_path" "$base_url/$(basename "$child_dir")"
         fi
-    done
+    done < <(find "$handle_path" -maxdepth 1 -type d -print0)
 }
 
 # 从 bin 目录开始生成索引

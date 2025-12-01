@@ -219,7 +219,11 @@ safe_set_config() {
     local value="$2"
     local comment="$3"
 
-    local escaped_key=$(printf '%s\n' "$key" | sed 's/[]\.|$(){}?+*^]/\\&/g')
+    local escaped_key
+    if ! escaped_key=$(printf '%s\n' "$key" | sed "s/[][\.|$(){}?+*^]/\\&/g"); then
+        echo "错误：转义键值失败" >&2
+        return 1
+    fi
 
     if grep -q "^${escaped_key}=" ".config"; then
         sed -i "s|^${escaped_key}=.*|${key}=${value}|" ".config"
@@ -236,7 +240,7 @@ safe_set_config() {
 for pkg in "${FIRMWARE_CONFIG_PACKAGES[@]}"; do
     echo -e "\n处理软件包: $pkg"
 
-    escaped_pkg=$(printf '%s\n' "$pkg" | sed 's/[]\.|$(){}?+*^]/\\&/g')
+    escaped_pkg=$(printf '%s\n' "$pkg" | sed "s/[]\.|$(){}?+*^]/\\&/g")
 
     detected_prefix=""
     if grep -q "^CONFIG_DEFAULT_${escaped_pkg}=" ".config" ||
@@ -253,13 +257,13 @@ for pkg in "${FIRMWARE_CONFIG_PACKAGES[@]}"; do
         echo "2) CONFIG_PACKAGE_${pkg}"
         echo "3) 自定义格式"
         echo "4) 跳过此包"
-        read -p "请选择 (1-4): " choice
+        read -rp "请选择 (1-4): " choice
 
         case $choice in
         1) config_name="CONFIG_DEFAULT_${pkg}" ;;
         2) config_name="CONFIG_PACKAGE_${pkg}" ;;
         3)
-            read -p "请输入完整配置项名称 (如 CONFIG_CUSTOM_${pkg}): " custom_name
+            read -rp "请输入完整配置项名称 (如 CONFIG_CUSTOM_${pkg}): " custom_name
             config_name="$custom_name"
             ;;
         4)
