@@ -209,7 +209,7 @@ else
     bash ./diy-part2.sh
     ./scripts/feeds install -a -f
     touch $FIRMWARE_CONFIG_FILE
-    echo $FIRMWARE_CONFIG_TARGET_SNIPPET $FIRMWARE_CONFIG_SNIPPET >>$FIRMWARE_CONFIG_FILE
+    echo "$FIRMWARE_CONFIG_TARGET_SNIPPET" "$FIRMWARE_CONFIG_SNIPPET" >>$FIRMWARE_CONFIG_FILE
     cp $FIRMWARE_CONFIG_FILE .config
     make defconfig
 fi

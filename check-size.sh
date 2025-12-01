@@ -31,7 +31,7 @@ for type in "${FILE_TYPES[@]}"; do
 
     for file in "${files[@]}"; do
         size=$(stat -c %s "$file" 2>/dev/null)
-        human_size=$(numfmt --to=iec-i --suffix=B $size 2>/dev/null)
+        human_size=$(numfmt --to=iec-i --suffix=B "$size" 2>/dev/null)
         printf "%-10s %s\n" "$human_size" "$file"
 
         ((total_count++))

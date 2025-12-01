@@ -148,7 +148,7 @@ generate_index() {
         echo "<div class='container'>"
 
         # 面包屑导航
-        if [ $dir_name = "." ]; then
+        if [ "$dir_name" = "." ]; then
             # 如果是根目录，直接显示根目录链接
             echo "<h1>索引：$breadcrumb /</h1>"
         else

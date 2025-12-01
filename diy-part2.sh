@@ -13,7 +13,7 @@
 # Modify IP
 BASE_FILE_CONFIG="package/base-files/files/bin/config_generate"
 if [[ -f "${BASE_FILE_CONFIG}" ]]; then
-  sed -i 's/192.168.1.1/192.168.0.1/g' "${BASE_FILE_CONFIG}"
+  sed -i "s/192.168.1.1/192.168.0.1/g" "${BASE_FILE_CONFIG}"
 else
   echo "File ${BASE_FILE_CONFIG} does not exist." >&2
 fi
@@ -21,13 +21,13 @@ fi
 # Modify shell to bash
 PASSWD_FILE="package/base-files/files/etc/passwd"
 if [[ -f "${PASSWD_FILE}" ]]; then
-  sed -i 's/\/bin\/ash/\/bin\/bash/' "${PASSWD_FILE}"
+  sed -i "s/\/bin\/ash/\/bin\/bash/" "${PASSWD_FILE}"
 else
   echo "File ${PASSWD_FILE} does not exist." >&2
 fi
 
 # Modify password to empty
-# sed -i '/CYXluq4wUazHjmCDBCqXF/d' package/lean/default-settings/files/zzz-default-setting
+# sed -i "/CYXluq4wUazHjmCDBCqXF/d" package/lean/default-settings/files/zzz-default-setting
 
 clone_repo() {
   local repo="$1"
@@ -98,8 +98,8 @@ replace_collections() {
   local -a sed_script
 
   for pattern in "${!_replacements[@]}"; do
-    escaped_pattern=$(sed 's/[\/&]/\\&/g' <<<"${pattern}")
-    escaped_replacement=$(sed 's/[\/&]/\\&/g' <<<"${_replacements[$pattern]}")
+    escaped_pattern=$(sed "s/[\/&]/\\&/g" <<<"${pattern}")
+    escaped_replacement=$(sed "s/[\/&]/\\&/g" <<<"${_replacements[$pattern]}")
     sed_script+=("-e" "s/${escaped_pattern}/${escaped_replacement}/g")
   done
 
@@ -122,7 +122,7 @@ replace_collections replacements
 # THEME_CSS_FILE="feeds/luci/themes/luci-theme-argon/htdocs/luci-static/argon/css/cascade.css"
 # if [[ -f "${THEME_CSS_FILE}" ]]; then
 #   printf "Modifying %s...\n" "${THEME_CSS_FILE}"
-#   awk -i inplace -v RS='}' '
+#   awk -i inplace -v RS="}" "
 #     # 主容器样式修改
 #     $0 ~ /\.login-page\s+\.login-container\s*\{/ {
 #       # 替换属性
@@ -175,7 +175,7 @@ replace_collections replacements
 #     }
 #     # 输出修改后的内容并补回 }
 #     { print $0 RT }
-#   ' "${THEME_CSS_FILE}"
+#   " "${THEME_CSS_FILE}"
 # else
 #   echo "File ${THEME_CSS_FILE} does not exist." >&2
 # fi
@@ -189,19 +189,19 @@ if [[ -f "${EASYUPDATE_FILE}" ]]; then
   # 修改 fileName 截取范围
   # 修改 suffix 为 squashfs-sysupgrade.itb
   sed -i -E \
-    -e '/curl|filename/s/OpenWrt/ImmortalWrt/g' \
-    -e '/curl|filename/s/openwrt/immortalwrt/g' \
-    -e '/curl|filename/s/Openwrt/Immortalwrt/g' \
-    -e '/sysupgrade \$keepconfig\$file/s/sysupgrade/sysupgrade -k/g' \
-    -e '/file[Nn]ame/s/0:7/0:11/g' \
-    -e '/^\s*file/s/\$\{checkShaRet/\/tmp\/\$\{checkShaRet/g' \
-    -e '/Check\s+whether\s+EFI\s+firmware/,/^\s*fi/ {
-        /^\s+fi/a\  suffix="squashfs-sysupgrade.itb"
+    -e "/curl|filename/s/OpenWrt/ImmortalWrt/g" \
+    -e "/curl|filename/s/openwrt/immortalwrt/g" \
+    -e "/curl|filename/s/Openwrt/Immortalwrt/g" \
+    -e "/sysupgrade \$keepconfig\$file/s/sysupgrade/sysupgrade -k/g" \
+    -e "/file[Nn]ame/s/0:7/0:11/g" \
+    -e "/^\s*file/s/\$\{checkShaRet/\/tmp\/\$\{checkShaRet/g" \
+    -e "/Check\s+whether\s+EFI\s+firmware/,/^\s*fi/ {
+        /^\s+fi/a\  suffix='squashfs-sysupgrade.itb'
         s/^/#/
-      }' \
-    -e '/^\s*function\s+checkSha/,/^\s*\}/ {
+      }" \
+    -e "/^\s*function\s+checkSha/,/^\s*\}/ {
         s/img\.gz/\itb/
-      }' \
+      }" \
     "${EASYUPDATE_FILE}"
 else
   echo "File ${EASYUPDATE_FILE} does not exist." >&2
@@ -211,7 +211,7 @@ fi
 RUST_MAKEFILE="feeds/packages/lang/rust/Makefile"
 if [[ -f "${RUST_MAKEFILE}" ]]; then
   printf "Modifying %s...\n" "${RUST_MAKEFILE}"
-  sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' "${RUST_MAKEFILE}"
+  sed -i "s/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/" "${RUST_MAKEFILE}"
 else
   echo "File ${RUST_MAKEFILE} does not exist." >&2
 fi
@@ -230,7 +230,7 @@ QBIT_APP_PATH="package/qbittorrent"
 if [[ -d "${QBIT_APP_PATH}" ]]; then
   printf "Modifying %s...\n" "${QBIT_APP_PATH}"
   mv ${QBIT_APP_PATH}/luci-app-qbittorrent ${QBIT_APP_PATH}/luci-app-qbittorrent-original
-  sed -i 's/luci-app-qbittorrent/luci-app-qbittorrent-original/' "${QBIT_APP_PATH}/luci-app-qbittorrent-original/Makefile"
+  sed -i "s/luci-app-qbittorrent/luci-app-qbittorrent-original/" "${QBIT_APP_PATH}/luci-app-qbittorrent-original/Makefile"
 else
   echo "Dir ${QBIT_APP_PATH} does not exist." >&2
 fi
