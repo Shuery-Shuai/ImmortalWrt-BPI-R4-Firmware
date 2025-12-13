@@ -38,7 +38,7 @@ clone_repo() {
   if [[ -d "${target}" ]]; then
     printf "Pulling %s at %s...\n" "${repo}" "${target}"
     for attempt in {1..3}; do
-      if git -C "${target}" clean -f . && git -C "${target}" pull; then
+      if git -C "${target}" clean -fdx && git -C "${target}" restore . && git -C "${target}" pull; then
         break
       else
         echo "Pull attempt ${attempt} failed, retrying..."
@@ -86,8 +86,8 @@ clone_repo https://github.com/gdy666/luci-app-lucky.git main \
   package/lucky
 clone_repo https://github.com/anoixa/bpi-r4-pwm-fan main \
   package/bpi-r4-pwm-fan
-clone_repo https://github.com/sbwml/openwrt-qBittorrent master \
-  package/qbittorrent
+# clone_repo https://github.com/sbwml/openwrt-qBittorrent master \
+#   package/qbittorrent
 
 replace_collections() {
   local file
@@ -113,7 +113,8 @@ replace_collections() {
 
 declare -A replacements=(
   ["luci-theme-bootstrap"]="luci-theme-argon"
-  ["+uhttpd +uhttpd-mod-ubus"]=""
+  ["+uhttpd-mod-ubus"]=""
+  ["+uhttpd"]=""
 )
 replace_collections
 
@@ -226,9 +227,13 @@ fi
 
 # Change luci-app-qbittorrent name to luci-app-qbittorrent-original
 QBIT_APP_PATH="package/qbittorrent"
+# Remove qbittorrent in feeds to avoid conflict
+# rm -rf feeds/luci/applications/luci-app-qbittorrent
 if [[ -d "${QBIT_APP_PATH}" ]]; then
   printf "Modifying %s...\n" "${QBIT_APP_PATH}"
-  mv ${QBIT_APP_PATH}/luci-app-qbittorrent ${QBIT_APP_PATH}/luci-app-qbittorrent-original
+  if [[ -d "${QBIT_APP_PATH}/luci-app-qbittorrent" ]]; then
+    mv "${QBIT_APP_PATH}/luci-app-qbittorrent" "${QBIT_APP_PATH}/luci-app-qbittorrent-original"
+  fi
   sed -i "s/luci-app-qbittorrent/luci-app-qbittorrent-original/" "${QBIT_APP_PATH}/luci-app-qbittorrent-original/Makefile"
 else
   echo "Dir ${QBIT_APP_PATH} does not exist." >&2
