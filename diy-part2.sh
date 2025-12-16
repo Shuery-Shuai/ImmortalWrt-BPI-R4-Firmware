@@ -86,20 +86,27 @@ clone_repo https://github.com/gdy666/luci-app-lucky.git main \
   package/lucky
 clone_repo https://github.com/anoixa/bpi-r4-pwm-fan main \
   package/bpi-r4-pwm-fan
-# clone_repo https://github.com/sbwml/openwrt-qBittorrent master \
-#   package/qbittorrent
+clone_repo https://github.com/sbwml/openwrt-qBittorrent master \
+  package/qbittorrent
 
 replace_collections() {
   local file
   local pattern
+  local replacement
   local escaped_pattern
   local escaped_replacement
   local -a sed_script
 
   for pattern in "${!replacements[@]}"; do
-    escaped_pattern=$(sed "s/[\/&]/\\&/g" <<<"${pattern}")
-    escaped_replacement=$(sed "s/[\/&]/\\&/g" <<<"${replacements[$pattern]}")
-    sed_script+=("-e" "s/${escaped_pattern}/${escaped_replacement}/g")
+    replacement="${replacements[$pattern]}"
+    if [ "$replacement" = "DELETE" ]; then
+      escaped_pattern=$(sed "s/[\/&]/\\&/g" <<<"$pattern")
+      sed_script+=("-e" "/$escaped_pattern/d")
+    else
+      escaped_pattern=$(sed "s/[\/&]/\\&/g" <<<"$pattern")
+      escaped_replacement=$(sed "s/[\/&]/\\&/g" <<<"$replacement")
+      sed_script+=("-e" "s/$escaped_pattern/$escaped_replacement/g")
+    fi
   done
 
   for file in feeds/luci/collections/*/Makefile; do
@@ -113,8 +120,8 @@ replace_collections() {
 
 declare -A replacements=(
   ["luci-theme-bootstrap"]="luci-theme-argon"
-  ["+uhttpd-mod-ubus"]=""
-  ["+uhttpd"]=""
+  ["^+uhttpd \\\$"]="DELETE"
+  ["^    +uhttpd-mod-ubus$"]="DELETE"
 )
 replace_collections
 
