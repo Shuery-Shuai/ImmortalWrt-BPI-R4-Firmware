@@ -48,6 +48,7 @@ CONFIG_KERNEL_XDP_SOCKETS=y
 CONFIG_DEVEL=y
 CONFIG_BPF_TOOLCHAIN_HOST=y
 CONFIG_USE_LLVM_HOST=y
+# CONFIG_PACKAGE_luci-app-attendedsysupgrade is not set
 EOF
 )
 
@@ -142,18 +143,18 @@ main() {
     log_info "开始设置内核模块配置..."
 
     # 检查是否已经准备好，如果没有则执行准备操作
-    if [ "$IMMORTALWRT_PREPARED" != "1" ]; then
-        clean_immortalwrt_changes
-        prepare_immortalwrt
-        copy_custom_files
-    fi
+    # if [ "$IMMORTALWRT_PREPARED" != "1" ]; then
+    #     clean_immortalwrt_changes
+    #     prepare_immortalwrt
+    #     copy_custom_files
+    # fi
 
     # 设置feeds
-    setup_feeds
+    # setup_feeds
 
     # 备份现有配置文件
-    backup_file "$KMOD_CONFIG_FILE"
-    backup_file ".config"
+    # backup_file "$KMOD_CONFIG_FILE"
+    # backup_file ".config"
 
     # 创建新的配置文件
     log_info "创建模块配置文件..."

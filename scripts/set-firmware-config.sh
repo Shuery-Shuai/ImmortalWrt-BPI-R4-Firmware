@@ -48,7 +48,7 @@ CONFIG_KERNEL_XDP_SOCKETS=y
 CONFIG_DEVEL=y
 CONFIG_BPF_TOOLCHAIN_HOST=y
 CONFIG_USE_LLVM_HOST=y
-# CONFIG_PACKAGE_attendedsysupgrade-common is not set
+# CONFIG_PACKAGE_luci-app-attendedsysupgrade is not set
 EOF
 )
 
@@ -289,16 +289,16 @@ main() {
     log_info "开始设置固件配置..."
 
     # 检查是否已经准备好，如果没有则执行准备操作
-    if [ "$IMMORTALWRT_PREPARED" != "1" ]; then
-        clean_immortalwrt_changes
-        prepare_immortalwrt
-    fi
+    # if [ "$IMMORTALWRT_PREPARED" != "1" ]; then
+    #     clean_immortalwrt_changes
+    #     prepare_immortalwrt
+    # fi
 
     # 进入immortalwrt目录
-    enter_immortalwrt_dir
+    # enter_immortalwrt_dir
 
     # 备份现有配置
-    backup_file "$FIRMWARE_CONFIG_FILE"
+    # backup_file "$FIRMWARE_CONFIG_FILE"
 
     # 如果.config不存在，进行初始设置
     if [ ! -f ".config" ]; then
@@ -316,9 +316,9 @@ main() {
 
         cp "$FIRMWARE_CONFIG_FILE" .config
         make defconfig
-    else
-        # 备份现有配置
-        backup_file ".config"
+    # else
+    #     # 备份现有配置
+    #     backup_file ".config"
     fi
 
     # 处理包配置
