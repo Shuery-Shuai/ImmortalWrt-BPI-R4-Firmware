@@ -1,18 +1,40 @@
 #!/bin/bash
 
-declare -r KMOD_CONFIG_FILE=module.config
+# 保存原始目录
+ORIGINAL_DIR="$(pwd)"
+trap "cd '$ORIGINAL_DIR'" EXIT
 
-declare -r KMOD_CONFIG_TARGET_SNIPPET="
+# 导入通用函数库
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "${SCRIPT_DIR}/common.sh" ]; then
+    # shellcheck source=scripts/common.sh
+    source "${SCRIPT_DIR}/common.sh"
+else
+    echo "错误: 找不到 common.sh 文件" >&2
+    exit 1
+fi
+
+# 模块配置文件
+readonly KMOD_CONFIG_FILE="module.config"
+
+# 目标配置片段
+declare KMOD_CONFIG_TARGET_SNIPPET
+KMOD_CONFIG_TARGET_SNIPPET=$(
+    cat <<'EOF'
 CONFIG_TARGET_mediatek=y
 CONFIG_TARGET_mediatek_filogic=y
 CONFIG_TARGET_mediatek_filogic_DEVICE_bananapi_bpi-r4=y
-CONFIG_TARGET_BOARD=\"mediatek\"
-CONFIG_TARGET_SUBTARGET=\"filogic\"
-CONFIG_TARGET_PROFILE=\"DEVICE_bananapi_bpi-r4\"
+CONFIG_TARGET_BOARD="mediatek"
+CONFIG_TARGET_SUBTARGET="filogic"
+CONFIG_TARGET_PROFILE="DEVICE_bananapi_bpi-r4"
 CONFIG_TARGET_ROOTFS_PARTSIZE=796
-"
+EOF
+)
 
-declare -r KMOD_CONFIG_SNIPPET="
+# 内核配置片段
+declare KMOD_CONFIG_SNIPPET
+KMOD_CONFIG_SNIPPET=$(
+    cat <<'EOF'
 CONFIG_TESTING_KERNEL=y
 CONFIG_KERNEL_PERF_EVENTS=y
 CONFIG_KERNEL_FTRACE=y
@@ -26,9 +48,13 @@ CONFIG_KERNEL_XDP_SOCKETS=y
 CONFIG_DEVEL=y
 CONFIG_BPF_TOOLCHAIN_HOST=y
 CONFIG_USE_LLVM_HOST=y
-"
+EOF
+)
 
-declare -r KMOD_CONFIG_PACKAGE_SNIPPET="
+# 包配置片段
+declare KMOD_CONFIG_PACKAGE_SNIPPET
+KMOD_CONFIG_PACKAGE_SNIPPET=$(
+    cat <<'EOF'
 # bpi-r4-pwm-fan
 CONFIG_PACKAGE_bpi-r4-pwm-fan=m
 # dae
@@ -108,42 +134,42 @@ CONFIG_PACKAGE_samba4-client=m
 CONFIG_PACKAGE_samba4-libs=m
 CONFIG_PACKAGE_samba4-server=m
 CONFIG_PACKAGE_samba4-utils=m
-"
-
-if [ -d "immortalwrt" ]; then
-    cp ./diy-part*.sh ./immortalwrt/
-    echo "进入 'immortalwrt' 目录..."
-    cd immortalwrt || {
-        echo "无法进入 'immortalwrt' 目录！"
-        exit 1
-    }
-elif [ "$(basename "$(pwd)")" != "immortalwrt" ]; then
-    echo "当前目录不是或不存在 'immortalwrt'，请先进入正确的目录。"
-    exit 1
-fi
-
-git restore .
-git pull
-bash ./diy-part1.sh
-./scripts/feeds update -a -f
-bash ./diy-part2.sh
-./scripts/feeds install -a -f
-
-if [ -f $KMOD_CONFIG_FILE ]; then
-    mv $KMOD_CONFIG_FILE $KMOD_CONFIG_FILE.bak
-fi
-if [ -f .config ]; then
-    mv .config .config.bak
-fi
-
-touch $KMOD_CONFIG_FILE
-
-cat <<EOF >$KMOD_CONFIG_FILE
-$KMOD_CONFIG_TARGET_SNIPPET
-$KMOD_CONFIG_SNIPPET
-$KMOD_CONFIG_PACKAGE_SNIPPET
 EOF
+)
 
-cp $KMOD_CONFIG_FILE .config
-make defconfig
-cp .config $KMOD_CONFIG_FILE
+# 主函数
+main() {
+    log_info "开始设置内核模块配置..."
+
+    # 检查是否已经准备好，如果没有则执行准备操作
+    if [ "$IMMORTALWRT_PREPARED" != "1" ]; then
+        clean_immortalwrt_changes
+        prepare_immortalwrt
+        copy_custom_files
+    fi
+
+    # 设置feeds
+    setup_feeds
+
+    # 备份现有配置文件
+    backup_file "$KMOD_CONFIG_FILE"
+    backup_file ".config"
+
+    # 创建新的配置文件
+    log_info "创建模块配置文件..."
+    {
+        echo "$KMOD_CONFIG_TARGET_SNIPPET"
+        echo "$KMOD_CONFIG_SNIPPET"
+        echo "$KMOD_CONFIG_PACKAGE_SNIPPET"
+    } >"$KMOD_CONFIG_FILE"
+
+    # 应用配置
+    cp "$KMOD_CONFIG_FILE" .config
+    make defconfig
+    cp .config "$KMOD_CONFIG_FILE"
+
+    log_success "内核模块配置完成"
+}
+
+# 执行主函数
+main "$@"
