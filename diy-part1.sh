@@ -108,12 +108,12 @@ define KernelPackage/xdp-sockets-diag/description
   Support for PF_XDP sockets monitoring interface used by the ss tool
 endef
 
-\$(eval '\$(call KernelPackage,xdp-sockets-diag)')
+\$(eval \$(call KernelPackage,xdp-sockets-diag))
 "
 
 echo "${xdp_sockets_diag_content}" >>package/kernel/linux/modules/netsupport.mk
 
-# 添加 tx power patch
+# Add tx_power patch
 # Refer: https://github.com/Rahzadan/openwrt_bpi-r4_mtk_builder
 wireless_regdb_makefile="package/firmware/wireless-regdb/Makefile"
 wireless_regdb_patch_dir="package/firmware/wireless-regdb/patches"
