@@ -66,12 +66,12 @@ clone_repo() {
 
 # Change to official custom branch source of applications including luci-app-openclash and luci-theme-argon
 # rm -rf feeds/luci/applications/luci-app-openclash
+# clone_repo https://github.com/vernesong/OpenClash dev \
+#   feeds/luci/applications/luci-app-openclash
 ARGON_THEME_DIR="feeds/luci/themes/luci-theme-argon"
 if [[ -d "${ARGON_THEME_DIR}" ]]; then
   rm -rf "${ARGON_THEME_DIR}"
 fi
-# clone_repo https://github.com/vernesong/OpenClash dev \
-#   feeds/luci/applications/luci-app-openclash
 clone_repo https://github.com/jerrykuku/luci-theme-argon.git master \
   feeds/luci/themes/luci-theme-argon
 
@@ -89,41 +89,34 @@ clone_repo https://github.com/anoixa/bpi-r4-pwm-fan main \
 clone_repo https://github.com/sbwml/openwrt-qBittorrent master \
   package/qbittorrent
 
-replace_collections() {
-  local file
-  local pattern
-  local replacement
-  local escaped_pattern
-  local escaped_replacement
-  local -a sed_script
+# Modify luci collections to remove uhttpd dependency
+modify_luci_collection() {
+  local makefile="$1"
+  shift
+  local sed_exprs=("$@")
 
-  for pattern in "${!replacements[@]}"; do
-    replacement="${replacements[$pattern]}"
-    if [ "$replacement" = "DELETE" ]; then
-      escaped_pattern=$(sed "s/[\/&]/\\&/g" <<<"$pattern")
-      sed_script+=("-e" "/$escaped_pattern/d")
-    else
-      escaped_pattern=$(sed "s/[\/&]/\\&/g" <<<"$pattern")
-      escaped_replacement=$(sed "s/[\/&]/\\&/g" <<<"$replacement")
-      sed_script+=("-e" "s/$escaped_pattern/$escaped_replacement/g")
-    fi
-  done
-
-  for file in feeds/luci/collections/*/Makefile; do
-    if [[ ! -e "${file}" ]]; then
-      continue
-    fi
-    printf "Modifying %s...\n" "${file}"
-    sed -i "${sed_script[@]}" "${file}"
-  done
+  if [[ -f "${makefile}" ]]; then
+    printf "Modifying %s...\n" "${makefile}"
+    sed -i "${sed_exprs[@]}" "${makefile}"
+  else
+    echo "File ${makefile} does not exist." >&2
+  fi
 }
 
-declare -A replacements=(
-  ["luci-theme-bootstrap"]="luci-theme-argon"
-  ["^+uhttpd \\\$"]="DELETE"
-  ["^    +uhttpd-mod-ubus$"]="DELETE"
-)
-replace_collections
+modify_luci_collection "feeds/luci/collections/luci/Makefile" \
+  -e '/LUCI_DEPENDS/,/^$/ { /luci-app-attendedsysupgrade/d; s/luci-app-package-manager\s*\\/luci-app-package-manager/g; }'
+
+modify_luci_collection "feeds/luci/collections/luci-light/Makefile" \
+  -e '/LUCI_DEPENDS/,/^$/ { /uhttpd/d; s/luci-theme-bootstrap/luci-theme-argon/g; s/rpcd-mod-rrdns\s*\\/rpcd-mod-rrdns/g; }'
+
+modify_luci_collection "feeds/luci/collections/luci-nginx/Makefile" \
+  -e '/LUCI_DEPENDS/,/^$/ { /luci-app-attendedsysupgrade/d; s/luci-theme-bootstrap/luci-theme-argon/g; }'
+
+modify_luci_collection "feeds/luci/collections/luci-ssl/Makefile" \
+  -e '/LUCI_DEPENDS/,/^$/ { /luci-app-attendedsysupgrade/d; s/luci-app-package-manager\s*\\/luci-app-package-manager/g; }'
+
+modify_luci_collection "feeds/luci/collections/luci-ssl-openssl/Makefile" \
+  -e '/LUCI_DEPENDS/,/^$/ { /luci-app-attendedsysupgrade/d; s/luci-app-package-manager\s*\\/luci-app-package-manager/g; }'
 
 # Modify Argon login page from float left to center
 # THEME_CSS_FILE="feeds/luci/themes/luci-theme-argon/htdocs/luci-static/argon/css/cascade.css"
@@ -234,8 +227,6 @@ fi
 
 # Change luci-app-qbittorrent name to luci-app-qbittorrent-original
 QBIT_APP_PATH="package/qbittorrent"
-# Remove qbittorrent in feeds to avoid conflict
-# rm -rf feeds/luci/applications/luci-app-qbittorrent
 if [[ -d "${QBIT_APP_PATH}" ]]; then
   printf "Modifying %s...\n" "${QBIT_APP_PATH}"
   if [[ -d "${QBIT_APP_PATH}/luci-app-qbittorrent" ]]; then
