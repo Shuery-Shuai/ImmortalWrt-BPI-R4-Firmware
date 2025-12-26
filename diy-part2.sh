@@ -192,11 +192,11 @@ if [[ -f "${EASYUPDATE_FILE}" ]]; then
     -e "/curl|filename/s/OpenWrt/ImmortalWrt/g" \
     -e "/curl|filename/s/openwrt/immortalwrt/g" \
     -e "/curl|filename/s/Openwrt/Immortalwrt/g" \
-    -e "/sysupgrade \$keepconfig\$file/s/sysupgrade/sysupgrade -k/g" \
+    -e "/sysupgrade\s+\\\$keepconfig\s*\\\$file/s/sysupgrade/sysupgrade -k/g" \
     -e "/file[Nn]ame/s/0:7/0:11/g" \
-    -e "/^\s*file/s/\$\{checkShaRet/\/tmp\/\$\{checkShaRet/g" \
+    -e "/^\s*file/s/\\\$\{checkShaRet/\/tmp\/\\\$\{checkShaRet/g" \
     -e "/Check\s+whether\s+EFI\s+firmware/,/^\s*fi/ {
-        /^\s+fi/a\  suffix='squashfs-sysupgrade.itb'
+        /^\s+fi/a\    suffix='squashfs-sysupgrade.itb'
         s/^/#/
       }" \
     -e "/^\s*function\s+checkSha/,/^\s*\}/ {
