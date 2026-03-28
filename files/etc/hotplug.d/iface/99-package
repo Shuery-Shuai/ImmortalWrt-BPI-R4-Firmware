@@ -1,5 +1,0 @@
-#!/bin/sh
-[ "$ACTION" = "ifup" ] && [ "$INTERFACE" = "wan" ] && {
-    sleep 30
-    /usr/bin/restore-packages.sh
-}
