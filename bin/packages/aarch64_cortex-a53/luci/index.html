@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang='zh-CN'>
+<head>
+  <meta charset='utf-8'/>
+  <meta name='viewport' content='width=device-width, initial-scale=1.0' />
+  <link rel='icon' href='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text x=%2250%%22 y=%2250%%22 style=%22dominant-baseline:central;text-anchor:middle;font-size:90px;%22>⚙️</text></svg>' />
+  <link rel='stylesheet' href='https://downloads.immortalwrt.org/openwrt.css' />
+  <title>/packages/aarch64_cortex-a53/luci 的索引</title>
+  <style>
+    .copy-btn {
+      cursor: pointer;
+      margin-left: 5px;
+      display: inline-block;
+      transition: all 0.2s ease;
+    }
+    .copy-btn:active {
+      transform: scale(0.9);
+      opacity: 0.7;
+    }
+    .copy-btn.success {
+      color: #4CAF50;
+      transform: scale(1.2);
+      animation: pop 0.3s ease-in-out;
+    }
+    @keyframes pop {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.3); }
+      100% { transform: scale(1); }
+    }
+    .search-input {
+      width: 100%;
+      padding: 5px 15px;
+      margin-bottom: 5px;
+      box-sizing: border-box;
+      border: 1px solid #ccc;
+      font-size: 16px;
+      outline: none;
+      transition: border-color 0.3s ease, box-shadow 0.3s ease;
+    }
+    .search-input:focus {
+      border-color: #007bff;
+      box-shadow: 0 0 5px rgba(0, 123, 255, 0.5);
+    }
+  </style>
+  <script>
+    function copyToClipboard(sha, btnElement) {
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(sha)
+          .then(() => {
+            btnElement.textContent = '✅';
+            btnElement.classList.add('success');
+            setTimeout(() => {
+              btnElement.textContent = '📋';
+              btnElement.classList.remove('success');
+            }, 1000);
+          })
+          .catch(() => showTooltip('复制失败', event));
+      } else {
+        prompt('请手动复制完整 SHA256：', sha);
+      }
+    }
+    function showTooltip(text, e) {
+      const tooltip = document.getElementById('tooltip');
+      tooltip.textContent = text;
+      tooltip.style.display = 'block';
+      tooltip.style.left = (e.clientX + 10) + 'px';
+      tooltip.style.top = (e.clientY + 10) + 'px';
+      setTimeout(() => tooltip.style.display = 'none', 1000);
+    }
+  </script>
+</head>
+<body>
+<div class='container'>
+<input type='text' id='globalSearch' placeholder='全局搜索...' class='search-input' onkeyup="if(event.key==='Enter' && this.value.trim()){window.location.href='/search.html?q='+encodeURIComponent(this.value.trim());}">
+<h1>索引：<a href='/'><em>根目录</em></a> / <a href='/packages/'>packages</a> / <a href='/packages/aarch64_cortex-a53/'>aarch64_cortex-a53</a> / <a href="/packages/aarch64_cortex-a53/luci/">luci</a> /</h1>
+<hr>
+<table>
+  <thead>
+    <tr>
+      <th class='n'>文件名</th>
+      <th class='m'>类型</th>
+      <th class='s'>大小</th>
+      <th class='h'>SHA256</th>
+      <th class='d'>修改日期</th>
+    </tr>
+  </thead>
+  <tbody>
+  <tr>
+    <td class='n'>↩️ <a href='../'>上级目录</a>/</td>
+    <td class='m'>目录</td>
+    <td class='s'>-</td>
+    <td class='sh'>-</td>
+    <td class='d'>-</td>
+  </tr>
+  <tr>
+    <td class='n'>📄 <a href='index.json'>index.json</a></td>
+    <td class='m'>json</td>
+    <td class='s'>4.0K</td>
+    <td class='sh'>5269ae5...<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard("5269ae5f9c2d913d5df1c6f6aeac234c06c25680df562ac7bc609922710c3132", this)'>📋</span></td>
+    <td class='d'>2026 年  28 日  20:06:44</td>
+  </tr>
+  <tr>
+    <td class='n'>📦 <a href='liblucihttp0-2023.03.15~9b5b683f-r1.apk'>liblucihttp0-2023.03.15~9b5b683f-r1.apk</a></td>
+    <td class='m'>octet-stream</td>
+    <td class='s'>12K</td>
+    <td class='sh'>3beb767...<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard("3beb767c2ca8dd8d54155e75b2b73e466ae5349e50652d9213fb820afa4914ac", this)'>📋</span></td>
+    <td class='d'>2026 年  28 日  20:04:29</td>
+  </tr>
+  <tr>
+    <td class='n'>📦 <a href='liblucihttp-ucode-2023.03.15~9b5b683f-r1.apk'>liblucihttp-ucode-2023.03.15~9b5b683f-r1.apk</a></td>
+    <td class='m'>octet-stream</td>
+    <td class='s'>8.0K</td>
+    <td class='sh'>6b029af...<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard("6b029af0b7f3d7240bb83ad50195c3d0c19c1bfe20337df40d28d5bfd59f48ba", this)'>📋</span></td>
+    <td class='d'>2026 年  28 日  20:04:29</td>
+  </tr>
+  <tr>
+    <td class='n'>📦 <a href='luci-26.084.15169~a9a438b.apk'>luci-26.084.15169~a9a438b.apk</a></td>
+    <td class='m'>octet-stream</td>
+    <td class='s'>4.0K</td>
+    <td class='sh'>78dd5e6...<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard("78dd5e64ae325ecb86a6274fc44e669da603df71da05d055c3dcd98c04131d74", this)'>📋</span></td>
+    <td class='d'>2026 年  28 日  20:05:53</td>
+  </tr>
+  <tr>
+    <td class='n'>📦 <a href='luci-app-firewall-26.084.15169~a9a438b.apk'>luci-app-firewall-26.084.15169~a9a438b.apk</a></td>
+    <td class='m'>octet-stream</td>
+    <td class='s'>20K</td>
+    <td class='sh'>cfe66bd...<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard("cfe66bd7002b423991432696c83774a20a2189540f99aa07bc71870e2119ec49", this)'>📋</span></td>
+    <td class='d'>2026 年  28 日  20:05:05</td>
+  </tr>
+  <tr>
+    <td class='n'>📦 <a href='luci-app-package-manager-26.084.15169~a9a438b.apk'>luci-app-package-manager-26.084.15169~a9a438b.apk</a></td>
+    <td class='m'>octet-stream</td>
+    <td class='s'>12K</td>
+    <td class='sh'>5918b9d...<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard("5918b9d887167174735695f542824793dbeb34ff2889b2359c0ea2a6abfbb325", this)'>📋</span></td>
+    <td class='d'>2026 年  28 日  20:05:04</td>
+  </tr>
+  <tr>
+    <td class='n'>📦 <a href='luci-base-26.084.15169~a9a438b.apk'>luci-base-26.084.15169~a9a438b.apk</a></td>
+    <td class='m'>octet-stream</td>
+    <td class='s'>156K</td>
+    <td class='sh'>1f80847...<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard("1f808478e9e98276310a57b08a4ea16d6368d931fe03eeecc10af43c141a86dc", this)'>📋</span></td>
+    <td class='d'>2026 年  28 日  20:05:03</td>
+  </tr>
+  <tr>
+    <td class='n'>📦 <a href='luci-i18n-base-zh-cn-26.084.15169~a9a438b.apk'>luci-i18n-base-zh-cn-26.084.15169~a9a438b.apk</a></td>
+    <td class='m'>octet-stream</td>
+    <td class='s'>68K</td>
+    <td class='sh'>fe1b2d7...<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard("fe1b2d7b2bb85a43eaa9fd22ea84030ffc7fd710cf67fd33c7cfd23a00403074", this)'>📋</span></td>
+    <td class='d'>2026 年  28 日  20:05:03</td>
+  </tr>
+  <tr>
+    <td class='n'>📦 <a href='luci-i18n-firewall-zh-cn-26.084.15169~a9a438b.apk'>luci-i18n-firewall-zh-cn-26.084.15169~a9a438b.apk</a></td>
+    <td class='m'>octet-stream</td>
+    <td class='s'>12K</td>
+    <td class='sh'>3d64ded...<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard("3d64ded47aef473b1f4b2135f8a4fcb3176e1ac2d173f3202b2ea6b1d0942c0e", this)'>📋</span></td>
+    <td class='d'>2026 年  28 日  20:05:05</td>
+  </tr>
+  <tr>
+    <td class='n'>📦 <a href='luci-i18n-package-manager-zh-cn-26.084.15169~a9a438b.apk'>luci-i18n-package-manager-zh-cn-26.084.15169~a9a438b.apk</a></td>
+    <td class='m'>octet-stream</td>
+    <td class='s'>4.0K</td>
+    <td class='sh'>a7a071d...<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard("a7a071d9d5c89b9415bd011f9077955d2eec97b0aab62b7ca60a32a1a0dd1008", this)'>📋</span></td>
+    <td class='d'>2026 年  28 日  20:05:04</td>
+  </tr>
+  <tr>
+    <td class='n'>📦 <a href='luci-lib-uqr-26.084.15169~a9a438b.apk'>luci-lib-uqr-26.084.15169~a9a438b.apk</a></td>
+    <td class='m'>octet-stream</td>
+    <td class='s'>8.0K</td>
+    <td class='sh'>e5fb32e...<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard("e5fb32e6f9b01d2a1a479ee66c92f39540aa1eb488394fe558723f7253ce1ec6", this)'>📋</span></td>
+    <td class='d'>2026 年  28 日  20:03:16</td>
+  </tr>
+  <tr>
+    <td class='n'>📦 <a href='luci-light-26.084.15169~a9a438b.apk'>luci-light-26.084.15169~a9a438b.apk</a></td>
+    <td class='m'>octet-stream</td>
+    <td class='s'>4.0K</td>
+    <td class='sh'>0cd868e...<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard("0cd868eaede212c64be8efa9ed88ebd41d5f5bad48160443b7528b67abe80e7c", this)'>📋</span></td>
+    <td class='d'>2026 年  28 日  20:05:52</td>
+  </tr>
+  <tr>
+    <td class='n'>📦 <a href='luci-mod-admin-full-26.084.15169~a9a438b.apk'>luci-mod-admin-full-26.084.15169~a9a438b.apk</a></td>
+    <td class='m'>octet-stream</td>
+    <td class='s'>4.0K</td>
+    <td class='sh'>f972751...<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard("f972751d7edbe3176bfa8b2ccd496737aeca50d73df9b96d446e2eeefbab82d5", this)'>📋</span></td>
+    <td class='d'>2026 年  28 日  20:05:07</td>
+  </tr>
+  <tr>
+    <td class='n'>📦 <a href='luci-mod-network-26.084.15169~a9a438b.apk'>luci-mod-network-26.084.15169~a9a438b.apk</a></td>
+    <td class='m'>octet-stream</td>
+    <td class='s'>76K</td>
+    <td class='sh'>b2d8293...<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard("b2d829300ac8a5cce08c5d968434ca11badb1f94832f72e06d22e32dac6fafcd", this)'>📋</span></td>
+    <td class='d'>2026 年  28 日  20:05:06</td>
+  </tr>
+  <tr>
+    <td class='n'>📦 <a href='luci-mod-status-26.084.15169~a9a438b.apk'>luci-mod-status-26.084.15169~a9a438b.apk</a></td>
+    <td class='m'>octet-stream</td>
+    <td class='s'>48K</td>
+    <td class='sh'>85fe190...<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard("85fe1909c7d8806a6368fbbe5579239d8549828ccd0696d9f6bcba70c16f019c", this)'>📋</span></td>
+    <td class='d'>2026 年  28 日  20:05:07</td>
+  </tr>
+  <tr>
+    <td class='n'>📦 <a href='luci-mod-system-26.084.15169~a9a438b.apk'>luci-mod-system-26.084.15169~a9a438b.apk</a></td>
+    <td class='m'>octet-stream</td>
+    <td class='s'>24K</td>
+    <td class='sh'>dafdf0d...<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard("dafdf0d3236d16944b637ad4f11a10ea431db317503801f188d5fd6b16d14f99", this)'>📋</span></td>
+    <td class='d'>2026 年  28 日  20:05:07</td>
+  </tr>
+  <tr>
+    <td class='n'>📦 <a href='luci-proto-ipv6-26.084.15169~a9a438b.apk'>luci-proto-ipv6-26.084.15169~a9a438b.apk</a></td>
+    <td class='m'>octet-stream</td>
+    <td class='s'>8.0K</td>
+    <td class='sh'>bceaa71...<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard("bceaa71478faf2b94511dd05cd79eac611708b6f7d559c258c9bd5ef42ea77e9", this)'>📋</span></td>
+    <td class='d'>2026 年  28 日  20:03:18</td>
+  </tr>
+  <tr>
+    <td class='n'>📦 <a href='luci-proto-ppp-26.084.15169~a9a438b.apk'>luci-proto-ppp-26.084.15169~a9a438b.apk</a></td>
+    <td class='m'>octet-stream</td>
+    <td class='s'>4.0K</td>
+    <td class='sh'>951ad68...<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard("951ad68cb6e66332c2bdddd4b2519b667b3e739a03eb040c1793ee2d7da04c4d", this)'>📋</span></td>
+    <td class='d'>2026 年  28 日  20:03:17</td>
+  </tr>
+  <tr>
+    <td class='n'>📦 <a href='luci-theme-argon-2.4.3-r20250722.apk'>luci-theme-argon-2.4.3-r20250722.apk</a></td>
+    <td class='m'>octet-stream</td>
+    <td class='s'>392K</td>
+    <td class='sh'>0ae957a...<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard("0ae957ade0056325acabee0479199695f2935617c9156de4c36fe057b584989e", this)'>📋</span></td>
+    <td class='d'>2026 年  28 日  20:05:49</td>
+  </tr>
+  <tr>
+    <td class='n'>💾 <a href='packages.adb'>packages.adb</a></td>
+    <td class='m'>octet-stream</td>
+    <td class='s'>4.0K</td>
+    <td class='sh'>775a6a1...<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard("775a6a1e973b03a6d5ca199c20a1fbe282de6217d9af6ad21ff76058ac8e1e0b", this)'>📋</span></td>
+    <td class='d'>2026 年  28 日  20:06:44</td>
+  </tr>
+  <tr>
+    <td class='n'>📦 <a href='rpcd-mod-luci-20240305-r1.apk'>rpcd-mod-luci-20240305-r1.apk</a></td>
+    <td class='m'>octet-stream</td>
+    <td class='s'>16K</td>
+    <td class='sh'>93217d3...<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard("93217d390db9354b11261257c97787975d83307383c464e5994c0720a830dcdb", this)'>📋</span></td>
+    <td class='d'>2026 年  28 日  20:05:00</td>
+  </tr>
+  <tr>
+    <td class='n'>📦 <a href='rpcd-mod-rrdns-20170710.apk'>rpcd-mod-rrdns-20170710.apk</a></td>
+    <td class='m'>octet-stream</td>
+    <td class='s'>8.0K</td>
+    <td class='sh'>cb7a122...<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard("cb7a122946366ed308d4cf1359af0733b6dedddb4c7984db17f62e0f209b5a3a", this)'>📋</span></td>
+    <td class='d'>2026 年  28 日  20:05:00</td>
+  </tr>
+  <tr>
+    <td class='n'>📦 <a href='ucode-mod-html-1.apk'>ucode-mod-html-1.apk</a></td>
+    <td class='m'>octet-stream</td>
+    <td class='s'>24K</td>
+    <td class='sh'>2f91309...<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard("2f913093d549abdd34703ed76597347de3b9507b11ef05bed42af1ebfc048002", this)'>📋</span></td>
+    <td class='d'>2026 年  28 日  20:04:34</td>
+  </tr>
+  </tbody>
+</table>
+<footer>
+  <p>由 Local Builder 生成于 2026 年  28 日  20:19:56</p>
+  <p>仓库地址: <a href='https://github.com/Shuery-Shuai/ImmortalWrt-BPI-R4-Firmware'>Shuery-Shuai/ImmortalWrt-BPI-R4-Firmware</a></p>
+</footer>
+</div>
+</body></html>
