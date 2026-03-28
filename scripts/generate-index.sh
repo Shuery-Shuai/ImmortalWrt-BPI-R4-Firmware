@@ -5,6 +5,26 @@ readonly LOG_LEVEL=1 # 日志级别: debug-1, info-2, warn-3, error-4, always-5
 readonly LOG_OPEN=1  # 日志开关: 1-开启, 0-关闭
 readonly LOG_FILE="" # 日志文件路径，留空则不写入文件
 
+# 仓库信息配置
+# 判断是否为 CI 构建还是本地构建
+if [[ -n "${GITHUB_REPOSITORY}" ]]; then
+  # CI 构建
+  BUILD_SOURCE="Github CI"
+  REPO_URL="https://github.com/${GITHUB_REPOSITORY}"
+  REPO_DISPLAY="${GITHUB_REPOSITORY}"
+else
+  # 本地构建
+  BUILD_SOURCE="Local Builder"
+  # 使用环境变量或默认值
+  REPO_DISPLAY="${CUSTOM_REPOSITORY_URL:-Shuery-Shuai/ImmortalWrt-BPI-R4-Firmware}"
+  # 根据地址格式确定完整 URL
+  if [[ "${REPO_DISPLAY}" == http* ]]; then
+    REPO_URL="${REPO_DISPLAY}"
+  else
+    REPO_URL="https://github.com/${REPO_DISPLAY}"
+  fi
+fi
+
 # 全局数组存储所有文件条目
 declare -a all_items=()
 
@@ -394,8 +414,8 @@ generate_index() {
 
     # 添加页脚信息
     echo "<footer>"
-    echo "  <p>由 Github CI 生成于 $(format_date_cn "${handle_path}")</p>"
-    echo "  <p>仓库地址: <a href='https://github.com/${GITHUB_REPOSITORY}'>${GITHUB_REPOSITORY}</a></p>"
+    echo "  <p>由 ${BUILD_SOURCE} 生成于 $(format_date_cn "${handle_path}")</p>"
+    echo "  <p>仓库地址: <a href='${REPO_URL}'>${REPO_DISPLAY}</a></p>"
     echo "</footer>"
 
     echo "</div>"
@@ -560,8 +580,8 @@ main() {
     echo "  </tbody>"
     echo "</table>"
     echo "<footer>"
-    echo "  <p>由 Github CI 生成于 $(date '+%Y 年 %m 月 %d 日 %H:%M:%S')</p>"
-    echo "  <p>仓库地址: <a href='https://github.com/${GITHUB_REPOSITORY}'>${GITHUB_REPOSITORY}</a></p>"
+    echo "  <p>由 ${BUILD_SOURCE} 生成于 $(date '+%Y 年 %m 月 %d 日 %H:%M:%S')</p>"
+    echo "  <p>仓库地址: <a href='${REPO_URL}'>${REPO_DISPLAY}</a></p>"
     echo "</footer>"
     echo "</div>"
     echo "</body></html>"
