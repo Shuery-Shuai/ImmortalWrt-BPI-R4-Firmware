@@ -72,7 +72,7 @@ format_date_cn() {
   local cn_month
 
   # 获取英文日期
-  en_date="$(date -r "${file}" '+%a %b %d %H:%M:%S %Y')"
+  en_date="$(LC_TIME=C date -r "${file}" '+%a %b %d %H:%M:%S %Y')"
 
   # 星期映射表
   declare -Ar weekdays=(
@@ -109,7 +109,60 @@ format_date_cn() {
   cn_month="${months[${month}]}"
 
   # 格式化日期
-  echo "${year} 年 ${cn_month} ${day} 日 ${cn_weekday} ${time}"
+  echo "${year} 年 ${cn_month} ${day} 日 ${time}"
+}
+
+# 将当前日期格式化为中文格式
+# 返回: 中文格式的日期字符串
+format_current_date_cn() {
+  local en_date
+  local weekday
+  local month
+  local day
+  local time
+  local year
+  local cn_weekday
+  local cn_month
+
+  # 获取当前英文日期
+  en_date="$(LC_TIME=C date '+%a %b %d %H:%M:%S %Y')"
+
+  # 星期映射表
+  declare -Ar weekdays=(
+    ["Mon"]="星期一"
+    ["Tue"]="星期二"
+    ["Wed"]="星期三"
+    ["Thu"]="星期四"
+    ["Fri"]="星期五"
+    ["Sat"]="星期六"
+    ["Sun"]="星期日"
+  )
+
+  # 月份映射表
+  declare -Ar months=(
+    ["Jan"]="01 月"
+    ["Feb"]="02 月"
+    ["Mar"]="03 月"
+    ["Apr"]="04 月"
+    ["May"]="05 月"
+    ["Jun"]="06 月"
+    ["Jul"]="07 月"
+    ["Aug"]="08 月"
+    ["Sep"]="09 月"
+    ["Oct"]="10 月"
+    ["Nov"]="11 月"
+    ["Dec"]="12 月"
+  )
+
+  # 解析英文日期
+  read -r weekday month day time year <<<"${en_date}"
+
+  # 转换为中文格式
+  cn_weekday="${weekdays[${weekday}]}"
+  cn_month="${months[${month}]}"
+
+  # 格式化日期
+  echo "${year} 年 ${cn_month} ${day} 日 ${time}"
 }
 
 # 计算文件的SHA256值
@@ -580,7 +633,7 @@ main() {
     echo "  </tbody>"
     echo "</table>"
     echo "<footer>"
-    echo "  <p>由 ${BUILD_SOURCE} 生成于 $(date '+%Y 年 %m 月 %d 日 %H:%M:%S')</p>"
+    echo "  <p>由 ${BUILD_SOURCE} 生成于 $(format_current_date_cn)</p>"
     echo "  <p>仓库地址: <a href='${REPO_URL}'>${REPO_DISPLAY}</a></p>"
     echo "</footer>"
     echo "</div>"
