@@ -3,41 +3,147 @@
 # Common functions and configurations for ImmortalWrt build scripts.
 #
 
-# Color constants for output.
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly NC='\033[0m'  # No Color
+# ---------- 颜色定义（使用单引号，存储字面反斜杠）----------
+if [[ -t 2 ]]; then
+  readonly COLOR_RESET='\033[0m'
+  readonly COLOR_RED='\033[0;31m'
+  readonly COLOR_GREEN='\033[0;32m'
+  readonly COLOR_YELLOW='\033[0;33m'
+  readonly COLOR_BLUE='\033[0;34m'
+  readonly COLOR_MAGENTA='\033[0;35m'
+  readonly COLOR_CYAN='\033[0;36m'
+  readonly COLOR_GRAY='\033[0;37m'
+  readonly COLOR_BOLD_RED='\033[1;31m'
+  readonly COLOR_BOLD_GREEN='\033[1;32m'
+  readonly COLOR_BOLD_YELLOW='\033[1;33m'
+else
+  readonly COLOR_RESET=''
+  readonly COLOR_RED=''
+  readonly COLOR_GREEN=''
+  readonly COLOR_YELLOW=''
+  readonly COLOR_BLUE=''
+  readonly COLOR_MAGENTA=''
+  readonly COLOR_CYAN=''
+  readonly COLOR_GRAY=''
+  readonly COLOR_BOLD_RED=''
+  readonly COLOR_BOLD_GREEN=''
+  readonly COLOR_BOLD_YELLOW=''
+fi
 
-# 日志配置
-readonly LOG_LEVEL=1 # 日志级别: debug-1, info-2, warn-3, error-4, always-5
-readonly LOG_OPEN=1  # 日志开关: 1-开启, 0-关闭
-readonly LOG_FILE="" # 日志文件路径，留空则不写入文件
+# ---------- 日志级别数值 ----------
+readonly LOG_LEVEL_TRACE=0
+readonly LOG_LEVEL_DEBUG=1
+readonly LOG_LEVEL_INFO=2
+readonly LOG_LEVEL_WARN=3
+readonly LOG_LEVEL_ERROR=4
+readonly LOG_LEVEL_FATAL=5
 
-# Logs a general message with level control.
-log() {
-  local level="${1}"
-  local message="${2}"
-  local level_num
-  local content
+# 当前生效的日志级别（默认 INFO）
+: "${LOG_LEVEL:=INFO}"
 
-  case "${level}" in
-    DEBUG) level_num=1 ;;
-    INFO) level_num=2 ;;
-    WARN) level_num=3 ;;
-    ERROR) level_num=4 ;;
-    ALWAYS) level_num=5 ;;
-    *) level_num=6 ;;
+# ---------- 辅助函数：获取实体样式 ----------
+_get_style() {
+  local entity="$1"
+  local color=""
+  local emoji=""
+
+  case "${entity}" in
+    TRACE)   color="${COLOR_GRAY}";      emoji="🔬" ;;
+    DEBUG)   color="${COLOR_CYAN}";      emoji="🐛" ;;
+    INFO)    color="${COLOR_BLUE}";      emoji="ℹ️" ;;
+    WARN)    color="${COLOR_BOLD_YELLOW}"; emoji="⚠️" ;;
+    ERROR)   color="${COLOR_BOLD_RED}";  emoji="❌" ;;
+    FATAL)   color="${COLOR_BOLD_RED}";  emoji="💀" ;;
+    SUCCESS) color="${COLOR_BOLD_GREEN}"; emoji="✅" ;;
+    FAILURE) color="${COLOR_BOLD_RED}";  emoji="❌" ;;
+    WARNING) color="${COLOR_BOLD_YELLOW}"; emoji="⚠️" ;;
+    NOTE)    color="${COLOR_BLUE}";      emoji="📝" ;;
+    IMPORTANT) color="${COLOR_MAGENTA}"; emoji="⭐" ;;
+    *)       color="${COLOR_GRAY}";      emoji="📌" ;;
   esac
 
-  if [[ "${LOG_OPEN}" -eq 1 ]] && [[ "${LOG_LEVEL}" -le "${level_num}" ]]; then
-    content="$(date '+%Y-%m-%d %H:%M:%S') [${level}] ${message}"
-    echo "${content}" >&2
-    if [[ -n "${LOG_FILE}" ]]; then
-      echo "${content}" >>"${LOG_FILE}"
-    fi
+  echo "${color}|${emoji}"
+}
+
+# ---------- 主日志函数 ----------
+log() {
+  local level=""
+  local subcategory=""
+  local message=""
+
+  if [[ $# -eq 2 ]]; then
+    level="$1"
+    subcategory=""
+    message="$2"
+  elif [[ $# -eq 3 ]]; then
+    level="$1"
+    subcategory="$2"
+    message="$3"
+  else
+    printf "Usage: log LEVEL [SUBCATEGORY] MESSAGE\n" >&2
+    return 1
   fi
+
+  # 级别有效性检查
+  local level_num
+  case "${level}" in
+    TRACE) level_num=0 ;;
+    DEBUG) level_num=1 ;;
+    INFO)  level_num=2 ;;
+    WARN)  level_num=3 ;;
+    ERROR) level_num=4 ;;
+    FATAL) level_num=5 ;;
+    *)
+      printf "Unknown log level: %s\n" "${level}" >&2
+      return 1
+      ;;
+  esac
+
+  # 当前日志级别数值
+  local current_level_num
+  case "${LOG_LEVEL}" in
+    TRACE) current_level_num=0 ;;
+    DEBUG) current_level_num=1 ;;
+    INFO)  current_level_num=2 ;;
+    WARN)  current_level_num=3 ;;
+    ERROR) current_level_num=4 ;;
+    FATAL) current_level_num=5 ;;
+    *)     current_level_num=2 ;;
+  esac
+
+  # 级别过滤
+  if [[ ${level_num} -lt ${current_level_num} ]]; then
+    return 0
+  fi
+
+  # 获取级别样式
+  local level_style
+  level_style="$(_get_style "${level}")"
+  local level_color="${level_style%|*}"
+  local level_emoji="${level_style#*|}"
+
+  # 获取子类别样式
+  local sub_color=""
+  local sub_emoji=""
+  if [[ -n "${subcategory}" ]]; then
+    local sub_style
+    sub_style="$(_get_style "${subcategory}")"
+    sub_color="${sub_style%|*}"
+    sub_emoji="${sub_style#*|}"
+  fi
+
+  local timestamp
+  timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
+
+  # 构建带颜色的标签（颜色变量包含字面 \033，但稍后 %b 会解释）
+  local level_tag="${level_color}[${level_emoji} ${level}]${COLOR_RESET}"
+  local sub_tag=""
+  if [[ -n "${subcategory}" ]]; then
+    sub_tag=" ${sub_color}[${sub_emoji} ${subcategory}]${COLOR_RESET}"
+  fi
+
+  # 关键：使用 printf '%b' 输出，使 \033 被解释为 ESC 字符
+  printf '%b' "[${timestamp}] ${level_tag}${sub_tag} ${message}\n" >&2
 }
 
 # Logs an info message.
@@ -47,7 +153,7 @@ log_info() {
 
 # Logs a success message.
 log_success() {
-  log "ALWAYS" "$1"
+  log "INFO" "SUCCESS" "$1"
 }
 
 # Logs a warning message.

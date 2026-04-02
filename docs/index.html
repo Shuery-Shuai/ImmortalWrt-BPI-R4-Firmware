@@ -5,7 +5,12 @@
   <meta name='viewport' content='width=device-width, initial-scale=1.0' />
   <link rel='icon' href='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text x=%2250%%22 y=%2250%%22 style=%22dominant-baseline:central;text-anchor:middle;font-size:90px;%22>⚙️</text></svg>' />
   <link rel='stylesheet' href='https://downloads.immortalwrt.org/openwrt.css' />
-  <title>自编译的 ImmortalWrt 固件</title>
+  <link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/atom-one-dark.min.css'>
+  <script src='https://cdn.jsdelivr.net/npm/marked/marked.min.js'></script>
+  <script src='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js'></script>
+  <script src='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/go.min.js'></script>
+  <script>hljs.highlightAll();</script>
+  <title>自编译的路由器软件包仓库</title>
   <style>
     .copy-btn {
       cursor: pointer;
@@ -33,13 +38,66 @@
       margin-bottom: 5px;
       box-sizing: border-box;
       border: 1px solid #ccc;
+      box-shadow: 0 0 0.5em #999;
       font-size: 16px;
       outline: none;
       transition: border-color 0.3s ease, box-shadow 0.3s ease;
     }
     .search-input:focus {
       border-color: #007bff;
-      box-shadow: 0 0 5px rgba(0, 123, 255, 0.5);
+      box-shadow: 0 0 0.5em rgba(0, 123, 255, 0.5);
+    }
+    /* README 区块样式 */
+    .readme-wrapper {
+      margin-top: 16px;
+      padding: 12px !important;
+      background: #f5f5f5;
+      border-top: 1px solid #e1e4e8;
+      box-shadow: 0 0 0.5em #999 !important;
+    }
+    .readme-wrapper h2 {
+      margin-top: 0;
+    }
+    .markdown-body {
+      box-sizing: border-box;
+      margin: 0 auto;
+      padding: 12px;
+      border-radius: 4px;
+      background-color: #fff;
+    }
+    .readme-content {
+      background: #fafafa;
+      padding: 10px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      font-family: monospace;
+    }
+    .hljs {
+      border-radius: 4px;
+    }
+    /* 代码块复制按钮样式 */
+    .code-block-wrapper {
+      position: relative;
+    }
+    .copy-code-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      padding: 4px 8px;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      z-index: 10;
+      transition: background-color 0.2s;
+    }
+    .copy-code-btn:hover {
+      background-color: #45a049;
+    }
+    .copy-code-btn.copied {
+      background-color: #2196F3;
     }
   </style>
   <script>
@@ -90,27 +148,68 @@
     <td class='m'>目录</td>
     <td class='s'>-</td>
     <td class='sh'>-</td>
-    <td class='d'>2026 年 03 月 31 日 12:31:32</td>
+    <td class='d'>2026 年 03 月 31 日 12:58:14</td>
   </tr>
   <tr>
     <td class='n'>📁 <a href='targets/'>targets/</a></td>
     <td class='m'>目录</td>
     <td class='s'>-</td>
     <td class='sh'>-</td>
-    <td class='d'>2026 年 03 月 31 日 12:31:33</td>
+    <td class='d'>2026 年 03 月 31 日 12:58:15</td>
   </tr>
   <tr>
-    <td class='n'>📄 <a href='search.html'>search.html</a></td>
-    <td class='m'>html</td>
-    <td class='s'>144K</td>
-    <td class='sh'>49f0e27...<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard("49f0e2731906336e900a61a753de7097628ccd36c5e4a5732b9de53cf4ce0ebf", this)'>📋</span></td>
-    <td class='d'>2026 年 03 月 31 日 12:51:24</td>
+    <td class='n'>📄 <a href='customfeeds.list'>customfeeds.list</a></td>
+    <td class='m'>plain</td>
+    <td class='s'>4.0K</td>
+    <td class='sh'>63e0e57...<span class='copy-btn' title='点击复制完整 SHA256' onclick='copyToClipboard("63e0e5772a52fd9f729772f7befb859f47ae6e5371e4e1376379f37b52345f05", this)'>📋</span></td>
+    <td class='d'>2026 年 04 月 02 日 21:36:05</td>
   </tr>
   </tbody>
 </table>
+<div class='readme-wrapper'>
+<h2>📖 自述</h2>
+<div id='readme-content' class='markdown-body'></div>
+</div>
+<script>
+  (function() {
+    const markdownText = "# ImmortalWrt Snapshots Build\n\n## CustomFeeds\n\n```\nhttps://pkgs.lssa.fun/immortalwrt/snapshots/targets/mediatek/filogic/packages/packages.adb\nhttps://pkgs.lssa.fun/immortalwrt/snapshots/packages/aarch64_cortex-a53/base/packages.adb\nhttps://pkgs.lssa.fun/immortalwrt/snapshots/packages/aarch64_cortex-a53/luci/packages.adb\nhttps://pkgs.lssa.fun/immortalwrt/snapshots/packages/aarch64_cortex-a53/packages/packages.adb\n#https://pkgs.lssa.fun/immortalwrt/snapshots/packages/aarch64_cortex-a53/routing/packages.adb\n#https://pkgs.lssa.fun/immortalwrt/snapshots/packages/aarch64_cortex-a53/telephony/packages.adb\n#https://pkgs.lssa.fun/immortalwrt/snapshots/packages/aarch64_cortex-a53/video/packages.adb\n```\n\n```bash\nwget -O /etc/apk/repositories.d/customfeeds.list https://pkgs.lssa.fun/immortalwrt/snapshots/customfeeds.list\n```\n";
+    const html = marked.parse(markdownText);
+    document.getElementById('readme-content').innerHTML = html;
+    if (typeof hljs !== 'undefined') {
+      document.querySelectorAll('#readme-content pre code').forEach((block) => {
+        hljs.highlightElement(block);
+      });
+    }
+    // 为每个代码块添加复制按钮
+    document.querySelectorAll('#readme-content pre').forEach((pre) => {
+      if (pre.querySelector('.copy-code-btn')) return;
+      const btn = document.createElement('button');
+      btn.className = 'copy-code-btn';
+      btn.textContent = '复制';
+      btn.onclick = function(e) {
+        e.stopPropagation();
+        const code = pre.querySelector('code');
+        const text = code ? code.innerText : '';
+        navigator.clipboard.writeText(text).then(() => {
+          btn.textContent = '已复制!';
+          btn.classList.add('copied');
+          setTimeout(() => {
+            btn.textContent = '复制';
+            btn.classList.remove('copied');
+          }, 2000);
+        }).catch(() => {
+          btn.textContent = '失败';
+          setTimeout(() => { btn.textContent = '复制'; }, 2000);
+        });
+      };
+      pre.style.position = 'relative';
+      pre.appendChild(btn);
+    });
+  })();
+</script>
 <footer>
-  <p>由 Local Builder 生成于 2026 年 03 月 31 日 12:31:35</p>
-  <p>仓库地址: <a href='https://github.com/Shuery-Shuai/ImmortalWrt-BPI-R4-Firmware'>Shuery-Shuai/ImmortalWrt-BPI-R4-Firmware</a></p>
+  <p>由 Local Builder 生成于 2026 年 04 月 02 日 21:36:05</p>
+  <p>仓库地址: <a href='https://github.com/LetsShareAll/OpenWrtPackages'>LetsShareAll/OpenWrtPackages</a></p>
 </footer>
 </div>
 </body></html>
