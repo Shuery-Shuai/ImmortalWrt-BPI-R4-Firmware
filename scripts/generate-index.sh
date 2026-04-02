@@ -480,8 +480,8 @@ generate_index() {
 main() {
   log "INFO" "🚀 [PHASE: 初始化] 开始生成索引脚本，从 bin 目录开始"
 
-  cd bin || {
-    log "ERROR" "❌ [PHASE: 初始化] 无法进入 'bin' 目录！"
+  cd bin || cd docs {
+    log "ERROR" "❌ [PHASE: 初始化] 无法进入 'bin' 或 'docs' 目录！"
     exit 1
   }
 
