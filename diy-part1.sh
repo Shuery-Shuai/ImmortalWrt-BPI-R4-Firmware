@@ -119,10 +119,10 @@ wireless_regdb_makefile="package/firmware/wireless-regdb/Makefile"
 wireless_regdb_patch_dir="package/firmware/wireless-regdb/patches"
 tx_power_patch="${wireless_regdb_patch_dir}/500-tx_power.patch"
 
-rm -f "${wireless_regdb_makefile}"
-rm -f "${wireless_regdb_patch_dir}"/*.patch
+# rm -f "${wireless_regdb_makefile}"
+# rm -f "${wireless_regdb_patch_dir}"/*.patch
 
-wget https://raw.githubusercontent.com/Rahzadan/openwrt_bpi-r4_mtk_builder/main/files/regdb.Makefile \
-  -O "${wireless_regdb_makefile}"
-wget https://raw.githubusercontent.com/Rahzadan/openwrt_bpi-r4_mtk_builder/main/files/500-tx_power.patch \
-  -O "${tx_power_patch}"
+# wget https://raw.githubusercontent.com/Rahzadan/openwrt_bpi-r4_mtk_builder/main/files/regdb.Makefile \
+#   -O "${wireless_regdb_makefile}"
+# wget https://raw.githubusercontent.com/Rahzadan/openwrt_bpi-r4_mtk_builder/main/files/500-tx_power.patch \
+#   -O "${tx_power_patch}"

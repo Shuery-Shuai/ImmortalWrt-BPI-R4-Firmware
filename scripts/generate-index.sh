@@ -1,9 +1,10 @@
 #!/bin/bash
 
-# 日志配置
-readonly LOG_LEVEL=1 # 日志级别: debug-1, info-2, warn-3, error-4, always-5
-readonly LOG_OPEN=1  # 日志开关: 1-开启, 0-关闭
-readonly LOG_FILE="" # 日志文件路径，留空则不写入文件
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/common.sh"
+
+# 构建脚本本地特有的配置
+# 其余日志调用统一使用 common.sh 中的 log() 方法
 
 # 仓库信息配置
 # 判断是否为 CI 构建还是本地构建
@@ -28,34 +29,7 @@ fi
 # 全局数组存储所有文件条目
 declare -a all_items=()
 
-# 输出日志信息到stderr和可选的文件
-# 参数:
-#   $1: 日志级别 (DEBUG, INFO, WARN, ERROR, ALWAYS)
-#   $2: 日志消息
-log() {
-  local level="${1}"
-  local message="${2}"
-  local level_num
-  local content
-
-  case "${level}" in
-  DEBUG) level_num=1 ;;
-  INFO) level_num=2 ;;
-  WARN) level_num=3 ;;
-  ERROR) level_num=4 ;;
-  ALWAYS) level_num=5 ;;
-  *) level_num=6 ;;
-  esac
-
-  if [[ "${LOG_OPEN}" -eq 1 ]] && [[ "${LOG_LEVEL}" -le "${level_num}" ]]; then
-    content="$(date '+%Y-%m-%d %H:%M:%S') [${level}] ${message}"
-    echo "${content}" >&2
-    if [[ -n "${LOG_FILE}" ]]; then
-      echo "${content}" >>"${LOG_FILE}"
-    fi
-  fi
-}
-
+# 由 common.sh 提供 log() 方法，不在本文件重复定义
 # 将日期格式化为中文格式
 # 参数:
 #   $1: 文件路径
