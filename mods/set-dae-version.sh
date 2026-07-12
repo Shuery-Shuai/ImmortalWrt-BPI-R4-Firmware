@@ -52,7 +52,7 @@ set_dae_version() {
     local hash="$2"
     local makefile="${3:-feeds/packages/net/dae/Makefile}"
 
-    if [[ -z "${raw_version}" || -z "${hash}" ]]; then
+    if [[ -z "${raw_version}" ]]; then
         log ERROR "Usage: set_dae_version <version> [hash|auto] [makefile_path]"
         return 1
     fi

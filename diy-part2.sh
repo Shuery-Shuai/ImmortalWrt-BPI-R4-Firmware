@@ -42,7 +42,7 @@ modify_rust_build_config
 ensure_exec_permission 'files/usr/bin/restore-packages.sh'
 
 # 固定 dae 版本
-set_dae_version "2.0.0rc1" "d149f9c35fcc95d3a8c2f001294468833ba52d7b060d146d2a509257e0c96504"
+set_dae_version "2.0.0"
 
 # 修复 qbittorrent 依赖
 fix_qbittorrent_deps
