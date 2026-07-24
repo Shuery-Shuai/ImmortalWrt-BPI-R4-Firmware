@@ -55,18 +55,18 @@ LOG_LEVEL=${LOG_LEVEL:-$LOG_INFO}   # 默认 INFO 级别
 LOG_TO_CONSOLE=${LOG_TO_CONSOLE:-0} # 默认不输出到控制台
 MAX_LOG_FILES=${MAX_LOG_FILES:-5}   # 最多保留的日志文件数
 
-# 记录脚本启动时间戳（用于计算总耗时）
-readonly SCRIPT_START_TIME
-SCRIPT_START_TIME=$(date +%s)
-
 # 默认备份文件路径
 readonly DEFAULT_BACKUP_FILE="/etc/backup/installed_packages.txt"
+
+# 记录安装失败的包列表文件路径（用于调试和后续处理）ß
+FAILED_FILE="/etc/backup/failed-pkgs.list" # 安装失败包的记录文件
 
 # ================================================================
 # 全局状态变量（必须为全局，因为 trap 函数中需要访问）
 # ================================================================
 backup_resolv_flag=0 # 是否已修改 DNS 配置（0=未修改, 1=已修改）
 firewall_type=""     # 临时修改的防火墙类型（iptables/nftables/空）
+log_file=""          # 日志文件路径
 
 # ================================================================
 # 命令行选项变量
@@ -80,7 +80,7 @@ opt_console=0      # 控制台输出标志
 # 可用网络检测工具（脚本运行时自动探测）
 # ================================================================
 NET_TOOL=""      # 使用的工具名（curl/wget/ping）
-NET_TOOL_OPTS="" # 工具对应的参数
+NET_TOOL_OPTS=() # 工具对应的参数（数组）
 
 #===============================================================================
 # 函数：show_help
@@ -177,13 +177,13 @@ apply_log_options() {
 detect_net_tool() {
     if command -v curl >/dev/null 2>&1; then
         NET_TOOL="curl"
-        NET_TOOL_OPTS="--connect-timeout 5 -kIs"
+        NET_TOOL_OPTS=(--connect-timeout 5 -kIs)
     elif command -v wget >/dev/null 2>&1; then
         NET_TOOL="wget"
-        NET_TOOL_OPTS="--timeout=5 --no-check-certificate -q --spider"
+        NET_TOOL_OPTS=(--timeout=5 --no-check-certificate -q --spider)
     elif command -v ping >/dev/null 2>&1; then
         NET_TOOL="ping"
-        NET_TOOL_OPTS="-c 1 -W 5"
+        NET_TOOL_OPTS=(-c 1 -W 5)
     else
         NET_TOOL=""
     fi
@@ -199,11 +199,12 @@ main() {
     apply_log_options
     detect_net_tool
 
+    local script_start_time
+    script_start_time=$(date +%s) # 记录脚本启动时间戳（用于计算总耗时）
     local backup_file="$opt_backup_file"
     local test_url
     test_url=$(get_apk_repo_url) # 从系统源获取测试 URL
-    local log_file
-    log_file=$(init_log_file) # 初始化日志文件路径
+    log_file=$(init_log_file)    # 初始化日志文件路径
 
     # 设置退出时的清理陷阱（恢复 DNS 和防火墙）
     # 注意：backup_resolv_flag 与 firewall_type 必须为全局变量
@@ -217,14 +218,14 @@ main() {
     if [ ! -f "$backup_file" ]; then
         # 备份文件不存在，视为已恢复或无需操作，静默退出
         log_info "$log_file" "备份文件不存在: $backup_file，视为已恢复或无需恢复"
-        log_exit_summary "$log_file" 0
+        log_exit_summary "$log_file" 0 "$script_start_time"
         return 0
     fi
 
     # 预检查包是否都已安装，若全部存在则无需网络操作，直接退出
     if check_all_packages_installed "$backup_file" "$log_file"; then
         log_info "$log_file" "所有软件包已安装，无需操作"
-        log_exit_summary "$log_file" 0
+        log_exit_summary "$log_file" 0 "$script_start_time"
         return 0
     fi
 
@@ -241,22 +242,22 @@ main() {
 
         if ! check_network "$test_url" "$log_file"; then
             log_error "$log_file" "无法连接软件源，恢复中止"
-            log_exit_summary "$log_file" 1
+            log_exit_summary "$log_file" 1 "$script_start_time"
             return 1
         fi
     fi
 
     #-------- 第三阶段：更新软件源 --------
     if ! update_package_lists "$log_file"; then
-        log_error "$log_file" "软件源更新失败"
-        log_exit_summary "$log_file" 1
+        log_error "$log_file" "软件源索引不可用，恢复中止"
+        log_exit_summary "$log_file" 1 "$script_start_time"
         return 1
     fi
 
     #-------- 第四阶段：安装包并验证 --------
     if ! install_and_verify_packages "$backup_file" "$log_file"; then
         log_error "$log_file" "软件包安装验证失败"
-        log_exit_summary "$log_file" 1
+        log_exit_summary "$log_file" 1 "$script_start_time"
         return 1
     fi
 
@@ -265,7 +266,7 @@ main() {
 
     log_info "$log_file" "===== 所有软件包验证成功 ====="
     log_info "$log_file" "系统将在10秒后重启..."
-    log_exit_summary "$log_file" 0
+    log_exit_summary "$log_file" 0 "$script_start_time"
     sync
     sleep 10
     reboot -f
@@ -314,8 +315,9 @@ init_log_file() {
     if [ -d "$log_dir" ] && [ -w "$log_dir" ]; then
         log_path="$log_dir/$log_name"
         # 日志轮转：仅保留最近的 N 个日志文件
-        local files count
-        files=$(ls -1t "$log_dir"/package-restore-*.log 2>/dev/null)
+        local files
+        files=$(find "$log_dir" -maxdepth 1 -name 'package-restore-*.log' -type f -printf '%T@ %p\n' 2>/dev/null | sort -rn | cut -d' ' -f2-)
+        local count
         count=$(echo "$files" | wc -l)
         if [ "$count" -gt "$MAX_LOG_FILES" ]; then
             echo "$files" | tail -n +$((MAX_LOG_FILES + 1)) | xargs rm -f
@@ -446,17 +448,18 @@ log_header() {
 #-----------------------------------------------------------------------
 # 函数：log_exit_summary
 # 描述：脚本退出时记录总耗时及状态
-# 全局变量：SCRIPT_START_TIME
 # 参数：
 #   $1: 日志文件路径
 #   $2: 退出码 (0 成功, 非0 失败)
+#   $3: 脚本启动时间戳
 #-----------------------------------------------------------------------
 log_exit_summary() {
     local log_file="$1"
     local exit_code="$2"
+    local start_time="$3"
     local end_time
     end_time=$(date +%s)
-    local elapsed=$((end_time - SCRIPT_START_TIME))
+    local elapsed=$((end_time - start_time))
     if [ "$exit_code" -eq 0 ]; then
         log_info "$log_file" "脚本成功完成，总耗时 ${elapsed} 秒"
     else
@@ -502,8 +505,12 @@ check_all_packages_installed() {
     done <"$user_pkgs"
 
     rm -f "$user_pkgs"
-    [ "$all_installed" -eq 1 ] && log_info "$log_file" "所有用户安装包已存在"
-    return $all_installed
+    if [ "$all_installed" -eq 1 ]; then
+        log_info "$log_file" "所有用户安装包已存在"
+        return 0
+    else
+        return 1
+    fi
 }
 
 #-----------------------------------------------------------------------
@@ -533,16 +540,16 @@ check_network() {
 
         case "$NET_TOOL" in
         curl)
-            err_out=$(curl "$NET_TOOL_OPTS" "$test_url" 2>&1) && success=1 || true
+            err_out=$(curl "${NET_TOOL_OPTS[@]}" "$test_url" 2>&1) && success=1 || true
             ;;
         wget)
-            err_out=$(wget "$NET_TOOL_OPTS" "$test_url" 2>&1) && success=1 || true
+            err_out=$(wget "${NET_TOOL_OPTS[@]}" "$test_url" 2>&1) && success=1 || true
             ;;
         ping)
             # ping 仅检测主机部分
             local host
             host=$(echo "$test_url" | awk -F/ '{print $3}')
-            err_out=$(ping "$NET_TOOL_OPTS" "$host" 2>&1) && success=1 || true
+            err_out=$(ping "${NET_TOOL_OPTS[@]}" "$host" 2>&1) && success=1 || true
             ;;
         esac
 
@@ -646,7 +653,7 @@ set_temp_firewall_rules() {
 restore_original_config() {
     local backup_resolv_flag="$1"
     local firewall_type="$2"
-    local log_file="$3"
+    local log_file="${3:-/dev/null}"
 
     # 恢复 DNS
     if [ "$backup_resolv_flag" -eq 1 ] && [ -f /tmp/resolv.conf.backup ]; then
@@ -692,15 +699,22 @@ restore_original_config() {
 # 返回：apk 命令的退出码
 #-----------------------------------------------------------------------
 run_apk() {
-    local log_file="$1"
+    local log_file="${1:-/dev/null}"
     local desc="$2"
     shift 2
     local tmp_out="/tmp/apk-$$.log"
     local ret=0
 
-    apk "$@" >"$tmp_out" 2>&1 || ret=$?
+    # 记录实际执行的命令（debug 模式可见）
+    log_debug "$log_file" "执行命令: apk $*"
+    if [ "${LOG_TO_CONSOLE}" -eq 1 ]; then
+        # 同时输出到终端和临时文件，让用户看到实时进度
+        apk "$@" 2>&1 | tee "$tmp_out" || ret=${PIPESTATUS[0]}
+    else
+        apk "$@" >"$tmp_out" 2>&1 || ret=$?
+    fi
 
-    if [ $ret -ne 0 ]; then
+    if [ "$ret" -ne 0 ]; then
         # 失败时记录错误并附加完整输出
         log_error "$log_file" "$desc 失败 (退出码 $ret)"
         {
@@ -722,7 +736,7 @@ run_apk() {
     fi
 
     rm -f "$tmp_out"
-    return $ret
+    return "$ret"
 }
 
 #-----------------------------------------------------------------------
@@ -733,9 +747,25 @@ run_apk() {
 # 返回：apk update 的退出码
 #-----------------------------------------------------------------------
 update_package_lists() {
-    local log_file="$1"
+    local log_file="${1:-/dev/null}"
     log_info "$log_file" "开始更新软件包列表..."
-    run_apk "$log_file" "更新软件源" update
+    log_debug "$log_file" "执行命令: apk update"
+
+    local ret=0
+    apk update >>"$log_file" 2>&1 || ret=$?
+
+    if [ "$ret" -ne 0 ]; then
+        log_warn "$log_file" "软件源更新部分失败 (退出码 $ret)，验证索引可用性..."
+        # 尝试搜索一个常见基础包，确认至少有一个源可用
+        if apk search --quiet ca-certificates >/dev/null 2>&1; then
+            log_warn "$log_file" "索引基本可用，继续尝试安装软件包"
+        else
+            log_error "$log_file" "软件源更新失败且索引完全不可用，无法继续恢复"
+            return 1
+        fi
+    else
+        log_info "$log_file" "软件源更新成功"
+    fi
 }
 
 #-----------------------------------------------------------------------
@@ -748,23 +778,29 @@ update_package_lists() {
 #-----------------------------------------------------------------------
 install_and_verify_packages() {
     local backup_file="$1"
-    local log_file="$2"
+    local log_file="${2:-/dev/null}"
     local max_retries=3
     local user_pkgs="/tmp/user-pkgs.list"
+    local failed_file="${FAILED_FILE:-/etc/backup/failed-pkgs.list}"
 
-    # 提取 overlay 包
-    grep '\toverlay' "$backup_file" | awk '{print $1}' >"$user_pkgs"
+    # 提取所有 overlay 包的完整行（包名 \t overlay）
+    grep '\toverlay' "$backup_file" >"$user_pkgs"
 
     local pkg_count
     pkg_count=$(wc -l <"$user_pkgs")
     log_info "$log_file" "=== 安装 $pkg_count 个用户软件包（overlay） ==="
-    log_debug "$log_file" "包列表: $(tr '\n' ' ' <"$user_pkgs")"
+    # 调试输出仅显示包名列表（不显示格式）
+    log_debug "$log_file" "包列表: $(awk '{print $1}' "$user_pkgs" | tr '\n' ' ')"
 
     if ! install_pkgs_with_retry "$user_pkgs" "$max_retries" "$log_file"; then
         log_warn "$log_file" "警告：部分用户软件包未正确安装"
         rm -f "$user_pkgs"
         return 1
     fi
+
+    # 全部安装成功，清理失败列表
+    rm -f "$FAILED_FILE"
+    log_info "$log_file" "所有包安装成功，已删除临时失败列表"
 
     rm -f "$user_pkgs"
     return 0
@@ -782,18 +818,31 @@ install_and_verify_packages() {
 install_pkgs_with_retry() {
     local pkg_list="$1"
     local max_retries="$2"
-    local log_file="$3"
+    local log_file="${3:-/dev/null}"
     local retry_count=0
-    local failed_file="/tmp/failed-pkgs.list"
-    local all_pkgs
+    local failed_file="${FAILED_FILE:-/etc/backup/failed-pkgs.list}"
+    local all_pkgs_arr=()
 
-    # 将所有包名连接为一行
-    all_pkgs=$(tr '\n' ' ' <"$pkg_list")
-    [ -z "$all_pkgs" ] && return 0
+    # 从完整行中提取所有包名（用于批量安装）
+    readarray -t all_pkgs_arr < <(awk '{print $1}' "$pkg_list")
+    [ ${#all_pkgs_arr[@]} -eq 0 ] && return 0
+
+    # 确保失败列表文件所在目录存在
+    mkdir -p "$(dirname "$failed_file")"
 
     while [ "$retry_count" -lt "$max_retries" ]; do
-        # 尝试批量安装
-        if run_apk "$log_file" "批量安装包" add --no-cache "$all_pkgs"; then
+        local batch_ok=1
+        if [ "${LOG_TO_CONSOLE}" -eq 1 ]; then
+            log_info "$log_file" "正在批量安装所有软件包，请耐心等待..."
+            if run_apk_with_progress "$log_file" "批量安装包" add --no-cache "${all_pkgs_arr[@]}"; then
+                batch_ok=0
+            fi
+        else
+            if run_apk "$log_file" "批量安装包" add --no-cache "${all_pkgs_arr[@]}"; then
+                batch_ok=0
+            fi
+        fi
+        if [ "$batch_ok" -eq 0 ]; then
             return 0
         fi
 
@@ -801,11 +850,29 @@ install_pkgs_with_retry() {
         : >"$failed_file" # 清空失败列表
 
         # 逐个安装，失败则记录到 failed_file
-        while IFS= read -r pkg; do
-            if ! run_apk "$log_file" "安装 $pkg" add --no-cache "$pkg"; then
-                echo "$pkg" >>"$failed_file"
+        local total_pkgs pkg_name individual_index=0 line
+        total_pkgs=$(wc -l <"$pkg_list")
+        while IFS= read -r line; do
+            pkg_name=$(echo "$line" | awk '{print $1}')
+            individual_index=$((individual_index + 1))
+            # 输出进度条（仅控制台）
+            # 进度条使用 $pkg_name 显示
+            if [ "${LOG_TO_CONSOLE}" -eq 1 ]; then
+                local percent=$((individual_index * 100 / total_pkgs))
+                local filled=$((percent * 30 / 100))
+                local empty=$((30 - filled))
+                printf "\r[%s%s] %3d%% (%d/%d) %-30s" \
+                    "$(printf '#%.0s' $(seq 1 $filled))" \
+                    "$(printf ' %.0s' $(seq 1 $empty))" \
+                    "$percent" "$individual_index" "$total_pkgs" "$pkg_name"
+            fi
+            if ! run_apk "$log_file" "安装 $pkg_name" add --no-cache "$pkg_name"; then
+                # 失败时保留完整行
+                echo "$line" >>"$failed_file"
             fi
         done <"$pkg_list"
+        # 换行结束进度条
+        [ "${LOG_TO_CONSOLE}" -eq 1 ] && echo ""
 
         # 若无失败包，成功返回
         if [ ! -s "$failed_file" ]; then
@@ -821,7 +888,7 @@ install_pkgs_with_retry() {
 
         # 用失败列表更新 pkg_list 和 all_pkgs 以备下次循环
         cp "$failed_file" "$pkg_list"
-        all_pkgs=$(tr '\n' ' ' <"$failed_file")
+        readarray -t all_pkgs_arr < <(awk '{print $1}' "$failed_file")
         sleep 5
     done
 
@@ -829,6 +896,69 @@ install_pkgs_with_retry() {
     log_error "$log_file" "以下软件包安装失败:"
     cat "$failed_file" >>"$log_file"
     return 1
+}
+
+#-----------------------------------------------------------------------
+# 函数：run_apk_with_progress
+# 描述：执行 apk 命令并显示进度条（仅在控制台输出时有效）
+# 全局变量：LOG_TO_CONSOLE
+# 参数：
+#   $1: 日志文件路径
+#   $2: 操作描述（用于日志）
+#   $@: apk 命令及参数
+# 返回：apk 命令的退出码
+#-----------------------------------------------------------------------
+run_apk_with_progress() {
+    local log_file="$1"
+    local desc="$2"
+    shift 2
+    local tmp_out="/tmp/apk-$$.log"
+    local ret=0
+    local line
+
+    log_debug "$log_file" "执行命令: apk $*"
+    # 执行命令，逐行处理输出
+    apk "$@" 2>&1 | tee "$tmp_out" | {
+        local total=0 current=0
+        while IFS= read -r line; do
+            if [[ $line =~ ^\(([0-9]+)/([0-9]+)\) ]]; then
+                current=${BASH_REMATCH[1]}
+                total=${BASH_REMATCH[2]}
+                if [ "$total" -gt 0 ]; then
+                    local percent=$((current * 100 / total))
+                    local filled=$((percent * 30 / 100))
+                    local empty=$((30 - filled))
+                    printf "\r[%s%s] %3d%% (%d/%d)" \
+                        "$(printf '#%.0s' $(seq 1 $filled))" \
+                        "$(printf ' %.0s' $(seq 1 $empty))" \
+                        "$percent" "$current" "$total"
+                fi
+            fi
+        done
+        echo # 换行结束进度条
+    }
+    ret=${PIPESTATUS[0]}
+
+    # 成功/失败的日志记录沿用原有逻辑
+    if [ "$ret" -ne 0 ]; then
+        log_error "$log_file" "$desc 失败 (退出码 $ret)"
+        {
+            echo "--- 命令输出开始 ---"
+            cat "$tmp_out"
+            echo "--- 命令输出结束 ---"
+        } >>"$log_file"
+    elif [ "${LOG_LEVEL:-$LOG_INFO}" -le "$LOG_DEBUG" ]; then
+        log_debug "$log_file" "$desc 成功"
+        {
+            echo "--- 命令输出开始 ---"
+            cat "$tmp_out"
+            echo "--- 命令输出结束 ---"
+        } >>"$log_file"
+    else
+        log_info "$log_file" "$desc 成功"
+    fi
+    rm -f "$tmp_out"
+    return "$ret"
 }
 
 #===============================================================================
