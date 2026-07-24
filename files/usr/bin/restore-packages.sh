@@ -1,125 +1,441 @@
 #!/bin/bash
-# 软件包恢复脚本：包含预安装检查与状态标记
-# 功能：根据备份文件恢复软件包，验证安装状态，并在成功后重启系统
-# 用法: restore-packages [备份文件路径]
+#===============================================================================
+# 软件包恢复脚本
+# 功能：从备份文件批量恢复用户安装的软件包，并在成功后重启系统
+# 用法：restore-packages.sh [选项] [备份文件路径]
+#
+# 选项：
+#   -h, --help      显示帮助信息并退出
+#   -d, --debug     启用调试日志，记录所有 apk 命令详细输出
+#   -q, --quiet     静默模式，仅记录警告和错误
+#   -c, --console   将 INFO 及以上级别消息同时输出到控制台
+#
+# 参数：
+#   备份文件路径   要恢复的包列表文件，默认为 /etc/backup/installed_packages.txt
+#
+# 环境变量：
+#   LOG_LEVEL       日志级别 (0=DEBUG, 1=INFO, 2=WARN, 3=ERROR) [默认: 1]
+#   LOG_TO_CONSOLE  是否输出到终端 (1=是, 0=否) [默认: 0]
+#   MAX_LOG_FILES   保留的历史日志文件数量 [默认: 5]
+#
+# 返回值：
+#   0   成功（备份文件不存在或恢复完成）
+#   1   发生错误（网络不可达、安装失败等）
+#
+# 说明：
+#   该脚本专为 OpenWrt/ImmortalWrt 环境设计，使用 apk 包管理器。
+#   恢复过程仅处理标记为 overlay 的用户安装包，跳过固件自带的 ROM 包。
+#   若网络不通，会自动修改 DNS 和临时放行防火墙以尝试连接软件源，
+#   脚本退出时（无论成功或失败）均会恢复原始配置。
+#   安装成功后删除备份文件，因此下次启动检测到备份文件缺失会自动跳过。
+#
 # 作者：Shuery-Shuai
 # 日期：2025-06-27
-# 版本：1.0.0
+# 版本：1.2.0
+#===============================================================================
 
-# 严格模式：未定义变量使脚本退出，管道错误退出
+# 严格模式：使用未定义变量、管道命令失败均会导致脚本退出
 set -euo pipefail
 
+# 必须使用 Bash 运行
+if [ -z "${BASH_VERSION:-}" ]; then
+    echo "此脚本需要 bash 运行" >&2
+    exit 1
+fi
+
 #######################################
-# 主函数
-# Globals:
-#   backup_resolv_flag, backup_firewall_flag, firewall_type, firewall_backup
-# Arguments:
-#   $1: 备份文件路径 (默认: /etc/backup/installed_packages.txt)
-# Outputs:
-#   写入日志文件，创建状态标记
-# Returns:
-#   0: 成功, 1: 失败
+# 全局常量与可配置变量
 #######################################
+
+# 日志级别定义（只读）
+readonly LOG_DEBUG=0 LOG_INFO=1 LOG_WARN=2 LOG_ERROR=3
+
+# 可通过环境变量覆盖默认配置
+LOG_LEVEL=${LOG_LEVEL:-$LOG_INFO}   # 默认 INFO 级别
+LOG_TO_CONSOLE=${LOG_TO_CONSOLE:-0} # 默认不输出到控制台
+MAX_LOG_FILES=${MAX_LOG_FILES:-5}   # 最多保留的日志文件数
+
+# 记录脚本启动时间戳（用于计算总耗时）
+readonly SCRIPT_START_TIME
+SCRIPT_START_TIME=$(date +%s)
+
+# 默认备份文件路径
+readonly DEFAULT_BACKUP_FILE="/etc/backup/installed_packages.txt"
+
+# ================================================================
+# 全局状态变量（必须为全局，因为 trap 函数中需要访问）
+# ================================================================
+backup_resolv_flag=0 # 是否已修改 DNS 配置（0=未修改, 1=已修改）
+firewall_type=""     # 临时修改的防火墙类型（iptables/nftables/空）
+
+# ================================================================
+# 命令行选项变量
+# ================================================================
+opt_backup_file="" # 指定的备份文件路径
+opt_debug=0        # 调试模式标志
+opt_quiet=0        # 静默模式标志
+opt_console=0      # 控制台输出标志
+
+# ================================================================
+# 可用网络检测工具（脚本运行时自动探测）
+# ================================================================
+NET_TOOL=""      # 使用的工具名（curl/wget/ping）
+NET_TOOL_OPTS="" # 工具对应的参数
+
+#===============================================================================
+# 函数：show_help
+# 描述：打印帮助信息并退出
+#===============================================================================
+show_help() {
+    cat <<EOF
+软件包恢复脚本 v1.5.0
+
+用法: $(basename "$0") [选项] [备份文件路径]
+
+选项:
+  -h, --help      显示此帮助信息并退出
+  -d, --debug     启用调试日志，记录所有 apk 命令详细输出
+  -q, --quiet     静默模式，仅记录警告和错误
+  -c, --console   将 INFO 及以上消息同时输出到控制台
+
+参数:
+  备份文件路径   要恢复的包列表文件，默认为:
+                 $DEFAULT_BACKUP_FILE
+
+环境变量:
+  LOG_LEVEL       日志级别 (0=DEBUG, 1=INFO, 2=WARN, 3=ERROR)
+  LOG_TO_CONSOLE  是否输出到终端 (1=是, 0=否)
+  MAX_LOG_FILES   保留的历史日志文件数量
+
+注意:
+  成功恢复后备份文件会被删除，下次执行时会因备份文件缺失而自动跳过，
+  不再需要手动创建标记文件。若需再次恢复，请重新放置备份文件。
+EOF
+}
+
+#===============================================================================
+# 函数：parse_args
+# 描述：解析命令行参数
+# Globals: opt_backup_file, opt_debug, opt_quiet, opt_console
+# Arguments: $@ 命令行参数
+#===============================================================================
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        -h | --help)
+            show_help
+            exit 0
+            ;;
+        -d | --debug)
+            opt_debug=1
+            shift
+            ;;
+        -q | --quiet)
+            opt_quiet=1
+            shift
+            ;;
+        -c | --console)
+            opt_console=1
+            shift
+            ;;
+        --)
+            shift
+            opt_backup_file="$1"
+            break
+            ;;
+        -*)
+            echo "未知选项: $1" >&2
+            echo "使用 -h 或 --help 查看帮助" >&2
+            exit 1
+            ;;
+        *)
+            opt_backup_file="$1"
+            shift
+            ;;
+        esac
+    done
+    # 若未指定备份文件则使用默认值
+    opt_backup_file="${opt_backup_file:-$DEFAULT_BACKUP_FILE}"
+}
+
+#===============================================================================
+# 函数：apply_log_options
+# 描述：将命令行选项应用到全局日志配置
+# Globals: LOG_LEVEL, LOG_TO_CONSOLE, opt_debug, opt_quiet, opt_console
+#===============================================================================
+apply_log_options() {
+    [ "$opt_debug" -eq 1 ] && LOG_LEVEL=$LOG_DEBUG
+    [ "$opt_quiet" -eq 1 ] && LOG_LEVEL=$LOG_WARN
+    [ "$opt_console" -eq 1 ] && LOG_TO_CONSOLE=1
+}
+
+#===============================================================================
+# 函数：detect_net_tool
+# 描述：探测系统中可用的网络检测工具，按优先级：curl > wget > ping
+# Globals: NET_TOOL, NET_TOOL_OPTS
+#===============================================================================
+detect_net_tool() {
+    if command -v curl >/dev/null 2>&1; then
+        NET_TOOL="curl"
+        NET_TOOL_OPTS="--connect-timeout 5 -kIs"
+    elif command -v wget >/dev/null 2>&1; then
+        NET_TOOL="wget"
+        NET_TOOL_OPTS="--timeout=5 --no-check-certificate -q --spider"
+    elif command -v ping >/dev/null 2>&1; then
+        NET_TOOL="ping"
+        NET_TOOL_OPTS="-c 1 -W 5"
+    else
+        NET_TOOL=""
+    fi
+}
+
+#===============================================================================
+# 函数：main
+# 描述：主控制流程
+#===============================================================================
 main() {
-    # 配置恢复标记
-    local backup_resolv_flag=0
-    local backup_firewall_flag=0
-    local firewall_type=""
-    local firewall_backup=""
+    # 解析命令行参数并应用配置
+    parse_args "$@"
+    apply_log_options
+    detect_net_tool
 
-    # 初始化路径
-    local backup_file="${1:-/etc/backup/installed_packages.txt}"
-    local test_url="https://immortalwrt.shuery.lssa.fun"
-    local log_file="/var/log/package-restore-$(date +'%Y%m%d%H%M%S').log"
-    local installed_flag="/tmp/packages-has-installed"
+    local backup_file="$opt_backup_file"
+    local test_url
+    test_url=$(get_apk_repo_url) # 从系统源获取测试 URL
+    local log_file
+    log_file=$(init_log_file) # 初始化日志文件路径
 
-    # 设置退出时自动恢复配置
-    trap 'restore_original_config "$backup_resolv_flag" "$backup_firewall_flag" "$firewall_type" "$firewall_backup" "$log_file"' EXIT
+    # 设置退出时的清理陷阱（恢复 DNS 和防火墙）
+    # 注意：backup_resolv_flag 与 firewall_type 必须为全局变量
+    trap 'restore_original_config "$backup_resolv_flag" "$firewall_type" "$log_file"' EXIT
 
-    # 初始化日志
     log_header "$log_file" "开始恢复软件包" "backup_file=$backup_file"
+    log_info "$log_file" "日志级别: $LOG_LEVEL, 控制台输出: $LOG_TO_CONSOLE"
+    [ -n "$NET_TOOL" ] && log_info "$log_file" "网络检测工具: $NET_TOOL"
 
-    # 检查是否已安装
-    if [ -f "$installed_flag" ] || check_all_packages_installed "$backup_file" "$log_file"; then
-        log_info "$log_file" "所有软件包已安装，无需操作"
+    #-------- 第一阶段：预检查与备份文件存在性判断 --------
+    if [ ! -f "$backup_file" ]; then
+        # 备份文件不存在，视为已恢复或无需操作，静默退出
+        log_info "$log_file" "备份文件不存在: $backup_file，视为已恢复或无需恢复"
+        log_exit_summary "$log_file" 0
         return 0
     fi
 
-    # 验证备份文件
-    if [ ! -f "$backup_file" ]; then
-        log_error "$log_file" "备份文件不存在: $backup_file"
-        return 1
+    # 预检查包是否都已安装，若全部存在则无需网络操作，直接退出
+    if check_all_packages_installed "$backup_file" "$log_file"; then
+        log_info "$log_file" "所有软件包已安装，无需操作"
+        log_exit_summary "$log_file" 0
+        return 0
     fi
 
-    # 网络状态检测
+    #-------- 第二阶段：确保网络可达 --------
     if ! check_network "$test_url" "$log_file"; then
-        # 第一次检测失败时备份并修改设置
+        # 第一次失败，修改 DNS 和防火墙再试
         backup_resolv_flag=1
         backup_resolv_config "$log_file"
 
         firewall_type=$(detect_firewall_type)
         if [ -n "$firewall_type" ]; then
-            backup_firewall_flag=1
-            firewall_backup="/tmp/firewall-backup-$(date +'%s').rules"
-            backup_firewall "$firewall_type" "$firewall_backup" "$log_file"
             set_temp_firewall_rules "$firewall_type" "$log_file"
         fi
 
-        # 第二次检测
         if ! check_network "$test_url" "$log_file"; then
             log_error "$log_file" "无法连接软件源，恢复中止"
+            log_exit_summary "$log_file" 1
             return 1
         fi
     fi
 
-    # 更新软件源
+    #-------- 第三阶段：更新软件源 --------
     if ! update_package_lists "$log_file"; then
         log_error "$log_file" "软件源更新失败"
+        log_exit_summary "$log_file" 1
         return 1
     fi
 
-    # 安装并验证软件包
+    #-------- 第四阶段：安装包并验证 --------
     if ! install_and_verify_packages "$backup_file" "$log_file"; then
         log_error "$log_file" "软件包安装验证失败"
+        log_exit_summary "$log_file" 1
         return 1
     fi
 
-    # 删除备份文件（安装验证成功后）
+    # 安装成功，删除备份文件（以此作为下次启动的完成信号）
     rm -f "$backup_file" && log_info "$log_file" "已删除备份文件: $backup_file"
 
-    # 创建安装完成标记
-    touch "$installed_flag"
-    log_info "$log_file" "已创建安装完成标记: $installed_flag"
-
-    # 最终系统重启
     log_info "$log_file" "===== 所有软件包验证成功 ====="
     log_info "$log_file" "系统将在10秒后重启..."
-
-    # 安全重启
+    log_exit_summary "$log_file" 0
+    sync
     sleep 10
-    reboot
+    reboot -f
 }
 
-#=== 功能函数 ===#
+#===============================================================================
+# 函数：get_apk_repo_url
+# 描述：从系统 apk 配置中获取第一个可用的软件源 URL
+#       扫描 /etc/apk/repositories 及 /etc/apk/repositories.d/*.list
+# Returns: 输出一个 URL 字符串
+#===============================================================================
+get_apk_repo_url() {
+    local url files=()
 
-#######################################
-# 记录日志头信息
-# Globals:
-#   None
+    # 收集所有可能的源配置文件
+    [ -f /etc/apk/repositories ] && files+=("/etc/apk/repositories")
+    if [ -d /etc/apk/repositories.d ]; then
+        while IFS= read -r f; do
+            files+=("$f")
+        done < <(find /etc/apk/repositories.d -name '*.list' -type f 2>/dev/null)
+    fi
+
+    # 遍历文件，取第一个以 http/https 开头的行
+    for f in "${files[@]}"; do
+        url=$(awk '/^https?:\/\// {print; exit}' "$f" 2>/dev/null)
+        [ -n "$url" ] && break
+    done
+
+    # 如果都没找到，回退到 Alpine CDN（一般不会用到）
+    echo "${url:-https://dl-cdn.alpinelinux.org}"
+}
+
+#===============================================================================
+# 函数：init_log_file
+# 描述：初始化日志文件路径，若 /var/log 不可写则使用 /tmp
+#       同时执行日志轮转，保留最近 MAX_LOG_FILES 个文件
+# Globals: MAX_LOG_FILES
+# Returns: 输出日志文件完整路径
+#===============================================================================
+init_log_file() {
+    local log_dir="/var/log"
+    local log_name
+    log_name="package-restore-$(date +'%Y%m%d%H%M%S').log"
+    local log_path
+
+    if [ -d "$log_dir" ] && [ -w "$log_dir" ]; then
+        log_path="$log_dir/$log_name"
+        # 日志轮转：仅保留最近的 N 个日志文件
+        local files count
+        files=$(ls -1t "$log_dir"/package-restore-*.log 2>/dev/null)
+        count=$(echo "$files" | wc -l)
+        if [ "$count" -gt "$MAX_LOG_FILES" ]; then
+            echo "$files" | tail -n +$((MAX_LOG_FILES + 1)) | xargs rm -f
+        fi
+    else
+        log_path="/tmp/$log_name"
+    fi
+    echo "$log_path"
+}
+
+#===============================================================================
+# 日志系统
+#===============================================================================
+
+#-----------------------------------------------------------------------
+# 函数：log_write
+# 描述：底层日志写入，根据级别写入文件并根据配置输出到控制台
+# Globals: LOG_TO_CONSOLE
+# Arguments:
+#   $1: 日志级别数值 (LOG_DEBUG/INFO/WARN/ERROR)
+#   $2: 日志文件路径
+#   $3: 日志消息
+#-----------------------------------------------------------------------
+log_write() {
+    local level="$1"
+    local log_file="$2"
+    local message="$3"
+    local timestamp
+    timestamp=$(date '+%F %T')
+    local level_str
+
+    case "$level" in
+    "$LOG_DEBUG") level_str="DEBUG" ;;
+    "$LOG_INFO") level_str="INFO " ;;
+    "$LOG_WARN") level_str="WARN " ;;
+    "$LOG_ERROR") level_str="ERROR" ;;
+    *) level_str="UNKN " ;;
+    esac
+
+    local line="[$timestamp] [$level_str] $message"
+
+    # 写入日志文件
+    echo "$line" >>"$log_file"
+
+    # 控制台输出：WARN/ERROR 总输出到 stderr；INFO/DEBUG 在 LOG_TO_CONSOLE=1 时输出
+    if [ "$level" -ge "$LOG_WARN" ]; then
+        echo "$line" >&2
+    elif [ "${LOG_TO_CONSOLE}" -eq 1 ] && [ "$level" -ge "$LOG_INFO" ]; then
+        echo "$line"
+    fi
+}
+
+#-----------------------------------------------------------------------
+# 函数：log_debug
+# 描述：记录 DEBUG 日志，仅在 LOG_LEVEL <= LOG_DEBUG 时生效
+# Arguments:
+#   $1: 日志文件路径
+#   $2: 消息
+#-----------------------------------------------------------------------
+log_debug() {
+    if [ "${LOG_LEVEL:-$LOG_INFO}" -le "$LOG_DEBUG" ]; then
+        log_write "$LOG_DEBUG" "$1" "$2"
+    fi
+}
+
+#-----------------------------------------------------------------------
+# 函数：log_info
+# 描述：记录 INFO 日志，LOG_LEVEL <= LOG_INFO 时生效
+# Arguments:
+#   $1: 日志文件路径
+#   $2: 消息
+#-----------------------------------------------------------------------
+log_info() {
+    if [ "${LOG_LEVEL:-$LOG_INFO}" -le "$LOG_INFO" ]; then
+        log_write "$LOG_INFO" "$1" "$2"
+    fi
+}
+
+#-----------------------------------------------------------------------
+# 函数：log_warn
+# 描述：记录 WARN 日志，LOG_LEVEL <= LOG_WARN 时生效
+# Arguments:
+#   $1: 日志文件路径
+#   $2: 消息
+#-----------------------------------------------------------------------
+log_warn() {
+    if [ "${LOG_LEVEL:-$LOG_INFO}" -le "$LOG_WARN" ]; then
+        log_write "$LOG_WARN" "$1" "$2"
+    fi
+}
+
+#-----------------------------------------------------------------------
+# 函数：log_error
+# 描述：记录 ERROR 日志并返回错误码 1
+# Arguments:
+#   $1: 日志文件路径
+#   $2: 消息
+# Returns: 1
+#-----------------------------------------------------------------------
+log_error() {
+    if [ "${LOG_LEVEL:-$LOG_INFO}" -le "$LOG_ERROR" ]; then
+        log_write "$LOG_ERROR" "$1" "$2"
+    fi
+    return 1
+}
+
+#-----------------------------------------------------------------------
+# 函数：log_header
+# 描述：输出日志文件头部标题（无级别，纯文本）
 # Arguments:
 #   $1: 日志文件路径
 #   $2: 标题
-#   $3: 附加信息
-# Outputs:
-#   写入日志文件
-#######################################
+#   $3: 附加信息（可选）
+#-----------------------------------------------------------------------
 log_header() {
     local log_file="$1"
     local title="$2"
     local info="$3"
     local timestamp
-    timestamp=$(date +'%Y-%m-%dT%H:%M:%S%z')
-
+    timestamp=$(date '+%F %T')
     {
         echo "===== $timestamp - $title ====="
         [ -n "$info" ] && echo "信息: $info"
@@ -127,80 +443,57 @@ log_header() {
     } >>"$log_file"
 }
 
-#######################################
-# 记录信息日志
-# Globals:
-#   None
+#-----------------------------------------------------------------------
+# 函数：log_exit_summary
+# 描述：脚本退出时记录总耗时及状态
+# Globals: SCRIPT_START_TIME
 # Arguments:
 #   $1: 日志文件路径
-#   $2: 消息内容
-# Outputs:
-#   写入日志文件
-#######################################
-log_info() {
+#   $2: 退出码 (0 成功, 非0 失败)
+#-----------------------------------------------------------------------
+log_exit_summary() {
     local log_file="$1"
-    local message="$2"
-    local timestamp
-    timestamp=$(date +'%Y-%m-%dT%H:%M:%S%z')
-
-    echo "[$timestamp] $message" >>"$log_file"
+    local exit_code="$2"
+    local end_time
+    end_time=$(date +%s)
+    local elapsed=$((end_time - SCRIPT_START_TIME))
+    if [ "$exit_code" -eq 0 ]; then
+        log_info "$log_file" "脚本成功完成，总耗时 ${elapsed} 秒"
+    else
+        log_error "$log_file" "脚本异常退出 (退出码 $exit_code)，总耗时 ${elapsed} 秒" || true
+    fi
 }
 
-#######################################
-# 记录错误信息
-# Globals:
-#   None
-# Arguments:
-#   $1: 日志文件路径
-#   $2: 错误消息
-# Outputs:
-#   写入日志文件和STDERR
-# Returns:
-#   1
-#######################################
-log_error() {
-    local log_file="$1"
-    local message="$2"
-    local timestamp
-    timestamp=$(date +'%Y-%m-%dT%H:%M:%S%z')
+#===============================================================================
+# 软件包相关函数
+#===============================================================================
 
-    echo "[$timestamp][错误] $message" | tee -a "$log_file" >&2
-    return 1
-}
-
-#######################################
-# 预安装检查：验证所有包是否已安装
-# Globals:
-#   None
+#-----------------------------------------------------------------------
+# 函数：check_all_packages_installed
+# 描述：预检查备份文件中的所有 overlay 包是否已安装
 # Arguments:
 #   $1: 备份文件路径
 #   $2: 日志文件路径
-# Returns:
-#   0: 全部已安装, 1: 未完全安装
-#######################################
+# Returns: 0 (全部已安装) 或 1 (存在未安装)
+#-----------------------------------------------------------------------
 check_all_packages_installed() {
     local backup_file="$1"
     local log_file="$2"
     local user_pkgs="/tmp/user-pkgs-check.list"
     local all_installed=1
 
-    # 检查备份文件是否存在
-    [ ! -f "$backup_file" ] && {
-        log_info "$log_file" "备份文件不存在，跳过预检查"
-        return 1
-    }
-
-    # 提取所有用户安装包
+    # 提取所有 overlay 包名
     grep '\toverlay' "$backup_file" | awk '{print $1}' >"$user_pkgs"
 
-    # 没有用户包时直接返回成功
-    [ ! -s "$user_pkgs" ] && {
+    if [ ! -s "$user_pkgs" ]; then
         log_info "$log_file" "无用户安装包需要检查"
         rm -f "$user_pkgs"
         return 0
-    }
+    fi
 
-    # 检查每个包是否已安装
+    log_info "$log_file" "开始预检查 $(wc -l <"$user_pkgs") 个用户安装包..."
+
+    # 逐一验证是否已安装
     while IFS= read -r pkg; do
         if ! apk info --installed "$pkg" >/dev/null 2>&1; then
             log_info "$log_file" "包未安装: $pkg"
@@ -208,68 +501,92 @@ check_all_packages_installed() {
         fi
     done <"$user_pkgs"
 
-    # 清理临时文件
     rm -f "$user_pkgs"
-    [ "$all_installed" -eq 1 ] && {
-        log_info "$log_file" "所有用户安装包已存在"
-        return 0
-    }
-    return 1
+    [ "$all_installed" -eq 1 ] && log_info "$log_file" "所有用户安装包已存在"
+    return $all_installed
 }
 
-#######################################
-# 网络检测
-# Globals:
-#   None
+#-----------------------------------------------------------------------
+# 函数：check_network
+# 描述：使用探测到的网络工具测试与软件源的连通性
+# Globals: NET_TOOL, NET_TOOL_OPTS
 # Arguments:
-#   $1: 测试URL
+#   $1: 测试 URL
 #   $2: 日志文件路径
-# Returns:
-#   0: 网络正常, 1: 网络异常
-#######################################
+# Returns: 0 (网络正常), 1 (不通)
+#-----------------------------------------------------------------------
 check_network() {
     local test_url="$1"
     local log_file="$2"
     local retries=3
-    local timeout=5
     local i=1
 
+    if [ -z "$NET_TOOL" ]; then
+        log_error "$log_file" "无可用的网络检测工具 (curl/wget/ping 均未找到)"
+        return 1
+    fi
+
     while [ "$i" -le "$retries" ]; do
-        if curl --connect-timeout "$timeout" -kIs "$test_url" >/dev/null 2>&1; then
-            log_info "$log_file" "网络连接正常"
+        log_debug "$log_file" "尝试连接 $test_url (第 $i/$retries 次) 使用 $NET_TOOL..."
+        local success=0
+        local err_out=""
+
+        case "$NET_TOOL" in
+        curl)
+            err_out=$(curl "$NET_TOOL_OPTS" "$test_url" 2>&1) && success=1 || true
+            ;;
+        wget)
+            err_out=$(wget "$NET_TOOL_OPTS" "$test_url" 2>&1) && success=1 || true
+            ;;
+        ping)
+            # ping 仅检测主机部分
+            local host
+            host=$(echo "$test_url" | awk -F/ '{print $3}')
+            err_out=$(ping "$NET_TOOL_OPTS" "$host" 2>&1) && success=1 || true
+            ;;
+        esac
+
+        if [ "$success" -eq 1 ]; then
+            log_info "$log_file" "网络连接正常 (URL: $test_url)"
             return 0
+        else
+            log_warn "$log_file" "网络检查失败 (尝试 $i/$retries): URL=$test_url, 工具=$NET_TOOL"
+            log_debug "$log_file" "错误输出: $err_out"
         fi
-        log_info "$log_file" "网络检查失败 (尝试 $i/$retries)"
         sleep $((i * 2))
         i=$((i + 1))
     done
+    log_error "$log_file" "网络不可达，所有重试已用完"
     return 1
 }
 
-#######################################
-# 备份DNS配置
-# Globals:
-#   None
+#===============================================================================
+# 配置修改与恢复函数
+#===============================================================================
+
+#-----------------------------------------------------------------------
+# 函数：backup_resolv_config
+# 描述：备份当前 DNS 配置并设置临时公共 DNS (8.8.8.8, 1.1.1.1)
+#       同时停止 dnsmasq 防止覆盖
 # Arguments:
 #   $1: 日志文件路径
-#######################################
+#-----------------------------------------------------------------------
 backup_resolv_config() {
     local log_file="$1"
-    log_info "$log_file" "备份DNS配置..."
+    log_info "$log_file" "备份DNS配置并设置临时 DNS (8.8.8.8, 1.1.1.1)"
     cp /etc/resolv.conf /tmp/resolv.conf.backup
+    /etc/init.d/dnsmasq stop 2>/dev/null || true
     {
         echo "nameserver 8.8.8.8"
         echo "nameserver 1.1.1.1"
     } >/etc/resolv.conf
 }
 
-#######################################
-# 检测防火墙类型
-# Globals:
-#   None
-# Returns:
-#   nftables/iptables/空字符串
-#######################################
+#-----------------------------------------------------------------------
+# 函数：detect_firewall_type
+# 描述：检测系统当前使用的防火墙类型
+# Returns: "nftables", "iptables" 或空（无防火墙）
+#-----------------------------------------------------------------------
 detect_firewall_type() {
     if command -v nft >/dev/null 2>&1 && nft list ruleset >/dev/null 2>&1; then
         echo "nftables"
@@ -280,254 +597,241 @@ detect_firewall_type() {
     fi
 }
 
-#######################################
-# 备份防火墙配置
-# Globals:
-#   None
+#-----------------------------------------------------------------------
+# 函数：set_temp_firewall_rules
+# 描述：插入临时防火墙规则，仅放行 DNS/HTTP/HTTPS 出站，
+#       不修改默认策略，避免破坏原有安全配置
 # Arguments:
-#   $1: 防火墙类型
-#   $2: 备份文件路径
-#   $3: 日志文件路径
-#######################################
-backup_firewall() {
-    local fw_type="$1"
-    local backup_file="$2"
-    local log_file="$3"
-
-    log_info "$log_file" "备份防火墙配置 ($fw_type)..."
-
-    case "$fw_type" in
-    iptables)
-        iptables-save >"$backup_file"
-        ip6tables-save >>"$backup_file"
-        ;;
-    nftables)
-        nft list ruleset >"$backup_file"
-        ;;
-    esac
-}
-
-#######################################
-# 设置临时防火墙规则
-# Globals:
-#   None
-# Arguments:
-#   $1: 防火墙类型
+#   $1: 防火墙类型 (iptables/nftables)
 #   $2: 日志文件路径
-#######################################
+#-----------------------------------------------------------------------
 set_temp_firewall_rules() {
     local fw_type="$1"
     local log_file="$2"
 
-    log_info "$log_file" "设置临时防火墙规则 ($fw_type)..."
-
+    log_info "$log_file" "设置临时防火墙规则 ($fw_type) - 仅放行 DNS/HTTP/HTTPS 出站"
     case "$fw_type" in
     iptables)
-        iptables -P INPUT ACCEPT
-        iptables -P OUTPUT ACCEPT
-        iptables -P FORWARD ACCEPT
-        iptables -F
-        ip6tables -P INPUT ACCEPT
-        ip6tables -P OUTPUT ACCEPT
-        ip6tables -P FORWARD ACCEPT
-        ip6tables -F
+        # 插入到 OUTPUT 链最前端
+        iptables -I OUTPUT 1 -p udp --dport 53 -j ACCEPT
+        iptables -I OUTPUT 2 -p tcp --dport 80 -j ACCEPT
+        iptables -I OUTPUT 3 -p tcp --dport 443 -j ACCEPT
+        iptables -I OUTPUT 4 -m state --state ESTABLISHED,RELATED -j ACCEPT
+        # IPv6 也放行（若存在）
+        ip6tables -I OUTPUT 1 -p udp --dport 53 -j ACCEPT 2>/dev/null || true
+        ip6tables -I OUTPUT 2 -p tcp --dport 80 -j ACCEPT 2>/dev/null || true
+        ip6tables -I OUTPUT 3 -p tcp --dport 443 -j ACCEPT 2>/dev/null || true
+        ip6tables -I OUTPUT 4 -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
         ;;
     nftables)
-        nft flush ruleset
-        nft add table inet temp_table
-        nft add chain inet temp_table input \
-            '{ type filter hook input priority 0; policy accept; }'
-        nft add chain inet temp_table output \
-            '{ type filter hook output priority 0; policy accept; }'
-        nft add chain inet temp_table forward \
-            '{ type filter hook forward priority 0; policy accept; }'
+        # 创建临时表，优先级高于常规规则
+        nft add table inet temp_restore
+        nft 'add chain inet temp_restore output { type filter hook output priority -1; }'
+        nft 'add rule inet temp_restore output udp dport 53 accept'
+        nft 'add rule inet temp_restore output tcp dport { 80, 443 } accept'
+        nft 'add rule inet temp_restore output ct state established,related accept'
         ;;
     esac
 }
 
-#######################################
-# 更新软件源
-# Globals:
-#   None
+#-----------------------------------------------------------------------
+# 函数：restore_original_config
+# 描述：恢复临时修改的 DNS 和防火墙配置
+# Globals: None (通过参数传入)
 # Arguments:
-#   $1: 日志文件路径
-# Returns:
-#   0: 成功, 1: 失败
-#######################################
-update_package_lists() {
-    local log_file="$1"
-    log_info "$log_file" "更新软件包列表..."
-    apk update >>"$log_file" 2>&1
+#   $1: 恢复 DNS 标志 (0/1)
+#   $2: 防火墙类型 (iptables/nftables/空)
+#   $3: 日志文件路径
+#-----------------------------------------------------------------------
+restore_original_config() {
+    local backup_resolv_flag="$1"
+    local firewall_type="$2"
+    local log_file="$3"
+
+    # 恢复 DNS
+    if [ "$backup_resolv_flag" -eq 1 ] && [ -f /tmp/resolv.conf.backup ]; then
+        log_info "$log_file" "恢复原始DNS配置..."
+        mv -f /tmp/resolv.conf.backup /etc/resolv.conf
+        /etc/init.d/dnsmasq start 2>/dev/null || true
+    fi
+
+    # 清理临时防火墙规则
+    if [ -n "$firewall_type" ]; then
+        log_info "$log_file" "清理临时防火墙规则 ($firewall_type)..."
+        case "$firewall_type" in
+        iptables)
+            iptables -D OUTPUT -p udp --dport 53 -j ACCEPT 2>/dev/null || true
+            iptables -D OUTPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || true
+            iptables -D OUTPUT -p tcp --dport 443 -j ACCEPT 2>/dev/null || true
+            iptables -D OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+            ip6tables -D OUTPUT -p udp --dport 53 -j ACCEPT 2>/dev/null || true
+            ip6tables -D OUTPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || true
+            ip6tables -D OUTPUT -p tcp --dport 443 -j ACCEPT 2>/dev/null || true
+            ip6tables -D OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+            ;;
+        nftables)
+            nft delete table inet temp_restore 2>/dev/null || true
+            ;;
+        esac
+    fi
 }
 
-#######################################
-# 安装并验证软件包
-# Globals:
-#   None
+#===============================================================================
+# APK 命令封装
+#===============================================================================
+
+#-----------------------------------------------------------------------
+# 函数：run_apk
+# 描述：执行 apk 命令并智能记录输出
+#       成功时仅在 DEBUG 模式记录详细输出，失败时总是记录
+# Globals: LOG_LEVEL
+# Arguments:
+#   $1: 日志文件路径
+#   $2: 操作描述（用于日志）
+#   $@: apk 命令及参数
+# Returns: apk 命令的退出码
+#-----------------------------------------------------------------------
+run_apk() {
+    local log_file="$1"
+    local desc="$2"
+    shift 2
+    local tmp_out="/tmp/apk-$$.log"
+    local ret=0
+
+    apk "$@" >"$tmp_out" 2>&1 || ret=$?
+
+    if [ $ret -ne 0 ]; then
+        # 失败时记录错误并附加完整输出
+        log_error "$log_file" "$desc 失败 (退出码 $ret)"
+        {
+            echo "--- 命令输出开始 ---"
+            cat "$tmp_out"
+            echo "--- 命令输出结束 ---"
+        } >>"$log_file"
+    elif [ "${LOG_LEVEL:-$LOG_INFO}" -le "$LOG_DEBUG" ]; then
+        # DEBUG 模式下记录成功时的详细输出
+        log_debug "$log_file" "$desc 成功"
+        {
+            echo "--- 命令输出开始 ---"
+            cat "$tmp_out"
+            echo "--- 命令输出结束 ---"
+        } >>"$log_file"
+    else
+        # 正常模式只记录成功摘要
+        log_info "$log_file" "$desc 成功"
+    fi
+
+    rm -f "$tmp_out"
+    return $ret
+}
+
+#-----------------------------------------------------------------------
+# 函数：update_package_lists
+# 描述：更新软件包列表
+# Arguments:
+#   $1: 日志文件路径
+# Returns: apk update 的退出码
+#-----------------------------------------------------------------------
+update_package_lists() {
+    local log_file="$1"
+    log_info "$log_file" "开始更新软件包列表..."
+    run_apk "$log_file" "更新软件源" update
+}
+
+#-----------------------------------------------------------------------
+# 函数：install_and_verify_packages
+# 描述：从备份文件提取 overlay 包并执行安装验证
 # Arguments:
 #   $1: 备份文件路径
 #   $2: 日志文件路径
-# Returns:
-#   0: 成功, 1: 失败
-#######################################
+# Returns: 0 成功, 1 失败
+#-----------------------------------------------------------------------
 install_and_verify_packages() {
     local backup_file="$1"
     local log_file="$2"
     local max_retries=3
     local user_pkgs="/tmp/user-pkgs.list"
-    local kernel_pkgs="/tmp/kernel-pkgs.list"
 
-    # 准备安装列表
+    # 提取 overlay 包
     grep '\toverlay' "$backup_file" | awk '{print $1}' >"$user_pkgs"
-    grep '^kmod-.*\trom' "$backup_file" | awk '{print $1}' >"$kernel_pkgs"
 
-    # 安装用户包
-    log_info "$log_file" "=== 安装用户软件包 ==="
+    local pkg_count
+    pkg_count=$(wc -l <"$user_pkgs")
+    log_info "$log_file" "=== 安装 $pkg_count 个用户软件包（overlay） ==="
+    log_debug "$log_file" "包列表: $(tr '\n' ' ' <"$user_pkgs")"
+
     if ! install_pkgs_with_retry "$user_pkgs" "$max_retries" "$log_file"; then
-        log_info "$log_file" "警告：部分用户软件包未正确安装"
-    fi
-
-    # 安装内核模块
-    log_info "$log_file" "=== 安装内核模块 ==="
-    if [ -s "$kernel_pkgs" ]; then
-        xargs <"$kernel_pkgs" apk add --no-cache >>"$log_file" 2>&1
-        if ! verify_packages "$kernel_pkgs" "$log_file"; then
-            log_info "$log_file" "警告：部分内核模块未正确安装"
-        fi
-    else
-        log_info "$log_file" "无内核模块需要安装"
-    fi
-
-    # 最终验证
-    if ! verify_packages "$user_pkgs" "$log_file"; then
+        log_warn "$log_file" "警告：部分用户软件包未正确安装"
+        rm -f "$user_pkgs"
         return 1
     fi
 
-    # 清理临时文件
-    rm -f "$user_pkgs" "$kernel_pkgs"
+    rm -f "$user_pkgs"
     return 0
 }
 
-#######################################
-# 带重试的安装
-# Globals:
-#   None
+#-----------------------------------------------------------------------
+# 函数：install_pkgs_with_retry
+# 描述：带重试机制的包安装，先批量安装，失败后逐个重试
 # Arguments:
-#   $1: 包列表文件
+#   $1: 包列表文件（每行一个包名）
 #   $2: 最大重试次数
 #   $3: 日志文件路径
-# Returns:
-#   0: 成功, 1: 失败
-#######################################
+# Returns: 0 全部安装成功, 1 仍有失败
+#-----------------------------------------------------------------------
 install_pkgs_with_retry() {
     local pkg_list="$1"
     local max_retries="$2"
     local log_file="$3"
     local retry_count=0
     local failed_file="/tmp/failed-pkgs.list"
+    local all_pkgs
+
+    # 将所有包名连接为一行
+    all_pkgs=$(tr '\n' ' ' <"$pkg_list")
+    [ -z "$all_pkgs" ] && return 0
 
     while [ "$retry_count" -lt "$max_retries" ]; do
-        : >"$failed_file"
+        # 尝试批量安装
+        if run_apk "$log_file" "批量安装包" add --no-cache "$all_pkgs"; then
+            return 0
+        fi
 
-        # 安装尝试
-        xargs -n 1 <"$pkg_list" apk add --no-cache >>"$log_file" 2>&1 || true
+        log_info "$log_file" "批量安装失败，开始逐个安装并收集失败包..."
+        : >"$failed_file" # 清空失败列表
 
-        # 验证安装
-        verify_packages "$pkg_list" "$log_file" "$failed_file"
+        # 逐个安装，失败则记录到 failed_file
+        while IFS= read -r pkg; do
+            if ! run_apk "$log_file" "安装 $pkg" add --no-cache "$pkg"; then
+                echo "$pkg" >>"$failed_file"
+            fi
+        done <"$pkg_list"
 
-        # 检查是否全部成功
-        [ ! -s "$failed_file" ] && return 0
+        # 若无失败包，成功返回
+        if [ ! -s "$failed_file" ]; then
+            log_info "$log_file" "逐个安装全部成功"
+            return 0
+        fi
 
         # 准备重试
         retry_count=$((retry_count + 1))
-        log_info "$log_file" "重试安装 (尝试 $retry_count/$max_retries)"
+        local fail_count
+        fail_count=$(wc -l <"$failed_file")
+        log_info "$log_file" "第 $retry_count/$max_retries 次重试，剩余失败包: $fail_count"
+
+        # 用失败列表更新 pkg_list 和 all_pkgs 以备下次循环
         cp "$failed_file" "$pkg_list"
+        all_pkgs=$(tr '\n' ' ' <"$failed_file")
         sleep 5
     done
 
-    log_info "$log_file" "以下软件包安装失败:"
+    # 重试耗尽，记录最终失败列表
+    log_error "$log_file" "以下软件包安装失败:"
     cat "$failed_file" >>"$log_file"
     return 1
 }
 
-#######################################
-# 验证软件包安装
-# Globals:
-#   None
-# Arguments:
-#   $1: 包列表文件
-#   $2: 日志文件路径
-#   $3: 失败包输出文件 (可选)
-# Returns:
-#   0: 全部成功, 1: 有失败
-#######################################
-verify_packages() {
-    local pkg_list="$1"
-    local log_file="$2"
-    local failed_file="${3:-/dev/null}"
-    local all_success=0
-
-    while IFS= read -r pkg; do
-        if ! apk info --installed "$pkg" >/dev/null 2>&1; then
-            echo "$pkg" >>"$failed_file"
-            all_success=1
-        fi
-    done <"$pkg_list"
-
-    [ "$all_success" -eq 0 ] && {
-        log_info "$log_file" "所有软件包验证成功"
-        return 0
-    }
-    return 1
-}
-
-#######################################
-# 恢复原始配置
-# Globals:
-#   None
-# Arguments:
-#   $1: 恢复DNS标志
-#   $2: 恢复防火墙标志
-#   $3: 防火墙类型
-#   $4: 防火墙备份文件
-#   $5: 日志文件路径
-#######################################
-restore_original_config() {
-    local backup_resolv_flag="$1"
-    local backup_firewall_flag="$2"
-    local firewall_type="$3"
-    local firewall_backup="$4"
-    local log_file="$5"
-
-    # 恢复DNS配置
-    if [ "$backup_resolv_flag" -eq 1 ]; then
-        [ -f "/tmp/resolv.conf.backup" ] && {
-            log_info "$log_file" "恢复原始DNS配置..."
-            mv -f "/tmp/resolv.conf.backup" "/etc/resolv.conf"
-        }
-    fi
-
-    # 恢复防火墙配置
-    if [ "$backup_firewall_flag" -eq 1 ] && [ -n "$firewall_backup" ]; then
-        [ -f "$firewall_backup" ] && {
-            log_info "$log_file" "恢复原始防火墙配置 ($firewall_type)..."
-
-            case "$firewall_type" in
-            iptables)
-                iptables-restore <"$firewall_backup"
-                ip6tables-restore <"$firewall_backup"
-                ;;
-            nftables)
-                nft flush ruleset
-                nft -f "$firewall_backup"
-                ;;
-            esac
-
-            # 删除防火墙备份
-            rm -f "$firewall_backup"
-        }
-    fi
-}
-
-# 执行主函数
+#===============================================================================
+# 脚本入口
+#===============================================================================
 main "$@"
