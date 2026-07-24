@@ -10,10 +10,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 
 # 加载通用函数库（被复制到同级 libs/ 目录）
-# shellcheck source=../../common/scripts/libs/functions.sh
+# shellcheck source=./libs/functions.sh
 source "${SCRIPT_DIR}/libs/functions.sh"
 # 加载通用修改索引（被复制到同级 mods/ 目录）
-# shellcheck source=../../common/scripts/mods/index.sh
+# shellcheck source=./mods/index.sh
 source "${SCRIPT_DIR}/mods/index.sh"
 
 # ===== 执行第一阶段修改 =====
