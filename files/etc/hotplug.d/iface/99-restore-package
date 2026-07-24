@@ -17,13 +17,22 @@
 #   RESTORE_SCRIPT 恢复脚本路径 [默认: /usr/bin/restore-packages.sh]
 #   TRIGGER_LOG    触发过程与恢复脚本的输出日志文件 [默认: /var/log/restore-packages-trigger.log]
 #
+# 日志文件说明：
+#   - 恢复脚本 (restore-packages.sh) 的详细日志默认存放在：
+#     /var/log/package-restore-YYYYMMDDHHMMSS.log（若 /var/log 不可写则回退到 /tmp）
+#   - 本触发脚本会将其标准输出/错误重定向到 TRIGGER_LOG 中（默认：
+#     /var/log/restore-packages-trigger.log）
+#   - 触发过程的关键信息（如启动、超时、退出）通过 logger 写入系统 syslog
+#
 # 说明：
 #   - 仅在 ACTION=ifup 且 INTERFACE=wan 时触发，其他接口或事件被忽略。
 #   - 使用 flock 文件锁确保同一时间只有一个恢复实例运行，避免并发问题。
 #   - 网络检测采用循环 ping 目标地址，超时后放弃执行。
 #   - 整个检测和执行过程在后台子 shell 中运行，不阻塞 hotplug 主进程。
-#   - 所有日志通过 logger 写入系统 syslog，同时恢复脚本的标准输出/错误
-#     追加写入 TRIGGER_LOG。
+#   - 可通过环境变量为恢复脚本传递额外配置，例如：
+#       export LOG_LEVEL=1          # INFO 级别
+#       export LOG_TO_CONSOLE=0     # 不输出到控制台
+#     在调用前设置即可。
 #
 # 作者：Shuery-Shuai
 # 日期：2026-07-24
@@ -70,6 +79,10 @@ TRIGGER_LOG="${TRIGGER_LOG:-/var/log/restore-packages-trigger.log}"
     while [ "$waited" -lt "$MAX_WAIT" ]; do
         if ping -c 1 -W 2 "$PING_TARGET" >/dev/null 2>&1; then
             logger -t "$LOGGER_TAG" "网络已就绪，启动恢复脚本: $RESTORE_SCRIPT"
+
+            # 如需为恢复脚本传递特定日志级别，可在此处设置环境变量，例如：
+            # export LOG_LEVEL=1
+            # export LOG_TO_CONSOLE=0
 
             # 执行恢复脚本，标准输出和错误均追加到日志文件
             "$RESTORE_SCRIPT" >>"$TRIGGER_LOG" 2>&1
