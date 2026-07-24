@@ -21,7 +21,7 @@
 #
 # 用于设置和比较日志级别，数值越小级别越低。
 #
-# Globals:
+# 全局变量：
 #   LOG_LEVEL_TRACE  - 追踪级别 (0)
 #   LOG_LEVEL_DEBUG  - 调试级别 (1)
 #   LOG_LEVEL_INFO   - 信息级别 (2)
@@ -40,7 +40,7 @@ readonly LOG_LEVEL_WARN=3 LOG_LEVEL_ERROR=4 LOG_LEVEL_FATAL=5
 # 根据输出目标是否为终端自动启用或禁用颜色。
 # 仅当 stderr 连接到 TTY 时启用彩色输出。
 #
-# Globals:
+# 全局变量：
 #   COLOR_RESET  - 重置所有样式
 #   COLOR_GRAY   - 灰色（用于 TRACE）
 #   COLOR_CYAN   - 青色（用于 DEBUG）
@@ -65,7 +65,7 @@ fi
 #######################################
 # 可配置的全局变量
 #
-# Globals:
+# 全局变量：
 #   LOG_LEVEL      - 当前日志级别，低于此级别的日志将被过滤
 #   LOG_TO_FILE    - 是否同时写入日志文件
 #   LOG_FILE_PATH  - 日志文件的存储路径
@@ -79,7 +79,7 @@ fi
 #
 # 根据日志级别返回对应的颜色代码和 emoji 图标。
 #
-# Arguments:
+# 参数：
 #   $1 - 日志级别名称 (TRACE|DEBUG|INFO|WARN|ERROR|FATAL|SUCCESS)
 #
 # Outputs:
@@ -108,7 +108,7 @@ _get_log_style() {
 #
 # 用于比较日志级别的优先级。
 #
-# Arguments:
+# 参数：
 #   $1 - 日志级别名称
 #
 # Outputs:
@@ -139,7 +139,7 @@ _normalize_log_level() {
 #
 # 日志格式: [时间戳] [级别] [脚本名][分类] 消息
 #
-# Arguments:
+# 参数：
 #   $1 - 日志级别 (TRACE|DEBUG|INFO|WARN|ERROR|FATAL|SUCCESS)
 #   $2 - 消息内容 或 分类名称
 #   $3 - 消息内容（当 $2 是分类时）
@@ -249,7 +249,7 @@ modify_within_scope() {
 # 使用 awk 读取文件，定位作用域，对匹配正则的行中的数字做加法。
 # 注意：awk 中的正则需兼容，此处模式捕获数字并替换为 num+offset。
 #
-# Arguments:
+# 参数：
 #   $1 - 文件路径
 #   $2 - 作用域起始正则（awk 格式，如 /^define Build\/mt798x-gpt/）
 #   $3 - 作用域结束正则（如 /^endef/）
@@ -293,7 +293,7 @@ add_values_in_scope() {
 # 从文件中提取由起始/结束正则划定的内容块，
 # 并可选择性地用 grep 高亮特定模式。
 #
-# Arguments:
+# 参数：
 #   $1 - 文件路径
 #   $2 - 作用域起始正则
 #   $3 - 作用域结束正则
@@ -338,13 +338,13 @@ show_scope_content() {
 # 智能处理仓库下载：如果目录已存在则执行 pull 更新，否则执行 clone。
 # 支持失败重试（最多 3 次），每次重试前等待递增的时间。
 #
-# Arguments:
+# 参数：
 #   $1 - Git 仓库 URL
 #   $2 - 分支名称
 #   $3 - git clone 的额外参数 (如 "--depth=1" 或 "--filter=blob:none --sparse")
 #   $4 - 目标目录路径 (相对或绝对路径)
 #
-# Globals:
+# 全局变量：
 #   None
 #
 # Outputs:
@@ -407,7 +407,7 @@ clone_repo() {
 # 从源目录计算到目标路径的相对路径，无需外部工具依赖。
 # 用于创建可移植的符号链接。
 #
-# Arguments:
+# 参数：
 #   $1 - 源目录 (from)
 #   $2 - 目标路径 (to)
 #
@@ -471,11 +471,11 @@ relpath() {
 # 使用相对路径创建符号链接，避免绝对路径导致的可移植性问题。
 # 如果目标位置已存在符号链接或目录，则先删除。
 #
-# Arguments:
+# 参数：
 #   $1 - 源路径（绝对路径）
 #   $2 - 符号链接路径（要创建的链接位置）
 #
-# Globals:
+# 全局变量：
 #   None
 #
 # Outputs:
@@ -526,10 +526,10 @@ create_relative_symlink() {
 # 尝试从软件包的 Makefile 中提取 PKG_NAME 变量值。
 # 如果未找到或 Makefile 不存在，则使用目录名作为回退。
 #
-# Arguments:
+# 参数：
 #   $1 - 软件包目录的绝对路径
 #
-# Globals:
+# 全局变量：
 #   None
 #
 # Outputs:
@@ -572,7 +572,7 @@ extract_pkg_name() {
 #   3. 名称启发式: 基于名称模式推测分类 (net-* -> feeds/packages/net)
 #   4. 默认回退: 无法识别时放入 feeds/base
 #
-# Arguments:
+# 参数：
 #   $1 - 软件包目录的绝对路径
 #   $2 - 软件包名称 (PKG_NAME)
 #
@@ -697,10 +697,10 @@ resolve_target_path() {
 #   自动条目: relative_path|mtime|target_path
 #   手动条目: relative_path|manual|target_path|skip
 #
-# Arguments:
+# 参数：
 #   $1 - 自定义软件包根目录路径
 #
-# Globals:
+# 全局变量：
 #   TOPDIR - OpenWrt 源码根目录（自动检测或使用已设置的值）
 #
 # Outputs:
@@ -939,11 +939,11 @@ create_symlinks() {
 # 对 LuCI 集合软件包的 Makefile 应用 sed 表达式，用于调整依赖关系。
 # 典型用途: 移除 uhttpd 依赖、替换默认主题、删除不需要的应用。
 #
-# Arguments:
+# 参数：
 #   $1 - Makefile 文件路径
 #   $2... - sed 表达式参数（直接传递给 sed -i）
 #
-# Globals:
+# 全局变量：
 #   None
 #
 # Outputs:
@@ -976,7 +976,7 @@ modify_luci_collection() {
 # 使用 nameref 接收关联数组名，遍历键并替换 Makefile 中的对应行。
 # 若数组未声明或目标文件不存在，则输出错误/警告并安全返回。
 #
-# Arguments:
+# 参数：
 #   $1 - Makefile 路径
 #   $2 - 关联数组变量名（必须预先声明）
 #
@@ -1017,7 +1017,7 @@ set_makefile_vars() {
 #   1.1.0rc1  ->  1.1.0_rc1
 #   2.0.0beta2 -> 2.0.0_beta2
 #
-# Arguments:
+# 参数：
 #   $1 - 原始版本号
 #
 # Outputs:
@@ -1041,7 +1041,7 @@ normalize_pkg_version() {
 # 自动选择可用下载工具，支持重试、超时、下载验证，
 # 适用于构建过程中获取源码包并校验完整性。
 #
-# Arguments:
+# 参数：
 #   $1 - 下载 URL（必需，建议 HTTPS）
 #   $2 - 保存的文件名（可选，默认从 URL 提取）
 #   $3 - 重试次数（可选，默认 3）

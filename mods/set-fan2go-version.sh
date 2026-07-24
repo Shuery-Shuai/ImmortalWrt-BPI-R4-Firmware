@@ -33,7 +33,7 @@ fi
 #   修改指定 Makefile 中的 PKG_VERSION 和 PKG_HASH，
 #   将 fan2go 锁定到指定版本。版本号中的 rc/beta 后缀自动转换为下划线格式。
 #
-# Arguments:
+# 参数：
 #   $1 - 版本号（如 "0.13.0"）
 #   $2 - 源代码包的 SHA256 哈希值
 #   $3 - Makefile 路径（可选，默认 feeds/packages/utils/fan2go/Makefile）

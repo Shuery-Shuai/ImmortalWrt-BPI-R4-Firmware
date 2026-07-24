@@ -30,7 +30,7 @@ fi
 #   - 如果存在旧依赖 +rblibtorrent，则替换为 +libtorrent-rasterbar。
 #   - 若都不存在，则在 DEPENDS 行末尾追加 +libtorrent-rasterbar。
 #
-# Arguments:
+# 参数：
 #   $1 - (可选) qbittorrent 软件包的基础路径，默认为 'custom-packages/qbittorrent'
 #
 # Examples:

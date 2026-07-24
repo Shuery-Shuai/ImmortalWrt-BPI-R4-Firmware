@@ -12,10 +12,10 @@
 #   - 扩展各类启动镜像(initramfs、bl2、bl31)的大小限制
 #   - 增加最终固件镜像(sysupgrade.itb)的容量
 #
-# Arguments:
+# 参数：
 #   $1 - 追加的分区大小（单位: MB）
 #
-# Globals:
+# 全局变量：
 #   None
 #
 # Outputs:

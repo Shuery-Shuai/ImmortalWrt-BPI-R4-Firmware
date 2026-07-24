@@ -24,7 +24,7 @@ fi
 # 将 root 用户的登录 Shell 从 /bin/ash 改为指定路径（如 /bin/bash）。
 # 提供更好的交互体验。
 #
-# Arguments:
+# 参数：
 #   $1 - 新 Shell 路径，默认 /bin/bash
 #
 # Returns:

@@ -31,7 +31,7 @@ fi
 #   在 Rust 的 Makefile 中，将 LLVM 的 CI 下载选项设为 false，
 #   强制使用系统已安装的 LLVM，从而节省带宽和编译时间。
 #
-# Arguments:
+# 参数：
 #   $1 - Rust Makefile 的路径（可选），默认值为 feeds/packages/lang/rust/Makefile
 #
 # Outputs:

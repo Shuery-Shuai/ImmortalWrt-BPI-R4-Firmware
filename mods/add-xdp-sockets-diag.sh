@@ -30,10 +30,10 @@ fi
 #   检查 netsupport.mk 是否存在，然后追加 XDP sockets 诊断模块的定义。
 #   该模块提供 `ss` 工具对 PF_XDP sockets 的监控能力。
 #
-# Globals:
+# 全局变量：
 #   None
 #
-# Arguments:
+# 参数：
 #   None
 #
 # Outputs:

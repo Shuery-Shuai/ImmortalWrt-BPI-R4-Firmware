@@ -32,7 +32,7 @@ fi
 #   检查指定文件是否存在，如果存在则为其添加可执行权限（chmod +x）。
 #   如果文件不存在，仅记录警告，不中断流程。
 #
-# Arguments:
+# 参数：
 #   $1 - 文件路径（可选），默认值为 'files/usr/bin/restore-packages.sh'
 #
 # Outputs:

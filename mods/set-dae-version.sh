@@ -34,7 +34,7 @@ fi
 #   将 dae 锁定到指定的版本，并自动处理版本号后缀（rc -> _rc）。
 #   URL 根据版本号自动生成，遵循官方下载链接格式。
 #
-# Arguments:
+# 参数：
 #   $1 - 版本号（如 "1.1.0rc1"）
 #   $2 - 源代码包的 SHA256 哈希值
 #   $3 - Makefile 路径（可选，默认 feeds/packages/net/dae/Makefile）

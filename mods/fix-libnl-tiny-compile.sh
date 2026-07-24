@@ -29,7 +29,7 @@ fi
 #   插入 TARGET_CFLAGS += -Wno-parentheses，以压制 GCC 14 的括号警告。
 #   如果找不到 include 行，则在文件开头插入。
 #
-# Arguments:
+# 参数：
 #   $1 - (可选) libnl-tiny Makefile 的路径，默认为 package/libs/libnl-tiny/Makefile
 #
 # Outputs:

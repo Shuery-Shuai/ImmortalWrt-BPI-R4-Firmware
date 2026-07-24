@@ -29,7 +29,7 @@ fi
 #   并修改其 Makefile 中的包名引用，确保一致性。
 #   如果目录不存在（可能已被重命名或本就使用官方包），则静默跳过。
 #
-# Arguments:
+# 参数：
 #   $1 - (可选) qbittorrent 软件包的基础路径，默认为 'custom-packages/qbittorrent'
 #
 # Examples:

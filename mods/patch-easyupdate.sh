@@ -36,7 +36,7 @@ fi
 #     - openwrt    : 仅添加 -k 参数、修改后缀和校验扩展名
 #     - immortalwrt: 额外进行固件名称替换和文件名偏移调整
 #
-# Arguments:
+# 参数：
 #   $1 - 固件类型 ("openwrt" 或 "immortalwrt")
 #   $2 - (可选) easyupdate.sh 路径，默认值为
 #        custom-packages/sundaqiang/luci/applications/luci-app-easyupdate/root/usr/bin/easyupdate.sh

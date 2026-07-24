@@ -38,10 +38,10 @@ fi
 #     - luci-ssl-openssl
 #   具体修改内容已硬编码，如需调整请编辑本函数中的对应块。
 #
-# Globals:
+# 全局变量：
 #   None
 #
-# Arguments:
+# 参数：
 #   None
 #
 # Outputs:
