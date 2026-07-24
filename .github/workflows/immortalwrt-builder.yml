@@ -130,9 +130,6 @@ jobs:
       - name: Update feeds
         run: cd immortalwrt && ./scripts/feeds update -a
 
-      - name: Install feeds
-        run: cd immortalwrt && ./scripts/feeds install -a -f
-
       - name: Load custom configuration
         run: |
           [ -e files ] && {
@@ -145,6 +142,9 @@ jobs:
           cd immortalwrt
           $GITHUB_WORKSPACE/$DIY_P2_SH
           ./scripts/feeds update -i
+
+      - name: Install feeds
+        run: cd immortalwrt && ./scripts/feeds install -a -f
 
       - name: ImmortalWrt AutoUpdate
         run: |
