@@ -900,7 +900,8 @@ install_pkgs_with_retry() {
 
 #-----------------------------------------------------------------------
 # 函数：run_apk_with_progress
-# 描述：执行 apk 命令并显示进度条（仅在控制台输出时有效）
+# 描述：执行 apk 命令，解析输出中的进度信息并显示动态进度条
+#       进度条格式：[#########       ] 45% (32/71) v2ray-geoip
 # 全局变量：LOG_TO_CONSOLE
 # 参数：
 #   $1: 日志文件路径
@@ -919,19 +920,21 @@ run_apk_with_progress() {
     log_debug "$log_file" "执行命令: apk $*"
     # 执行命令，逐行处理输出
     apk "$@" 2>&1 | tee "$tmp_out" | {
-        local total=0 current=0
+        local total=0 current=0 pkg_name=""
         while IFS= read -r line; do
-            if [[ $line =~ ^\(([0-9]+)/([0-9]+)\) ]]; then
+            # 匹配格式：( 1/71) Installing package-name (version)
+            if [[ $line =~ ^\([[:space:]]*([0-9]+)/([0-9]+)\)[[:space:]]+Installing[[:space:]]+([^[:space:]]+)[[:space:]]+\( ]]; then
                 current=${BASH_REMATCH[1]}
                 total=${BASH_REMATCH[2]}
+                pkg_name=${BASH_REMATCH[3]}
                 if [ "$total" -gt 0 ]; then
                     local percent=$((current * 100 / total))
                     local filled=$((percent * 30 / 100))
                     local empty=$((30 - filled))
-                    printf "\r[%s%s] %3d%% (%d/%d)" \
-                        "$(printf '#%.0s' $(seq 1 $filled))" \
-                        "$(printf ' %.0s' $(seq 1 $empty))" \
-                        "$percent" "$current" "$total"
+                    printf "\r[%s%s] %3d%% (%d/%d) %-35s" \
+                        "$(printf '#%.0s' $(seq 1 "$filled"))" \
+                        "$(printf ' %.0s' $(seq 1 "$empty"))" \
+                        "$percent" "$current" "$total" "$pkg_name"
                 fi
             fi
         done
