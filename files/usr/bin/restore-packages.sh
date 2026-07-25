@@ -31,7 +31,7 @@
 #
 # 作者：Shuery-Shuai
 # 日期：2025-06-27
-# 版本：1.2.0
+# 版本：1.2.1
 #===============================================================================
 
 # 严格模式：使用未定义变量、管道命令失败均会导致脚本退出
@@ -58,8 +58,8 @@ MAX_LOG_FILES=${MAX_LOG_FILES:-5}   # 最多保留的日志文件数
 # 默认备份文件路径
 readonly DEFAULT_BACKUP_FILE="/etc/backup/installed_packages.txt"
 
-# 记录安装失败的包列表文件路径（用于调试和后续处理）ß
-FAILED_FILE="/etc/backup/failed-pkgs.list" # 安装失败包的记录文件
+# 记录安装失败的包列表文件路径（用于调试和后续处理）
+FAILED_FILE="/etc/backup/failed-pkgs.list"
 
 # ================================================================
 # 全局状态变量（必须为全局，因为 trap 函数中需要访问）
@@ -194,6 +194,8 @@ detect_net_tool() {
 # 描述：主控制流程
 #===============================================================================
 main() {
+    log_file=$(init_log_file) # 初始化日志文件路径
+
     # 解析命令行参数并应用配置
     parse_args "$@"
     apply_log_options
@@ -204,19 +206,18 @@ main() {
     local backup_file="$opt_backup_file"
     local test_url
     test_url=$(get_apk_repo_url) # 从系统源获取测试 URL
-    log_file=$(init_log_file)    # 初始化日志文件路径
 
     # 设置退出时的清理陷阱（恢复 DNS 和防火墙）
     # 注意：backup_resolv_flag 与 firewall_type 必须为全局变量
     trap 'restore_original_config "$backup_resolv_flag" "$firewall_type" "$log_file"' EXIT
 
-    log_header "$log_file" "开始恢复软件包" "backup_file=$backup_file"
+    log_header "$log_file" "脚本启动" "备份文件=$backup_file"
     log_info "$log_file" "日志级别: $LOG_LEVEL, 控制台输出: $LOG_TO_CONSOLE"
     [ -n "$NET_TOOL" ] && log_info "$log_file" "网络检测工具: $NET_TOOL"
 
     #-------- 第一阶段：预检查与备份文件存在性判断 --------
+    log_header "$log_file" "预检查阶段开始"
     if [ ! -f "$backup_file" ]; then
-        # 备份文件不存在，视为已恢复或无需操作，静默退出
         log_info "$log_file" "备份文件不存在: $backup_file，视为已恢复或无需恢复"
         log_exit_summary "$log_file" 0 "$script_start_time"
         return 0
@@ -230,12 +231,15 @@ main() {
     fi
 
     #-------- 第二阶段：确保网络可达 --------
+    log_header "$log_file" "网络连通性检测阶段开始"
     if ! check_network "$test_url" "$log_file"; then
         # 第一次失败，修改 DNS 和防火墙再试
+        log_info "$log_file" "第一次网络检测失败，尝试修改 DNS 和防火墙"
         backup_resolv_flag=1
         backup_resolv_config "$log_file"
 
         firewall_type=$(detect_firewall_type)
+        log_info "$log_file" "检测到防火墙类型: ${firewall_type:-无}"
         if [ -n "$firewall_type" ]; then
             set_temp_firewall_rules "$firewall_type" "$log_file"
         fi
@@ -248,6 +252,7 @@ main() {
     fi
 
     #-------- 第三阶段：更新软件源 --------
+    log_header "$log_file" "软件源更新阶段开始"
     if ! update_package_lists "$log_file"; then
         log_error "$log_file" "软件源索引不可用，恢复中止"
         log_exit_summary "$log_file" 1 "$script_start_time"
@@ -255,6 +260,7 @@ main() {
     fi
 
     #-------- 第四阶段：安装包并验证 --------
+    log_header "$log_file" "软件包安装与验证阶段开始"
     if ! install_and_verify_packages "$backup_file" "$log_file"; then
         log_error "$log_file" "软件包安装验证失败"
         log_exit_summary "$log_file" 1 "$script_start_time"
@@ -264,7 +270,7 @@ main() {
     # 安装成功，删除备份文件（以此作为下次启动的完成信号）
     rm -f "$backup_file" && log_info "$log_file" "已删除备份文件: $backup_file"
 
-    log_info "$log_file" "===== 所有软件包验证成功 ====="
+    log_header "$log_file" "恢复完成" "所有软件包验证成功"
     log_info "$log_file" "系统将在10秒后重启..."
     log_exit_summary "$log_file" 0 "$script_start_time"
     sync
@@ -302,7 +308,15 @@ get_apk_repo_url() {
 #===============================================================================
 # 函数：init_log_file
 # 描述：初始化日志文件路径，若 /var/log 不可写则使用 /tmp
-#       同时执行日志轮转，保留最近 MAX_LOG_FILES 个文件
+#       同时执行日志轮转，保留最近 MAX_LOG_FILES 个文件（兼容 BusyBox）
+# 全局变量：MAX_LOG_FILES
+# 返回：输出日志文件完整路径
+#===============================================================================
+#===============================================================================
+# 函数：init_log_file
+# 描述：初始化日志文件路径，若 /var/log 不可写则使用 /tmp
+#       同时执行日志轮转，保留最近 MAX_LOG_FILES 个文件。
+#       优先使用 find + stat 以安全处理特殊文件名，不可用时回退到 ls -t。
 # 全局变量：MAX_LOG_FILES
 # 返回：输出日志文件完整路径
 #===============================================================================
@@ -314,28 +328,45 @@ init_log_file() {
 
     if [ -d "$log_dir" ] && [ -w "$log_dir" ]; then
         log_path="$log_dir/$log_name"
-        # 日志轮转：仅保留最近的 N 个日志文件
-        local files
-        files=$(find "$log_dir" -maxdepth 1 -name 'package-restore-*.log' -type f -printf '%T@ %p\n' 2>/dev/null | sort -rn | cut -d' ' -f2-)
-        local count
-        count=$(echo "$files" | wc -l)
-        if [ "$count" -gt "$MAX_LOG_FILES" ]; then
-            echo "$files" | tail -n +$((MAX_LOG_FILES + 1)) | xargs rm -f
+
+        # ---- 日志轮转：保留最近的 MAX_LOG_FILES 个日志文件 ----
+        local pattern="package-restore-*.log"
+        if command -v stat >/dev/null 2>&1; then
+            # 使用 find + stat：输出 "修改时间戳 文件名"，按时间戳逆序排序后，
+            # 跳过前 MAX_LOG_FILES 个文件，删除剩余旧文件。
+            # cut -d' ' -f2- 可正确保留文件名中的空格。
+            find "$log_dir" -maxdepth 1 -name "$pattern" -type f \
+                -exec stat -c '%Y %n' {} \; |
+                sort -rn |
+                tail -n +$((MAX_LOG_FILES + 1)) |
+                cut -d' ' -f2- |
+                xargs rm -f --
+        else
+            # 回退到 ls -t：简单但可能被特殊文件名干扰
+            local files_to_delete
+            # shellcheck disable=SC2012
+            files_to_delete=$(ls -t "$log_dir"/"$pattern" 2>/dev/null |
+                tail -n +$((MAX_LOG_FILES + 1)))
+            if [ -n "$files_to_delete" ]; then
+                echo "$files_to_delete" | xargs rm -f --
+            fi
         fi
     else
         log_path="/tmp/$log_name"
     fi
+
     echo "$log_path"
 }
 
 #===============================================================================
-# 日志系统
+# 日志系统（已重构：级别过滤、终端输出、无污染返回）
 #===============================================================================
 
 #-----------------------------------------------------------------------
 # 函数：log_write
-# 描述：底层日志写入，根据级别写入文件并根据配置输出到控制台
-# 全局变量：LOG_TO_CONSOLE
+# 描述：底层日志写入，根据级别决定是否写入文件及控制台
+#       文件写入和终端输出均受 LOG_LEVEL 控制，WARN/ERROR 强制输出 stderr
+# 全局变量：LOG_LEVEL, LOG_TO_CONSOLE
 # 参数：
 #   $1: 日志级别数值 (LOG_DEBUG/INFO/WARN/ERROR)
 #   $2: 日志文件路径
@@ -358,91 +389,105 @@ log_write() {
     esac
 
     local line="[$timestamp] [$level_str] $message"
+    local current_level="${LOG_LEVEL:-$LOG_INFO}"
+
+    # 级别过滤：低于当前全局级别的日志不记录
+    if [ "$level" -lt "$current_level" ]; then
+        return 0
+    fi
 
     # 写入日志文件
     echo "$line" >>"$log_file"
 
-    # 控制台输出：WARN/ERROR 总输出到 stderr；INFO/DEBUG 在 LOG_TO_CONSOLE=1 时输出
-    if [ "$level" -ge "$LOG_WARN" ]; then
-        echo "$line" >&2
-    elif [ "${LOG_TO_CONSOLE}" -eq 1 ] && [ "$level" -ge "$LOG_INFO" ]; then
-        echo "$line"
+    # 控制台输出
+    if [ "${LOG_TO_CONSOLE:-0}" -eq 1 ]; then
+        if [ "$level" -ge "$LOG_WARN" ]; then
+            echo "$line" >&2
+        else
+            echo "$line"
+        fi
     fi
 }
 
 #-----------------------------------------------------------------------
 # 函数：log_debug
-# 描述：记录 DEBUG 日志，仅在 LOG_LEVEL <= LOG_DEBUG 时生效
+# 描述：记录 DEBUG 日志，受全局 LOG_LEVEL 过滤
 # 参数：
 #   $1: 日志文件路径
 #   $2: 消息
 #-----------------------------------------------------------------------
 log_debug() {
-    if [ "${LOG_LEVEL:-$LOG_INFO}" -le "$LOG_DEBUG" ]; then
-        log_write "$LOG_DEBUG" "$1" "$2"
-    fi
+    log_write "$LOG_DEBUG" "$1" "$2"
 }
 
 #-----------------------------------------------------------------------
 # 函数：log_info
-# 描述：记录 INFO 日志，LOG_LEVEL <= LOG_INFO 时生效
+# 描述：记录 INFO 日志，受全局 LOG_LEVEL 过滤
 # 参数：
 #   $1: 日志文件路径
 #   $2: 消息
 #-----------------------------------------------------------------------
 log_info() {
-    if [ "${LOG_LEVEL:-$LOG_INFO}" -le "$LOG_INFO" ]; then
-        log_write "$LOG_INFO" "$1" "$2"
-    fi
+    log_write "$LOG_INFO" "$1" "$2"
 }
 
 #-----------------------------------------------------------------------
 # 函数：log_warn
-# 描述：记录 WARN 日志，LOG_LEVEL <= LOG_WARN 时生效
+# 描述：记录 WARN 日志，受全局 LOG_LEVEL 过滤
 # 参数：
 #   $1: 日志文件路径
 #   $2: 消息
 #-----------------------------------------------------------------------
 log_warn() {
-    if [ "${LOG_LEVEL:-$LOG_INFO}" -le "$LOG_WARN" ]; then
-        log_write "$LOG_WARN" "$1" "$2"
-    fi
+    log_write "$LOG_WARN" "$1" "$2"
 }
 
 #-----------------------------------------------------------------------
 # 函数：log_error
-# 描述：记录 ERROR 日志并返回错误码 1
+# 描述：记录 ERROR 日志，始终生效（LEVEL=ERROR 最高）
 # 参数：
 #   $1: 日志文件路径
 #   $2: 消息
-# 返回：1
 #-----------------------------------------------------------------------
 log_error() {
-    if [ "${LOG_LEVEL:-$LOG_INFO}" -le "$LOG_ERROR" ]; then
-        log_write "$LOG_ERROR" "$1" "$2"
-    fi
-    return 1
+    log_write "$LOG_ERROR" "$1" "$2"
 }
 
 #-----------------------------------------------------------------------
 # 函数：log_header
-# 描述：输出日志文件头部标题（无级别，纯文本）
+# 描述：输出阶段性标题，视为 INFO 级别日志，受 LOG_LEVEL 和 LOG_TO_CONSOLE 控制
 # 参数：
 #   $1: 日志文件路径
 #   $2: 标题
 #   $3: 附加信息（可选）
 #-----------------------------------------------------------------------
 log_header() {
-    local log_file="$1"
-    local title="$2"
-    local info="$3"
+    local log_file="${1:-}"
+    local title="${2:-}"
+    local info="${3:-}"
+
+    # 级别过滤：高于 INFO 时不记录（标题属于流程信息）
+    [ "${LOG_LEVEL:-$LOG_INFO}" -gt "$LOG_INFO" ] && return 0
+
     local timestamp
     timestamp=$(date '+%F %T')
+    local header_line="===== $timestamp - $title ====="
+    local info_line=""
+    [ -n "$info" ] && info_line="信息: $info"
+
+    # 写入日志文件
     {
-        echo "===== $timestamp - $title ====="
-        [ -n "$info" ] && echo "信息: $info"
+        echo "$header_line"
+        [ -n "$info_line" ] && echo "$info_line"
         echo
     } >>"$log_file"
+
+    # 控制台输出（若开启）
+    if [ "${LOG_TO_CONSOLE:-0}" -eq 1 ]; then
+        echo "$header_line"
+        [ -n "$info_line" ] && echo "$info_line"
+        echo
+    fi
 }
 
 #-----------------------------------------------------------------------
@@ -463,7 +508,7 @@ log_exit_summary() {
     if [ "$exit_code" -eq 0 ]; then
         log_info "$log_file" "脚本成功完成，总耗时 ${elapsed} 秒"
     else
-        log_error "$log_file" "脚本异常退出 (退出码 $exit_code)，总耗时 ${elapsed} 秒" || true
+        log_error "$log_file" "脚本异常退出 (退出码 $exit_code)，总耗时 ${elapsed} 秒"
     fi
 }
 
@@ -509,6 +554,7 @@ check_all_packages_installed() {
         log_info "$log_file" "所有用户安装包已存在"
         return 0
     else
+        log_info "$log_file" "存在未安装的用户包"
         return 1
     fi
 }
@@ -591,10 +637,11 @@ backup_resolv_config() {
 
 #-----------------------------------------------------------------------
 # 函数：detect_firewall_type
-# 描述：检测系统当前使用的防火墙类型
+# 描述：检测系统当前使用的防火墙类型（不输出任何日志，仅通过 stdout 返回结果）
 # 返回："nftables", "iptables" 或空（无防火墙）
 #-----------------------------------------------------------------------
 detect_firewall_type() {
+    # 注意：此函数不能输出除返回值以外的任何内容，否则污染调用处变量
     if command -v nft >/dev/null 2>&1 && nft list ruleset >/dev/null 2>&1; then
         echo "nftables"
     elif command -v iptables >/dev/null 2>&1 && iptables -L >/dev/null 2>&1; then
@@ -657,7 +704,7 @@ restore_original_config() {
 
     # 恢复 DNS
     if [ "$backup_resolv_flag" -eq 1 ] && [ -f /tmp/resolv.conf.backup ]; then
-        log_info "$log_file" "恢复原始DNS配置..."
+        log_info "$log_file" "恢复原始DNS配置"
         mv -f /tmp/resolv.conf.backup /etc/resolv.conf
         /etc/init.d/dnsmasq start 2>/dev/null || true
     fi
@@ -691,7 +738,6 @@ restore_original_config() {
 # 函数：run_apk
 # 描述：执行 apk 命令并智能记录输出
 #       成功时仅在 DEBUG 模式记录详细输出，失败时总是记录
-# 全局变量：LOG_LEVEL
 # 参数：
 #   $1: 日志文件路径
 #   $2: 操作描述（用于日志）
@@ -705,7 +751,6 @@ run_apk() {
     local tmp_out="/tmp/apk-$$.log"
     local ret=0
 
-    # 记录实际执行的命令（debug 模式可见）
     log_debug "$log_file" "执行命令: apk $*"
     if [ "${LOG_TO_CONSOLE}" -eq 1 ]; then
         # 同时输出到终端和临时文件，让用户看到实时进度
@@ -731,7 +776,6 @@ run_apk() {
             echo "--- 命令输出结束 ---"
         } >>"$log_file"
     else
-        # 正常模式只记录成功摘要
         log_info "$log_file" "$desc 成功"
     fi
 
@@ -781,15 +825,13 @@ install_and_verify_packages() {
     local log_file="${2:-/dev/null}"
     local max_retries=3
     local user_pkgs="/tmp/user-pkgs.list"
-    local failed_file="${FAILED_FILE:-/etc/backup/failed-pkgs.list}"
 
     # 提取所有 overlay 包的完整行（包名 \t overlay）
     grep '\toverlay' "$backup_file" >"$user_pkgs"
 
     local pkg_count
     pkg_count=$(wc -l <"$user_pkgs")
-    log_info "$log_file" "=== 安装 $pkg_count 个用户软件包（overlay） ==="
-    # 调试输出仅显示包名列表（不显示格式）
+    log_info "$log_file" "开始安装用户软件包（overlay），共计 $pkg_count 个"
     log_debug "$log_file" "包列表: $(awk '{print $1}' "$user_pkgs" | tr '\n' ' ')"
 
     if ! install_pkgs_with_retry "$user_pkgs" "$max_retries" "$log_file"; then
@@ -825,7 +867,10 @@ install_pkgs_with_retry() {
 
     # 从完整行中提取所有包名（用于批量安装）
     readarray -t all_pkgs_arr < <(awk '{print $1}' "$pkg_list")
-    [ ${#all_pkgs_arr[@]} -eq 0 ] && return 0
+    [ ${#all_pkgs_arr[@]} -eq 0 ] && {
+        log_info "$log_file" "无包需要安装"
+        return 0
+    }
 
     # 确保失败列表文件所在目录存在
     mkdir -p "$(dirname "$failed_file")"
@@ -843,6 +888,7 @@ install_pkgs_with_retry() {
             fi
         fi
         if [ "$batch_ok" -eq 0 ]; then
+            log_info "$log_file" "批量安装成功"
             return 0
         fi
 
@@ -856,7 +902,6 @@ install_pkgs_with_retry() {
             pkg_name=$(echo "$line" | awk '{print $1}')
             individual_index=$((individual_index + 1))
             # 输出进度条（仅控制台）
-            # 进度条使用 $pkg_name 显示
             if [ "${LOG_TO_CONSOLE}" -eq 1 ]; then
                 local percent=$((individual_index * 100 / total_pkgs))
                 local filled=$((percent * 30 / 100))
@@ -902,7 +947,6 @@ install_pkgs_with_retry() {
 # 函数：run_apk_with_progress
 # 描述：执行 apk 命令，解析输出中的进度信息并显示动态进度条
 #       进度条格式：[#########       ] 45% (32/71) v2ray-geoip
-# 全局变量：LOG_TO_CONSOLE
 # 参数：
 #   $1: 日志文件路径
 #   $2: 操作描述（用于日志）
