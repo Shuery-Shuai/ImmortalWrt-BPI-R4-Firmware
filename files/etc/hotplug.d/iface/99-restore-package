@@ -5,11 +5,10 @@
 #       等待网络真正连通，然后调用 restore-packages.sh 恢复用户软件包。
 # 用法：放置于 /etc/hotplug.d/iface/ 目录下，由系统 hotplug 事件自动调用。
 #       也可通过环境变量控制行为，例如：
-#         LOCKFILE=/tmp/my.lock PING_TARGET=114.114.114.114 \
+#         PING_TARGET=114.114.114.114 \
 #         RESTORE_SCRIPT=/usr/bin/restore-packages.sh /etc/hotplug.d/iface/99-restore-packages
 #
 # 配置参数（均可通过同名环境变量覆盖）：
-#   LOCKFILE       锁文件路径，防止多实例并发 [默认: /var/lock/restore-packages.lock]
 #   LOGGER_TAG     syslog 标签 [默认: restore-packages-hotplug]
 #   MAX_WAIT       最长等待网络就绪的时间（秒） [默认: 180]
 #   CHECK_INTERVAL 网络检测间隔（秒） [默认: 10]
@@ -26,7 +25,6 @@
 #
 # 说明：
 #   - 仅在 ACTION=ifup 且 INTERFACE=wan 时触发，其他接口或事件被忽略。
-#   - 使用 flock 文件锁确保同一时间只有一个恢复实例运行，避免并发问题。
 #   - 网络检测采用循环 ping 目标地址，超时后放弃执行。
 #   - 整个检测和执行过程在后台子 shell 中运行，不阻塞 hotplug 主进程。
 #   - 可通过环境变量为恢复脚本传递额外配置，例如：
@@ -42,7 +40,6 @@
 #===============================================================================
 # 可配置参数（均可通过同名环境变量覆盖）
 #===============================================================================
-LOCKFILE="${LOCKFILE:-/var/lock/restore-packages.lock}"
 LOGGER_TAG="${LOGGER_TAG:-restore-packages-hotplug}"
 MAX_WAIT="${MAX_WAIT:-180}"
 CHECK_INTERVAL="${CHECK_INTERVAL:-10}"
@@ -59,16 +56,6 @@ TRIGGER_LOG="${TRIGGER_LOG:-/var/log/restore-packages-trigger.log}"
 # 后台子进程：获取文件锁、检测网络、调用恢复脚本
 #===============================================================================
 (
-    #-----------------------------------------------------------------------
-    # 尝试获取独占文件锁。若已有实例持有该锁，flock -n 会立即失败，
-    # 此时输出提示并退出，避免并发执行恢复脚本。
-    # 9 是文件描述符，由重定向自动关联到 LOCKFILE。
-    #-----------------------------------------------------------------------
-    flock -n 9 || {
-        logger -t "$LOGGER_TAG" "恢复脚本已在运行，跳过本次触发"
-        exit 0
-    }
-
     logger -t "$LOGGER_TAG" "WAN 接口上线，开始等待网络就绪..."
 
     #-----------------------------------------------------------------------

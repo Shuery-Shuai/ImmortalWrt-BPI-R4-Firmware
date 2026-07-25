@@ -51,9 +51,10 @@ fi
 readonly LOG_DEBUG=0 LOG_INFO=1 LOG_WARN=2 LOG_ERROR=3
 
 # 可通过环境变量覆盖默认配置
-LOG_LEVEL=${LOG_LEVEL:-$LOG_INFO}   # 默认 INFO 级别
-LOG_TO_CONSOLE=${LOG_TO_CONSOLE:-0} # 默认不输出到控制台
-MAX_LOG_FILES=${MAX_LOG_FILES:-5}   # 最多保留的日志文件数
+LOG_LEVEL=${LOG_LEVEL:-$LOG_INFO}                       # 默认 INFO 级别
+LOG_TO_CONSOLE=${LOG_TO_CONSOLE:-0}                     # 默认不输出到控制台
+MAX_LOG_FILES=${MAX_LOG_FILES:-5}                       # 最多保留的日志文件数
+LOCKFILE="${LOCKFILE:-/var/lock/restore-packages.lock}" # 锁文件路径，防止多实例并发
 
 # 默认备份文件路径
 readonly DEFAULT_BACKUP_FILE="/etc/backup/installed_packages.txt"
@@ -200,6 +201,18 @@ main() {
     parse_args "$@"
     apply_log_options
     detect_net_tool
+
+    #-----------------------------------------------------------------------
+    # 尝试获取独占文件锁。若已有实例持有该锁，flock -n 会立即失败，
+    # 此时输出提示并退出，避免并发执行恢复脚本。
+    # 9 是文件描述符，由重定向自动关联到 LOCKFILE。
+    #-----------------------------------------------------------------------
+    exec 9>"$LOCKFILE"
+    if ! flock -n 9; then
+        # 锁获取失败意味着已有实例在运行
+        log_error "$log_file" "另一个恢复实例正在运行，退出"
+        exit 1
+    fi
 
     local script_start_time
     script_start_time=$(date +%s) # 记录脚本启动时间戳（用于计算总耗时）
