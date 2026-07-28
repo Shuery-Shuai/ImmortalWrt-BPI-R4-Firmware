@@ -652,6 +652,10 @@ resolve_target_path() {
                 target_path="feeds/packages/base/${pkg_name}"
                 log 'INFO' "  Mapped SECTION=base -> feeds/packages/base"
                 ;;
+            fonts)
+                target_path="feeds/packages/fonts/${pkg_name}"
+                log 'INFO' "  Mapped SECTION=fonts -> feeds/packages/fonts"
+                ;;
             *)
                 log 'WARN' "  Unknown SECTION '${section}', falling back to name heuristics"
                 ;;

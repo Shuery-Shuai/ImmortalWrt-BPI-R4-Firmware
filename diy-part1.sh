@@ -30,6 +30,15 @@ clone_repo 'https://github.com/anoixa/bpi-r4-pwm-fan' \
     '--depth=1' \
     'custom-packages/bpi-r4-pwm-fan'
 
+clone_repo 'https://github.com/brainiac19/openwrt-packages' \
+    'main' \
+    '--filter=blob:none --sparse --depth=1' \
+    'custom-packages/brainiac19'
+(
+    cd 'custom-packages/brainiac19' || exit 1
+    git sparse-checkout set fonts
+)
+
 clone_repo 'https://github.com/rockjake/luci-app-fancontrol' \
     'main' \
     '--depth=1' \
