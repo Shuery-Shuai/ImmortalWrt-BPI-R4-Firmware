@@ -121,6 +121,7 @@ EOF
 # 参数：$@ 命令行参数
 #===============================================================================
 parse_args() {
+    log_header "$log_file" "解析命令行参数" "原始参数: $*"
     while [[ $# -gt 0 ]]; do
         case "$1" in
         -h | --help)
@@ -157,6 +158,7 @@ parse_args() {
     done
     # 若未指定备份文件则使用默认值
     opt_backup_file="${opt_backup_file:-$DEFAULT_BACKUP_FILE}"
+    log_header "$log_file" "命令行参数解析完成" "备份文件: $opt_backup_file, 调试: $opt_debug, 静默: $opt_quiet, 控制台输出: $opt_console"
 }
 
 #===============================================================================
@@ -165,9 +167,11 @@ parse_args() {
 # 全局变量：LOG_LEVEL, LOG_TO_CONSOLE, opt_debug, opt_quiet, opt_console
 #===============================================================================
 apply_log_options() {
+    log_header "$log_file" "应用日志配置" "调试: $opt_debug, 静默: $opt_quiet, 控制台输出: $opt_console"
     [ "$opt_debug" -eq 1 ] && LOG_LEVEL=$LOG_DEBUG
     [ "$opt_quiet" -eq 1 ] && LOG_LEVEL=$LOG_WARN
     [ "$opt_console" -eq 1 ] && LOG_TO_CONSOLE=1
+    log_header "$log_file" "日志配置应用完成" "日志级别: $LOG_LEVEL, 控制台输出: $LOG_TO_CONSOLE"
 }
 
 #===============================================================================
@@ -176,6 +180,7 @@ apply_log_options() {
 # 全局变量：NET_TOOL, NET_TOOL_OPTS
 #===============================================================================
 detect_net_tool() {
+    log_header "$log_file" "探测可用的网络检测工具"
     if command -v curl >/dev/null 2>&1; then
         NET_TOOL="curl"
         NET_TOOL_OPTS=(--connect-timeout 5 -kIs)
@@ -188,6 +193,7 @@ detect_net_tool() {
     else
         NET_TOOL=""
     fi
+    log_header "$log_file" "网络检测工具探测结果" "使用工具: ${NET_TOOL:-无}"
 }
 
 #===============================================================================
@@ -332,6 +338,7 @@ init_log_file() {
     log_name="package-restore-$(date +'%Y%m%d%H%M%S').log"
     local log_path
 
+    echo "初始化日志文件: $log_name" >&2 # 输出到 stderr，避免污染 stdout
     if [ -d "$log_dir" ] && [ -w "$log_dir" ]; then
         log_path="$log_dir/$log_name"
 
@@ -360,6 +367,7 @@ init_log_file() {
     else
         log_path="/tmp/$log_name"
     fi
+    echo "日志文件初始化完成。日志文件路径: $log_path" >&2
 
     echo "$log_path"
 }
