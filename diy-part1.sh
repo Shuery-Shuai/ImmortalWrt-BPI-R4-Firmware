@@ -71,7 +71,11 @@ clone_repo 'https://github.com/sbwml/openwrt-qBittorrent' \
 
 clone_repo 'https://github.com/sundaqiang/openwrt-packages-backup' \
     'main' \
-    '--depth=1' \
+    '--filter=blob:none --sparse --depth=1' \
     'custom-packages/sundaqiang'
+(
+    cd 'custom-packages/sundaqiang' || exit 1
+    git sparse-checkout set luci/applications/luci-app-easyupdate
+)
 
 log INFO "Part 1 for ImmortalWrt completed."
