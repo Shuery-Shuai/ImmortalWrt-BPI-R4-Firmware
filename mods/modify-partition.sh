@@ -1,7 +1,7 @@
 #!/bin/bash
 # BPI‑R4 专用 - MediaTek Filogic 分区布局调整
 
-# 需要 source common/scripts/functions.sh
+# 需要 source common/scripts/index.sh
 
 #######################################
 # 修改 MediaTek Filogic 分区布局

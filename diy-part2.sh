@@ -16,8 +16,8 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 
-# shellcheck source=./libs/functions.sh
-source "${SCRIPT_DIR}/libs/functions.sh"
+# shellcheck source=./libs/index.sh
+source "${SCRIPT_DIR}/libs/index.sh"
 # shellcheck source=./mods/index.sh
 source "${SCRIPT_DIR}/mods/index.sh"
 

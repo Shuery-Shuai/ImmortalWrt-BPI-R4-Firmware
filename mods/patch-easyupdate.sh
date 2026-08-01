@@ -6,7 +6,7 @@
 #       3. 调整文件名截取偏移（仅 ImmortalWrt）
 #       4. 修改固件后缀为 squashfs-sysupgrade.itb（所有固件）
 #       5. 修正校验文件扩展名（所有固件）
-# 依赖: 需要预先 source common/scripts/libs/functions.sh 以使用 log 函数
+# 依赖: 需要预先 source common/scripts/libs/index.sh 以使用 log 函数
 #       若单独使用，脚本内置了日志后备
 # 用法:
 #   source common/scripts/mods/patch-easyupdate.sh

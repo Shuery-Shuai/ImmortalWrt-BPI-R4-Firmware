@@ -2,7 +2,7 @@
 # 文件: common/scripts/mods/add-xdp-sockets-diag.sh
 # 用途: 向内核网络支持模块中添加 XDP sockets 诊断接口
 #       使 `ss` 工具能够监控 PF_XDP sockets，用于 eBPF XDP 程序调试
-# 依赖: 需要预先 source common/scripts/libs/functions.sh 以使用 log 函数
+# 依赖: 需要预先 source common/scripts/libs/index.sh 以使用 log 函数
 #       若单独使用，脚本内置了日志后备
 # 用法:
 #   source common/scripts/mods/add-xdp-sockets-diag.sh

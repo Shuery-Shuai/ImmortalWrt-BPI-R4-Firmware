@@ -2,7 +2,7 @@
 # 文件: common/scripts/mods/modify-rust-build-config.sh
 # 用途: 修改 Rust 的构建配置，禁用 CI LLVM 下载，改用系统 LLVM
 #       以加速编译过程，避免下载预编译 LLVM 二进制文件
-# 依赖: 需要预先 source common/scripts/libs/functions.sh 以使用 log 函数
+# 依赖: 需要预先 source common/scripts/libs/index.sh 以使用 log 函数
 #       若单独使用，脚本内置了日志后备
 # 用法:
 #   source common/scripts/mods/modify-rust-build-config.sh

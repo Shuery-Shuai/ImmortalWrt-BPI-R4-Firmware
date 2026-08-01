@@ -2,7 +2,7 @@
 # 文件: common/scripts/mods/fix-libnl-tiny-compile.sh
 # 用途: 修复 libnl-tiny 在 GCC 14 下的编译警告（-Wparentheses）
 #       通过在 Makefile 中添加 -Wno-parentheses 选项压制错误
-# 依赖: 需要预先 source common/scripts/libs/functions.sh 以使用 log 函数
+# 依赖: 需要预先 source common/scripts/libs/index.sh 以使用 log 函数
 #       若单独使用，脚本内置了日志后备
 # 用法:
 #   source common/scripts/mods/fix-libnl-tiny-compile.sh

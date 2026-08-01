@@ -1,7 +1,7 @@
 #!/bin/bash
 # 文件: common/scripts/mods/set-default-ip.sh
 # 用途: 修改 OpenWrt/ImmortalWrt 的默认 LAN IP 地址
-# 依赖: 需要预先 source common/scripts/libs/functions.sh 以使用 log 函数
+# 依赖: 需要预先 source common/scripts/libs/index.sh 以使用 log 函数
 #       若单独使用，脚本内置了日志后备
 # 用法:
 #   source common/scripts/mods/set-default-ip.sh

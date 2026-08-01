@@ -2,7 +2,7 @@
 # 文件: common/scripts/mods/ensure-execute-permission.sh
 # 用途: 通用地为指定文件添加可执行权限（+x）
 #       常用于自定义脚本（如 restore-packages.sh）在构建过程中需要被执行
-# 依赖: 需要预先 source common/scripts/libs/functions.sh 以使用 log 函数
+# 依赖: 需要预先 source common/scripts/libs/index.sh 以使用 log 函数
 #       若单独使用，脚本内置了日志后备
 # 用法:
 #   source common/scripts/mods/ensure-execute-permission.sh
