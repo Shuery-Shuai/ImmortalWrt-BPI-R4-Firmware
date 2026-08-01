@@ -11,18 +11,20 @@
 #   set_fan2go_version <version> <hash> [makefile_path]
 #   set_fan2go_version --auto-update [makefile_path]
 #   set_fan2go_version -u [makefile_path]
+#   set_fan2go_version -u --pre-release [makefile_path]  # 包含预发布版本
 #
 # 参数:
 #   version       : 目标版本号，如 0.13.0, 0.14.0rc1 (不含 v 前缀)
 #   hash          : 对应的源代码包 SHA256 哈希值 (必需；设为 auto 可自动计算)
 #   makefile_path : fan2go 的 Makefile 路径，默认为 feeds/packages/utils/fan2go/Makefile
 #   --auto-update / -u : 启用自动更新，检查 GitHub 最新 release，若有新版本则更新
+#   --pre-release / -p : 包含预发布版本
 #
 # 示例:
 #   set_fan2go_version "0.13.0" "d693bc3ed4c43c8f120433ff17cecca9b98def829e031759373e6ff1ed8def61"
 #   set_fan2go_version "0.14.0rc1" "abc123..." "custom-packages/packages/utils/fan2go/Makefile"
 #   set_fan2go_version --auto-update
-#   set_fan2go_version -u feeds/packages/utils/fan2go/Makefile
+#   set_fan2go_version -u -p feeds/packages/utils/fan2go/Makefile
 #######################################
 
 if ! type -t log &>/dev/null; then
@@ -95,8 +97,23 @@ set_fan2go_version() {
 }
 
 auto_update_fan2go() {
-    local makefile="${1:-feeds/packages/utils/fan2go/Makefile}"
-    auto_update_package "markusressel/fan2go" "${makefile}" set_fan2go_version
+    local include_pre_release=0
+    local makefile=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --pre-release | -p)
+            include_pre_release=1
+            shift
+            ;;
+        *)
+            makefile="$1"
+            shift
+            break
+            ;;
+        esac
+    done
+    makefile="${makefile:-feeds/packages/utils/fan2go/Makefile}"
+    auto_update_package "markusressel/fan2go" "${makefile}" set_fan2go_version "" "${include_pre_release}"
 }
 
 # 脚本入口

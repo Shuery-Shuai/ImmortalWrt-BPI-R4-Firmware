@@ -42,6 +42,7 @@ auto_update_package() {
     local makefile="$2"
     local set_version_func="$3"
     local tag_parser="${4:-_strip_leading_v}"
+    local include_pre_release="${5:-false}"
 
     if [[ -z "${repo}" || -z "${makefile}" || -z "${set_version_func}" ]]; then
         log ERROR "Usage: auto_update_package <owner/repo> <makefile> <set_func> [tag_parser]"
@@ -74,10 +75,18 @@ auto_update_package() {
 
     # 获取最新 tag
     log INFO "Checking latest release of ${repo} on GitHub..."
+    local api_url
+    if [[ "${include_pre_release}" == "true" ]]; then
+        api_url="https://api.github.com/repos/${repo}/releases?per_page=1"
+        log INFO "Checking latest release (including pre-releases) of ${repo}..."
+    else
+        api_url="https://api.github.com/repos/${repo}/releases/latest"
+        log INFO "Checking latest stable release of ${repo}..."
+    fi
     local latest_tag
-    latest_tag=$(curl -sS "https://api.github.com/repos/${repo}/releases/latest" |
-        grep -oP '"tag_name":\s*"\K[^"]+') || {
-        log ERROR "Failed to fetch latest release for ${repo}"
+    latest_tag=$(curl -sS "${api_url}" \
+        | grep -oP '"tag_name":\s*"\K[^"]+' | head -1) || {
+        log ERROR "Failed to fetch release info for ${repo}"
         return 1
     }
     if [[ -z "${latest_tag}" ]]; then

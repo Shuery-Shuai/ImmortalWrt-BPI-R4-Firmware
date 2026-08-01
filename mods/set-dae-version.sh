@@ -10,18 +10,20 @@
 #   set_dae_version <version> <hash> [makefile_path]
 #   set_dae_version --auto-update [makefile_path]
 #   set_dae_version -u [makefile_path]
+#   set_dae_version -u --pre-release [makefile_path]  # 包含预发布版本
 #
 # 参数:
 #   version       : 目标版本号，如 1.1.0rc1, 2.0.0rc1, 1.1.0 (不含 v 前缀)
 #   hash          : 对应的源代码包 SHA256 哈希值 (必需；设为 auto 可自动计算)
 #   makefile_path : dae 的 Makefile 路径，默认为 feeds/packages/net/dae/Makefile
 #   --auto-update / -u : 启用自动更新，检查 GitHub 最新 release，若有新版本则更新
+#   --pre-release / -p : 包含预发布版本
 #
 # 示例:
 #   set_dae_version "1.1.0rc1" "726a049813a4d5b800c441ea76ff0ce1846596c180fba0e8ec920a129b3b6e0a"
 #   set_dae_version "2.0.0rc1" "auto" "custom-packages/packages/net/dae/Makefile"
 #   set_dae_version --auto-update
-#   set_dae_version -u feeds/packages/net/dae/Makefile
+#   set_dae_version -u -p feeds/packages/net/dae/Makefile
 #######################################
 
 if ! type -t log &>/dev/null; then
@@ -108,8 +110,23 @@ set_dae_version() {
 }
 
 auto_update_dae() {
-    local makefile="${1:-feeds/packages/net/dae/Makefile}"
-    auto_update_package "daeuniverse/dae" "${makefile}" set_dae_version
+    local include_pre_release=0
+    local makefile=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --pre-release | -p)
+            include_pre_release=1
+            shift
+            ;;
+        *)
+            makefile="$1"
+            shift
+            break
+            ;;
+        esac
+    done
+    makefile="${makefile:-feeds/packages/net/dae/Makefile}"
+    auto_update_package "daeuniverse/dae" "${makefile}" set_dae_version "" "${include_pre_release}"
 }
 
 # 脚本入口
