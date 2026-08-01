@@ -33,6 +33,8 @@ fi
 #   $2 - 当前 Makefile 路径
 #   $3 - 设置版本的函数名（必须接受 version 和 makefile 参数，如 set_dae_version）
 #   $4 - 标签处理函数名（可选，接收原始 tag 并返回版本号，默认为去除首字符 v）
+#   $5 - 是否包含预发布版本（可选，默认 false）
+#        为 true 时会从最近 20 个 release 中选取版本号最高的一个，无论其是否为预发布。
 #
 # 示例：
 #   auto_update_package "daeuniverse/dae" "feeds/packages/net/dae/Makefile" set_dae_version
@@ -75,23 +77,48 @@ auto_update_package() {
 
     # 获取最新 tag
     log INFO "Checking latest release of ${repo} on GitHub..."
-    local api_url
+    local latest_raw=""
     if [[ "${include_pre_release}" == "true" ]]; then
-        api_url="https://api.github.com/repos/${repo}/releases?per_page=1"
         log INFO "Checking latest release (including pre-releases) of ${repo}..."
+        # 取最近 20 个 release，避免遗漏只发布过预发布的项目
+        local releases_json
+        releases_json=$(curl -sS "https://api.github.com/repos/${repo}/releases?per_page=20")
+        if [[ -z "${releases_json}" ]]; then
+            log ERROR "Failed to fetch releases for ${repo}"
+            return 1
+        fi
+        # 提取所有 tag_name，解析版本号并比较出最大值
+        local tags max_raw=""
+        tags=$(echo "${releases_json}" | grep -oP '"tag_name":\s*"\K[^"]+')
+        for tag in ${tags}; do
+            local raw_ver
+            raw_ver=$("${tag_parser}" "${tag}")
+            if [[ -z "${max_raw}" ]]; then
+                max_raw="${raw_ver}"
+            elif [[ $(compare_versions "${raw_ver}" "${max_raw}") -gt 0 ]]; then
+                max_raw="${raw_ver}"
+            fi
+        done
+        if [[ -z "${max_raw}" ]]; then
+            log ERROR "Could not find any release for ${repo}"
+            return 1
+        fi
+        latest_raw="${max_raw}"
+        log INFO "Highest release (including pre-releases): ${latest_raw}"
     else
-        api_url="https://api.github.com/repos/${repo}/releases/latest"
-        log INFO "Checking latest stable release of ${repo}..."
-    fi
-    local latest_tag
-    latest_tag=$(curl -sS "${api_url}" \
-        | grep -oP '"tag_name":\s*"\K[^"]+' | head -1) || {
-        log ERROR "Failed to fetch release info for ${repo}"
-        return 1
-    }
-    if [[ -z "${latest_tag}" ]]; then
-        log ERROR "Could not parse tag_name from GitHub API for ${repo}"
-        return 1
+        # 仅获取稳定版
+        local latest_tag
+        latest_tag=$(curl -sS "https://api.github.com/repos/${repo}/releases/latest" |
+            grep -oP '"tag_name":\s*"\K[^"]+') || {
+            log ERROR "Failed to fetch latest stable release for ${repo}"
+            return 1
+        }
+        if [[ -z "${latest_tag}" ]]; then
+            log ERROR "Could not parse tag_name from GitHub API for ${repo}"
+            return 1
+        fi
+        latest_raw=$("${tag_parser}" "${latest_tag}")
+        log INFO "Latest stable release: ${latest_raw}"
     fi
 
     # 从 tag 提取版本号（通过 $tag_parser 函数）
