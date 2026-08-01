@@ -36,14 +36,14 @@ fi
 # 参数：
 #   None
 #
-# Outputs:
+# 输出：
 #   操作日志到 stderr (通过 log)
 #
-# Returns:
+# 返回：
 #   0 - 添加成功
 #   1 - 目标文件不存在
 #
-# Examples:
+# 示例：
 #   add_xdp_sockets_diag
 #######################################
 add_xdp_sockets_diag() {

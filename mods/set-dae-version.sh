@@ -39,10 +39,10 @@ fi
 #   $2 - 源代码包的 SHA256 哈希值
 #   $3 - Makefile 路径（可选，默认 feeds/packages/net/dae/Makefile）
 #
-# Outputs:
+# 输出：
 #   操作日志到 stderr
 #
-# Returns:
+# 返回：
 #   0 - 修改成功
 #   0 - 文件不存在时仅输出警告
 #   1 - 缺少必需参数或哈希值为空

@@ -26,14 +26,14 @@ fi
 #   $1 - 源目录 (from)
 #   $2 - 目标路径 (to)
 #
-# Outputs:
+# 输出：
 #   相对路径字符串到 stdout (如 "../../target/dir")
 #
-# Returns:
+# 返回：
 #   0 - 成功
 #   1 - 目录切换失败
 #
-# Examples:
+# 示例：
 #   relpath "/a/b/c" "/a/d/e"  # 输出: ../../d/e
 #   relpath "/home/user/project" "/opt/lib"  # 输出: ../../../opt/lib
 #######################################
@@ -93,14 +93,14 @@ relpath() {
 # 全局变量：
 #   None
 #
-# Outputs:
+# 输出：
 #   操作日志到 stderr (通过 log)
 #
-# Returns:
+# 返回：
 #   0 - 符号链接创建成功
 #   1 - 相对路径计算失败或 ln 命令失败
 #
-# Examples:
+# 示例：
 #   create_relative_symlink "/path/to/source" "feeds/luci/applications/app"
 #######################################
 create_relative_symlink() {

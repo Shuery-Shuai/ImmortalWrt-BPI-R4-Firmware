@@ -27,15 +27,15 @@ fi
 #   $2 - 保存的文件名（可选，默认从 URL 提取）
 #   $3 - 重试次数（可选，默认 3）
 #
-# Outputs:
+# 输出：
 #   SHA256 哈希值（64 位十六进制字符串）到 stdout
 #   状态信息与错误到 stderr（通过 log 函数）
 #
-# Returns:
+# 返回：
 #   0 - 成功下载并计算哈希
 #   1 - 多次重试后仍然失败，或工具缺失
 #
-# Examples:
+# 示例：
 #   hash=$(download_and_hash "https://example.com/archive.zip")
 #   hash=$(download_and_hash "https://example.com/archive.tar.gz" "source.tar.gz" 5)
 #######################################

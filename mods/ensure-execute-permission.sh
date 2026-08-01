@@ -35,13 +35,13 @@ fi
 # 参数：
 #   $1 - 文件路径（可选），默认值为 'files/usr/bin/restore-packages.sh'
 #
-# Outputs:
+# 输出：
 #   操作日志到 stderr (通过 log)
 #
-# Returns:
+# 返回：
 #   0 - 成功或文件不存在（非致命）
 #
-# Examples:
+# 示例：
 #   ensure_exec_permission
 #   ensure_exec_permission 'files/usr/bin/my-custom-script.sh'
 #######################################

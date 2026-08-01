@@ -18,15 +18,15 @@
 # 全局变量：
 #   None
 #
-# Outputs:
+# 输出：
 #   修改进度信息到 stdout
 #   错误信息到 stderr
 #
-# Returns:
+# 返回：
 #   0 - 修改成功
 #   1 - 文件不存在或 sed 操作失败
 #
-# Examples:
+# 示例：
 #   modify_bpi_r4_partition 50  # 扩展 50MB
 #######################################
 modify_bpi_r4_partition() {

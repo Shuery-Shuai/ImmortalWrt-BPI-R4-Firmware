@@ -41,14 +41,14 @@ fi
 #   $2 - (可选) easyupdate.sh 路径，默认值为
 #        custom-packages/sundaqiang/luci/applications/luci-app-easyupdate/root/usr/bin/easyupdate.sh
 #
-# Outputs:
+# 输出：
 #   操作日志到 stderr (通过 log)
 #
-# Returns:
+# 返回：
 #   0 - 修改成功
 #   0 - 文件不存在时仅输出警告，不视为错误
 #
-# Examples:
+# 示例：
 #   patch_easyupdate 'immortalwrt'
 #   patch_easyupdate 'immortalwrt' 'custom-packages/myapp/easyupdate.sh'
 #######################################

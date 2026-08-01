@@ -32,14 +32,14 @@ fi
 # 参数：
 #   $1 - (可选) libnl-tiny Makefile 的路径，默认为 package/libs/libnl-tiny/Makefile
 #
-# Outputs:
+# 输出：
 #   操作日志到 stderr (通过 log)
 #
-# Returns:
+# 返回：
 #   0 - 修改成功
 #   0 - 文件不存在时仅输出警告，不视为错误
 #
-# Examples:
+# 示例：
 #   fix_libnl_tiny_compile
 #   fix_libnl_tiny_compile 'package/libs/libnl-tiny/Makefile'
 #######################################

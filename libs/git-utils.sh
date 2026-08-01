@@ -29,15 +29,15 @@ fi
 # 全局变量：
 #   None
 #
-# Outputs:
+# 输出：
 #   操作进度信息到 stdout
 #   错误信息到 stderr (通过 log)
 #
-# Returns:
+# 返回：
 #   0 - 成功克隆或更新
 #   1 - 重试 3 次后仍失败 (脚本直接退出)
 #
-# Examples:
+# 示例：
 #   clone_repo 'https://github.com/user/repo' 'main' '--depth=1' 'packages/repo'
 #   clone_repo 'https://github.com/user/repo' 'master' '--filter=blob:none --sparse' 'custom-packages/repo'
 #######################################

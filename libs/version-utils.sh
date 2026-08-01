@@ -18,10 +18,10 @@
 # 参数：
 #   $1 - 原始版本号
 #
-# Outputs:
+# 输出：
 #   转换后的版本号到 stdout
 #
-# Examples:
+# 示例：
 #   normalize_pkg_version "1.1.0rc1"    # 输出: 1.1.0_rc1
 #######################################
 normalize_pkg_version() {

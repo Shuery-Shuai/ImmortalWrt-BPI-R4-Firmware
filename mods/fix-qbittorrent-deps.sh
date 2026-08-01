@@ -33,7 +33,7 @@ fi
 # 参数：
 #   $1 - (可选) qbittorrent 软件包的基础路径，默认为 'custom-packages/qbittorrent'
 #
-# Examples:
+# 示例：
 #   fix_qbittorrent_deps
 #   fix_qbittorrent_deps 'custom-packages/qbittorrent'
 #######################################

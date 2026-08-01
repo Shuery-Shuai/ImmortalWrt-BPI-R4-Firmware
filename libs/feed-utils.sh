@@ -33,14 +33,14 @@ fi
 # 全局变量：
 #   None
 #
-# Outputs:
+# 输出：
 #   软件包名称到 stdout
 #
-# Returns:
+# 返回：
 #   0 - 成功提取或使用回退值
 #   1 - Makefile 不存在
 #
-# Examples:
+# 示例：
 #   extract_pkg_name "/path/to/luci-app-example"  # 输出: luci-app-example
 #######################################
 extract_pkg_name() {
@@ -77,11 +77,11 @@ extract_pkg_name() {
 #   $1 - 软件包目录的绝对路径
 #   $2 - 软件包名称 (PKG_NAME)
 #
-# Outputs:
+# 输出：
 #   目标符号链接路径到 stdout (如 "feeds/luci/applications/luci-app-xxx")
 #   解析过程日志到 stderr (通过 log)
 #
-# Returns:
+# 返回：
 #   0 - 总是成功
 #######################################
 resolve_target_path() {
@@ -208,18 +208,18 @@ resolve_target_path() {
 # 全局变量：
 #   TOPDIR - OpenWrt 源码根目录（自动检测或使用已设置的值）
 #
-# Outputs:
+# 输出：
 #   处理进度和统计信息到 stderr (通过 log)
 #
-# Returns:
+# 返回：
 #   0 - 成功
 #   1 - 目录不存在或无法检测 TOPDIR
 #
-# Files Modified:
+# 文件修改：
 #   ${custom_dir}/.symlink_cache - 缓存文件
 #   feeds/*/.../* - 创建的符号链接
 #
-# Examples:
+# 示例：
 #   create_symlinks 'custom-packages'
 #######################################
 create_symlinks() {

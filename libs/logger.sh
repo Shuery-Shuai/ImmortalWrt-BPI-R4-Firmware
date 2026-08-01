@@ -80,11 +80,11 @@ fi
 # 参数：
 #   $1 - 日志级别名称 (TRACE|DEBUG|INFO|WARN|ERROR|FATAL|SUCCESS)
 #
-# Outputs:
+# 输出：
 #   输出格式: "颜色代码|emoji"
 #   示例: "\033[0;34m|💡"
 #
-# Returns:
+# 返回：
 #   0 - 总是成功
 #######################################
 _get_log_style() {
@@ -109,10 +109,10 @@ _get_log_style() {
 # 参数：
 #   $1 - 日志级别名称
 #
-# Outputs:
+# 输出：
 #   日志级别对应的数值 (0-5)，未知级别返回 -1
 #
-# Returns:
+# 返回：
 #   0 - 总是成功
 #######################################
 _normalize_log_level() {
@@ -143,15 +143,15 @@ _normalize_log_level() {
 #   $3 - 消息内容（当 $2 是分类时）
 #   $4 - 是否写入文件 (true|false，覆盖 LOG_TO_FILE 变量)
 #
-# Outputs:
+# 输出：
 #   格式化的日志输出到 stderr
 #   如果启用文件记录，同时追加到 LOG_FILE_PATH
 #
-# Returns:
+# 返回：
 #   0 - 成功
 #   1 - 参数错误
 #
-# Examples:
+# 示例：
 #   log INFO "服务已启动"
 #   log WARN "网络" "连接超时，正在重试..."
 #   log ERROR "数据库" "连接失败" true

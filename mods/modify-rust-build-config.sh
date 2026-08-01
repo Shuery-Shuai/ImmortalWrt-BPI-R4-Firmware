@@ -34,14 +34,14 @@ fi
 # 参数：
 #   $1 - Rust Makefile 的路径（可选），默认值为 feeds/packages/lang/rust/Makefile
 #
-# Outputs:
+# 输出：
 #   操作日志到 stderr (通过 log)
 #
-# Returns:
+# 返回：
 #   0 - 修改成功
 #   0 - 文件不存在时仅输出警告，不视为错误
 #
-# Examples:
+# 示例：
 #   modify_rust_build_config
 #   modify_rust_build_config 'feeds/custom/lang/rust/Makefile'
 #######################################

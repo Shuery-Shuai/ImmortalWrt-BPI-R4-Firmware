@@ -31,14 +31,14 @@ fi
 # 全局变量：
 #   None
 #
-# Outputs:
+# 输出：
 #   操作提示到 stdout
 #   错误信息到 stderr
 #
-# Returns:
+# 返回：
 #   0 - 总是成功（即使文件不存在）
 #
-# Examples:
+# 示例：
 #   modify_luci_collection 'feeds/luci/collections/luci/Makefile' \
 #     -e '/LUCI_DEPENDS/,/^$/ { /uhttpd/d; }'
 #######################################
@@ -65,7 +65,7 @@ modify_luci_collection() {
 #   $1 - Makefile 路径
 #   $2 - 关联数组变量名（必须预先声明）
 #
-# Returns:
+# 返回：
 #   0 - 成功修改
 #   1 - 数组不存在
 #######################################

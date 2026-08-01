@@ -44,13 +44,13 @@ fi
 # 参数：
 #   None
 #
-# Outputs:
+# 输出：
 #   每个集合的修改状态输出到 stderr (通过 modify_luci_collection 内部调用 log)
 #
-# Returns:
+# 返回：
 #   0 总是成功（即使某个集合文件不存在，仅输出警告）
 #
-# Examples:
+# 示例：
 #   apply_luci_collection_patches
 #######################################
 apply_luci_collection_patches() {

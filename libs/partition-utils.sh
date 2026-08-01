@@ -107,14 +107,14 @@ add_values_in_scope() {
 #   $4 - grep 匹配模式（可选，为空则输出所有行）
 #   $5 - 自定义标题前缀（可选，默认为 "Content"）
 #
-# Outputs:
+# 输出：
 #   带分隔线的作用域内容到 stdout
 #   分隔线和统计信息到 stderr（通过 log）
 #
-# Returns:
+# 返回：
 #   0 - 总是成功（即使内容为空）
 #
-# Examples:
+# 示例：
 #   show_scope_content "Makefile" "^define Package/mypkg" "^endef" "PKG_VERSION|PKG_RELEASE" "Package mypkg"
 #   show_scope_content "config.txt" "# 网络配置" "# 结束" "" "网络配置段"
 #######################################
