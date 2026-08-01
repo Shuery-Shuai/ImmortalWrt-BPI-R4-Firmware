@@ -2,20 +2,26 @@
 # 文件: common/scripts/mods/set-dae-version.sh
 # 用途: 修改 dae 软件包的版本、源地址和哈希值，用于固定特定版本或升级
 #       自动处理版本号中的 rc/beta 后缀，生成符合 OpenWrt 规范的 PKG_VERSION
-# 依赖: 需要预先 source common/scripts/libs/index.sh 以使用 log 函数
+#       支持自动检查 GitHub 最新 release 并更新
+# 依赖: 需要预先 source common/scripts/libs/index.sh 以使用 log / normalize_pkg_version / compare_versions / set_makefile_vars / download_and_hash 等函数
 #       若单独使用，脚本内置了日志后备
 # 用法:
 #   source common/scripts/mods/set-dae-version.sh
 #   set_dae_version <version> <hash> [makefile_path]
+#   set_dae_version --auto-update [makefile_path]
+#   set_dae_version -u [makefile_path]
 #
 # 参数:
 #   version       : 目标版本号，如 1.1.0rc1, 2.0.0rc1, 1.1.0 (不含 v 前缀)
-#   hash          : 对应的源代码包 SHA256 哈希值 (必需)
+#   hash          : 对应的源代码包 SHA256 哈希值 (必需；设为 auto 可自动计算)
 #   makefile_path : dae 的 Makefile 路径，默认为 feeds/packages/net/dae/Makefile
+#   --auto-update / -u : 启用自动更新，检查 GitHub 最新 release，若有新版本则更新
 #
 # 示例:
 #   set_dae_version "1.1.0rc1" "726a049813a4d5b800c441ea76ff0ce1846596c180fba0e8ec920a129b3b6e0a"
-#   set_dae_version "2.0.0rc1" "abc123..." "custom-packages/packages/net/dae/Makefile"
+#   set_dae_version "2.0.0rc1" "auto" "custom-packages/packages/net/dae/Makefile"
+#   set_dae_version --auto-update
+#   set_dae_version -u feeds/packages/net/dae/Makefile
 #######################################
 
 if ! type -t log &>/dev/null; then
@@ -100,6 +106,19 @@ set_dae_version() {
 
     log INFO "dae version set successfully."
 }
+
+auto_update_dae() {
+    local makefile="${1:-feeds/packages/net/dae/Makefile}"
+    auto_update_package "daeuniverse/dae" "${makefile}" set_dae_version
+}
+
+# 脚本入口
+if [[ "${1}" == "--auto-update" || "${1}" == "-u" ]]; then
+    shift
+    auto_update_dae "$@"
+else
+    set_dae_version "$@"
+fi
 
 # 直接执行时需提供参数（否则报错）
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
