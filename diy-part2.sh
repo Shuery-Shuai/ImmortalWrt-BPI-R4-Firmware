@@ -42,13 +42,13 @@ modify_rust_build_config
 ensure_exec_permission 'files/usr/bin/restore-packages.sh'
 
 # 固定 dae 版本
-set_dae_version "2.0.0" "51e5fe169a36c03503d74f3cb93a00a4547e41b5a8bd957599bfac0094639061"
+set_dae_cersion "2.0.0" "89853731fbc6ca60e4a68644e774fa45927fc53e7c05b19b9308fc938b1b98c2"
 
 # 修复 qbittorrent 依赖
 fix_qbittorrent_deps
 
 # 固定 fan2go 版本
-set_fan2go_version "0.15.0" "86b352936d924688bdf62aacfb9169a3706fe427d4eccb06dd412ff78ce328b9"
+set_fan2go_version "0.15.0" auto
 
 # 修复 libnl-tiny 编译警告
 fix_libnl_tiny_compile
