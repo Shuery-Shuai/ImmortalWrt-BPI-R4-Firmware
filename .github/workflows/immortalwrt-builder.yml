@@ -113,6 +113,26 @@ jobs:
           df -hT $PWD
           git clone --depth 1 $REPO_URL -b $REPO_BRANCH immortalwrt
 
+      - name: Restore APK signing key
+        env:
+          APK_PRIVATE_KEY_B64: ${{ secrets.APK_PRIVATE_KEY_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APK_PRIVATE_KEY_B64}" ]; then
+            echo "::error::缺少 secret APK_PRIVATE_KEY_B64：构建会生成一次性签名密钥，已刷机设备将无法信任新仓库"
+            exit 1
+          fi
+          cd immortalwrt
+          umask 077
+          printf '%s' "${APK_PRIVATE_KEY_B64}" | base64 -d > private-key.pem
+          openssl ec -in private-key.pem -pubout > public-key.pem
+          openssl ec -in private-key.pem -check -noout
+          if ! diff -q public-key.pem "${GITHUB_WORKSPACE}/keys/public-key.pem" >/dev/null; then
+            echo "::error::secret 中的私钥与仓库内 keys/public-key.pem 不匹配"
+            exit 1
+          fi
+          echo "apk signing key fingerprint: $(openssl ec -in private-key.pem -pubout -outform DER | openssl dgst -sha256 -r | cut -d' ' -f1)"
+
       - name: cache
         if: github.event.inputs.cache != 'false'
         uses: klever1988/cachewrtbuild@main
@@ -283,7 +303,9 @@ jobs:
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           body_path: release.txt
-          files: ${{ env.FIRMWARE }}/*
+          files: |
+            ${{ env.FIRMWARE }}/*
+            keys/public-key.pem
 
       - name: Delete workflow runs
         uses: GitRML/delete-workflow-runs@main
@@ -332,6 +354,10 @@ jobs:
         run: |
           chmod +x $GEN_INDEX_SH
           ./$GEN_INDEX_SH
+
+      - name: Publish apk public key
+        if: env.UPLOAD_BIN_DIR == 'true' && env.DEPLOY_TO_PAGES == 'true'
+        run: cp keys/public-key.pem bin/public-key.pem
 
       - name: Upload pages artifact
         if: env.UPLOAD_BIN_DIR == 'true' && env.DEPLOY_TO_PAGES == 'true'

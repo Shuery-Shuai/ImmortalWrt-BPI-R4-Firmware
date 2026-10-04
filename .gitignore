@@ -1,3 +1,6 @@
 .DS_Store
 immortalwrt
 openwrt
+output
+docker/
+keys/private-key.pem

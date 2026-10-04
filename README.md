@@ -67,6 +67,31 @@
 >
 > 大部分软件包都不需要另外支持，如果有需要另外支持的软件包，请在 Issues 中提出。
 
+## 软件包签名密钥
+
+固件内置的软件包仓库使用固定的 EC P-256 密钥签名，保证设备在升级固件后仍信任新构建的仓库，不再出现 `UNTRUSTED signature`。
+
+| 位置                                 | 说明                                                                                                    |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| `keys/public-key.pem`                | 公钥，随仓库提交；构建时写入镜像 `/etc/apk/keys/public-key.pem`，并发布到 Pages 站点根目录              |
+| Actions Secret `APK_PRIVATE_KEY_B64` | 私钥（base64），CI 构建时还原到构建目录并校验指纹                                                       |
+| `keys/private-key.pem`               | 私钥的本地副本，供本地 Docker 构建使用，已被 `.gitignore` 忽略                                          |
+
+> [!CAUTION]
+>
+> `private-key.pem` 是包签名的信任根，持有者可以签出被本固件信任的 `.apk`。**切勿提交到仓库、粘贴到 Issue 或随产物分发**。如需轮换密钥，须同时更新 Secret 与 `keys/public-key.pem`，并通知用户重新导入公钥。
+
+> [!IMPORTANT]
+>
+> 在固定密钥启用之前刷入的固件，需要手动导入公钥后才能从本仓库安装软件包：
+>
+> ```sh
+> wget -O /etc/apk/keys/public-key.pem https://pkgs.lssa.fun/immortalwrt/snapshots/public-key.pem
+> apk update
+> ```
+>
+> 或者直接刷写一次新固件（镜像内已自带该公钥）。apk 会信任 `/etc/apk/keys/` 下的所有密钥，因此新旧公钥可以共存。
+
 ## 许可证
 
 - 本项目脚本采用 MIT 许可证。
