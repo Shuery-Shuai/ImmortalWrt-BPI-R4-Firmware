@@ -59,6 +59,11 @@ clone_repo 'https://github.com/Shuery-Shuai/LuciFanXpert' \
     '--depth=1' \
     'custom-packages/LuciFanXpert'
 
+clone_repo 'https://github.com/Shuery-Shuai/LuciRtfwUpgrade' \
+    'main' \
+    '--depth=1' \
+    'custom-packages/LuciRtfwUpgrade'
+
 clone_repo 'https://github.com/vernesong/OpenClash' \
     'dev' \
     '--depth=1' \
