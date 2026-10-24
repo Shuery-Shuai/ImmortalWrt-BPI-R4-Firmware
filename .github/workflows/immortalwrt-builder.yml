@@ -28,6 +28,7 @@ env:
   REPO_BRANCH: master
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
+  DEPENDS_FILE: scripts/depends.txt
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
   GEN_INDEX_SH: scripts/generate-index.sh
@@ -99,7 +100,7 @@ jobs:
         run: |
           sudo -E apt-get -y purge azure-cli* docker* ghc* zulu* hhvm* llvm* firefox* google* dotnet* aspnetcore* powershell* openjdk* adoptopenjdk* mysql* php* mongodb* moby* snap* || true
           sudo -E apt-get -qq update
-          sudo -E apt-get -qq install libfuse-dev $(curl -fsSL https://raw.githubusercontent.com/0118Add/Openwrt-CI/refs/heads/main/depends-ubuntu-2204)
+          sudo -E apt-get -qq install $(grep -vE '^\s*(#|$)' "$DEPENDS_FILE" | tr '\n' ' ')
           sudo -E apt-get -qq autoremove --purge
           sudo -E apt-get -qq clean
           sudo rm -rf /etc/apt/sources.list.d/* /usr/local/lib/android /opt/ghc /usr/share/dotnet /usr/local/graalvm /usr/local/.ghcup \

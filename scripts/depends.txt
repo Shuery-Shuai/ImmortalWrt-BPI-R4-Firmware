@@ -1,0 +1,97 @@
+# depends.txt — Ubuntu 22.04 build dependencies for ImmortalWrt
+
+# === ImmortalWrt 官方推荐：编译主机基础工具链 ===
+ack
+antlr3
+asciidoc
+autoconf
+automake
+autopoint
+binutils
+bison
+build-essential
+bzip2
+ccache
+cmake
+cpio
+curl
+device-tree-compiler
+ecj
+fastjar
+flex
+gawk
+gettext
+gcc-multilib
+g++-multilib
+git
+gnutls-dev
+gperf
+haveged
+help2man
+intltool
+lib32gcc-s1
+libc6-dev-i386
+libelf-dev
+libglib2.0-dev
+libgmp3-dev
+libltdl-dev
+libmpc-dev
+libmpfr-dev
+libncurses-dev
+libpython3-dev
+libreadline-dev
+libssl-dev
+libtool
+libyaml-dev
+libz-dev
+lrzsz
+mkisofs
+msmtp
+nano
+ninja-build
+p7zip
+p7zip-full
+patch
+pkgconf
+python3
+python3-pip
+python3-ply
+python3-docutils
+python3-pyelftools
+qemu-utils
+re2c
+rsync
+scons
+squashfs-tools
+subversion
+swig
+texinfo
+uglifyjs
+upx-ucl
+unzip
+vim
+wget
+xmlto
+xxd
+zlib1g-dev
+zstd
+
+# === ImmortalWrt 官方推荐：LLVM 工具链（Ubuntu 22.04 默认装 14）===
+# 用于编译内核 BPF 组件（如 bpf-headers），以及部分依赖 LLVM 的包
+clang
+lld
+llvm
+
+# === 额外补充：满足 bpf-headers 的 Clang/LLVM >= 15 硬性要求 ===
+# 内核 6.18 起，BPF 头文件编译要求主机 Clang >= 15；
+# Ubuntu 22.04 仓库默认的 clang/llvm 是 14，会在此步报
+# "Minimum Clang version: 15.0.0" 并中止编译。
+# 安装 15 版本后由 init.sh 通过 update-alternatives 设为默认。
+clang-15
+llvm-15
+
+# === 额外补充：FUSE 用户态文件系统开发支持 ===
+# 提供 fuse.h 头文件与 libfuse 链接库，供构建主机编译
+# 依赖 FUSE 的软件包（如 alist、sshfs 等）使用；
+# 缺少时会在编译阶段报 "fuse.h: No such file or directory"。
+libfuse-dev
