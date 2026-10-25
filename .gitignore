@@ -5,3 +5,4 @@ output
 docker/
 keys/private-key.pem
 logs/
+.tmp-*
