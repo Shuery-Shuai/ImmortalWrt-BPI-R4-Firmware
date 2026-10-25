@@ -1,0 +1,98 @@
+# Dependabot 自动合并（dependabot-auto-merge）：只对 minor / patch 升级武装 auto-merge。
+#
+# 为什么需要这个文件：Dependabot 自身【没有】自动合并的配置项（dependabot-options 参考里查不到），
+# 官方做法是仓库开 auto-merge + 分支保护配必需检查 + 由 workflow 调 gh pr merge --auto。
+# 三者缺一不可：少了分支保护，--auto 会在检查还没跑完时立刻合掉，等于没有门禁。
+#
+# 为什么只放行 minor / patch：major 跳跃常有破坏性变更（例如 Pages 部署里
+# upload-pages-artifact 与 download-artifact 需要配套改），必须人工过目。
+# 判定依据是 PR 标题里 Dependabot 自带的 from X to Y 与版本号分段，不依赖第三方 action。
+#
+# 为什么 0.x 只放行 patch：semver 里 0.y.z 是「初始开发阶段，任何版本都可能随时破坏兼容」，
+# 所以 0.1.0 -> 0.3.4 这种 minor 位跳跃在处理 0.x 时必须按 major 对待。
+# 本仓库正好有实例：dev-drprasad/delete-older-releases 0.1.0 -> 0.3.4 是「删旧 Release 与 tag」
+# 的破坏性动作（delete_tags: true），自动合进来自动删错东西的代价远高于手动点一下。
+name: Dependabot Auto Merge
+
+on:
+  pull_request:
+
+# Dependabot 触发的 workflow 默认拿只读 GITHUB_TOKEN（官方文档：treated as if opened from
+# a repository fork），必须在这里显式提权，否则 gh pr merge 会因权限不足失败。
+# 只提 PR 写权限：合并动作不需要 contents: write。
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    name: auto-merge
+    runs-on: ubuntu-24.04
+    # 只处理 Dependabot 自己开的 PR；本仓库其余 PR（含 dependency-auditor 自建的）一律人工合并。
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    steps:
+      - name: Decide whether this update is minor or patch
+        id: decide
+        shell: bash
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          # Dependabot 标题形如：
+          #   Bump actions/checkout from 4 to 7
+          #   Bump foo from 0.1.0 to 0.3.4 in the github-actions group
+          # 从标题里抽出 from / to 两个版本号，再按分段比较第一个不同的数字位。
+          # 抽不出来就当作 major（保守：不动），绝不默认自动合并。
+          if [[ "${TITLE}" =~ from\ ([0-9][^\ ]*)\ to\ ([0-9][^\ ]*) ]]; then
+            from="${BASH_REMATCH[1]}"
+            to="${BASH_REMATCH[2]}"
+          else
+            echo "标题里找不到 from/to 版本，按 major 处理（不自动合并）"
+            echo "eligible=false" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "from=${from} to=${to}"
+          IFS=. read -r -a a <<<"${from}"
+          IFS=. read -r -a b <<<"${to}"
+          width=${#a[@]}
+          [[ ${#b[@]} -gt ${width} ]] && width=${#b[@]}
+          eligible=false
+          # 0.x 的 minor 位等同于 major（semver 明确 0.y.z 不保证兼容），因此单独抬高门槛。
+          zero_major=false
+          ((10#${a[0]:-0} == 0)) && zero_major=true
+          for ((i = 0; i < width; i++)); do
+            x="${a[i]:-0}"
+            y="${b[i]:-0}"
+            if ((10#${x} != 10#${y})); then
+              if ((i == 0)); then
+                echo "第一位数字不同 -> major，不自动合并"
+              elif [[ "${zero_major}" == "true" && ${i} -lt 2 ]]; then
+                echo "0.x 的 minor 位跳跃 -> 按 major 处理，不自动合并"
+              else
+                echo "第一位不同在 minor/patch 段 -> 允许自动合并"
+                eligible=true
+              fi
+              break
+            fi
+          done
+          echo "eligible=${eligible}"
+          echo "eligible=${eligible}" >>"$GITHUB_OUTPUT"
+
+      - name: Enable auto-merge for minor / patch updates
+        if: steps.decide.outputs.eligible == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+          # --auto 只是"武装"：真正合并要等分支保护里那三个必需检查通过。
+          # --squash 让历史保持一条 PR 一条提交，与本仓库既有的整提交风格一致。
+          gh pr merge --auto --squash "${PR_URL}"
+
+      - name: Report why it was not auto-merged
+        if: steps.decide.outputs.eligible != 'true'
+        shell: bash
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: echo "未武装 auto-merge（判为 major / 0.x minor / 无法解析版本）：${TITLE}"
