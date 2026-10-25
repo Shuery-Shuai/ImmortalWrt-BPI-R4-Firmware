@@ -61,7 +61,7 @@ jobs:
           echo "已安装内存详细信息:"
           echo -e "$(sudo lshw -short -C memory | grep GiB)\n"
           echo "--------------------------硬盘信息--------------------------"
-          echo "硬盘数量: $(ls /dev/sd* | grep -v [1-9] | wc -l)" && df -hT
+          echo "硬盘数量: $(find /dev -maxdepth 1 -name 'sd*' | grep -vc '[0-9]$')" && df -hT
 
       - name: "Optimize Disk Space"
         id: disk
@@ -111,7 +111,7 @@ jobs:
           sudo rm -rf /etc/apt/sources.list.d/* /usr/local/lib/android /opt/ghc /usr/share/dotnet /usr/local/graalvm /usr/local/.ghcup \
           /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules
           sudo timedatectl set-timezone "$TZ"
-          sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
+          sudo chown "$USER:${GROUPS[0]}" "$GITHUB_WORKSPACE"
 
       # 安装主机编译依赖（scripts/build/dependencies.txt）+ upx/padjffs2/po2lmo。
       # REQUIRED=1：缺依赖清单或装依赖失败必须让流水线红，不得降级为警告。
@@ -226,10 +226,10 @@ jobs:
         if: env.UPLOAD_BIN_DIR == 'true' && !cancelled()
         run: |
           cd immortalwrt/bin/
-          echo "WORKSPACE_DIR=$PWD" >> $GITHUB_ENV
+          echo "WORKSPACE_DIR=$PWD" >> "$GITHUB_ENV"
           cd  targets/*/*
-          echo "UPLOAD_PATH=$PWD" >> $GITHUB_ENV
-          echo "status=success" >> $GITHUB_OUTPUT
+          echo "UPLOAD_PATH=$PWD" >> "$GITHUB_ENV"
+          echo "status=success" >> "$GITHUB_OUTPUT"
 
       - name: Compressed kernel packages
         id: zip_kernel
@@ -257,8 +257,8 @@ jobs:
         run: |
           cd immortalwrt/bin/targets/*/*
           rm -rf packages
-          echo "FIRMWARE=$PWD" >> $GITHUB_ENV
-          echo "status=success" >> $GITHUB_OUTPUT
+          echo "FIRMWARE=$PWD" >> "$GITHUB_ENV"
+          echo "status=success" >> "$GITHUB_OUTPUT"
 
       - name: Upload firmware directory
         id: artifact_firmware
@@ -273,18 +273,18 @@ jobs:
         if: steps.organize.outputs.status == 'success' && env.UPLOAD_COWTRANSFER == 'true' && !cancelled()
         run: |
           curl -fsSL git.io/file-transfer | sh
-          ./transfer cow --block 2621440 -s -p 64 --no-progress ${FIRMWARE} 2>&1 | tee cowtransfer.log
+          ./transfer cow --block 2621440 -s -p 64 --no-progress "${FIRMWARE}" 2>&1 | tee cowtransfer.log
           echo "::warning file=cowtransfer.com::$(cat cowtransfer.log | grep https)"
-          echo "url=$(cat cowtransfer.log | grep https | cut -f3 -d" ")" >> $GITHUB_OUTPUT
+          echo "url=$(cat cowtransfer.log | grep https | cut -f3 -d" ")" >> "$GITHUB_OUTPUT"
 
       - name: Upload firmware to WeTransfer
         id: wetransfer
         if: steps.organize.outputs.status == 'success' && env.UPLOAD_WETRANSFER == 'true' && !cancelled()
         run: |
           curl -fsSL git.io/file-transfer | sh
-          ./transfer wet -s -p 16 --no-progress ${FIRMWARE} 2>&1 | tee wetransfer.log
+          ./transfer wet -s -p 16 --no-progress "${FIRMWARE}" 2>&1 | tee wetransfer.log
           echo "::warning file=wetransfer.com::$(cat wetransfer.log | grep https)"
-          echo "url=$(cat wetransfer.log | grep https | cut -f3 -d" ")" >> $GITHUB_OUTPUT
+          echo "url=$(cat wetransfer.log | grep https | cut -f3 -d" ")" >> "$GITHUB_OUTPUT"
 
       # release.txt 由脚本生成（读 COWTRANSFER_URL / WETRANSFER_URL），仍以环境变量传上游 step 的输出。
       - name: Generate release tag
@@ -299,7 +299,7 @@ jobs:
 
       - name: Upload firmware to release
         id: release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         if: steps.tag.outputs.status == 'success' && !cancelled()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

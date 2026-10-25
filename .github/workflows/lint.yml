@@ -1,0 +1,112 @@
+# Lint 门禁：shellcheck / actionlint / markdownlint 三条并列检查。
+#
+# 为什么 pull_request 不加 paths 过滤：
+#   Dependabot 的 PR 只改 .github/workflows/*.yml，dependency-audit 自动开的 PR 只改
+#   scripts/inputs/diy-part2.sh —— 两者都落在 dependency-audit.yml 的 paths 之外。
+#   一旦按 paths 过滤，恰恰是「自动改 workflow」这类最需要校验的 PR 会绕过门禁，
+#   所以这里必须对全部 PR 无条件生效。三个 job 互不依赖，任一失败即整体红。
+name: Lint
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# lint 只读仓库，不产出任何东西。
+permissions:
+  contents: read
+
+# 工具版本与来源全部钉死并可校验：本 workflow 自身会被 lint，且自动 PR 会改 workflows，
+# 版本漂移会让门禁结论在不同时间点不一致。
+env:
+  # runner 预装的 shellcheck 是 0.9.0，Ubuntu 24.04 源里的 apt 包同样是 0.9.0-1，
+  # `apt-get install shellcheck` 装不到更新版本，因此直接从上游 release 取固定版本，
+  # 并按 sha256 校验后再安装。
+  SHELLCHECK_VERSION: "0.11.0"
+  SHELLCHECK_SHA256: "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198"
+  ACTIONLINT_VERSION: "1.7.12"
+  ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+
+jobs:
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install shellcheck v${{ env.SHELLCHECK_VERSION }}
+        run: |
+          archive="$RUNNER_TEMP/shellcheck.tar.xz"
+          curl -fsSL -o "$archive" \
+            "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          echo "${SHELLCHECK_SHA256}  $archive" | sha256sum -c -
+          tar -xJf "$archive" -C "$RUNNER_TEMP"
+          # 装到 /usr/local/bin：该目录在默认 PATH 里先于 /usr/bin，可覆盖预装的 0.9.0。
+          sudo install -m 0755 "$RUNNER_TEMP/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+          shellcheck --version
+
+      - name: Run shellcheck
+        run: |
+          # 纳入两类脚本：
+          #   1) scripts/ 与 files/ 下全部 *.sh；
+          #   2) files/ 下扩展名不是 .sh、但首行是 #!/bin/bash 或 #!/bin/sh 的脚本
+          #      （files/etc/hotplug.d/iface/99-restore-package 这类热插拔钩子即属此类，
+          #       只按文件名找 *.sh 会漏掉它们）。
+          mapfile -t scripts < <(
+            find scripts files -type f -name '*.sh'
+            find files -type f ! -name '*.sh' -exec grep -lIE '^#!.*(bash|sh)' {} +
+          )
+          echo "待检查脚本 ${#scripts[@]} 个"
+          # 一次性整体传入，让 shellcheck 给出统一的跨文件结论；任一脚本有问题即失败。
+          shellcheck -x "${scripts[@]}"
+
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # actionlint 会对每个 run 块内嵌调用 shellcheck。这里同样装固定版本：
+      # 预装的 0.9.0 会报出 SC2002 这类新版本已不再报的项，若两边版本不同，
+      # 同一个 run 块可能在两个 job 里得出不同结论，门禁自相矛盾。
+      - name: Install shellcheck v${{ env.SHELLCHECK_VERSION }}
+        run: |
+          archive="$RUNNER_TEMP/shellcheck.tar.xz"
+          curl -fsSL -o "$archive" \
+            "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          echo "${SHELLCHECK_SHA256}  $archive" | sha256sum -c -
+          tar -xJf "$archive" -C "$RUNNER_TEMP"
+          sudo install -m 0755 "$RUNNER_TEMP/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+
+      - name: Install actionlint v${{ env.ACTIONLINT_VERSION }}
+        run: |
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl -fsSL -o "$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          # 校验和不匹配必须直接失败，不能带着来源不明的二进制继续跑门禁。
+          echo "${ACTIONLINT_SHA256}  $archive" | sha256sum -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          sudo install -m 0755 "$RUNNER_TEMP/actionlint" /usr/local/bin/actionlint
+          actionlint -version
+          shellcheck --version | grep 'version:'
+
+      - name: Run actionlint
+        run: |
+          actionlint -no-color .github/workflows/*.yml
+
+  markdownlint:
+    name: markdownlint
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # 规则来自仓库根的 .markdownlint-cli2.yaml（cli2 会自动发现），此处不重复配置；
+      # 只固定 cli2 版本，避免 @latest 在未来把新的规则默认值带进来。
+      - name: Run markdownlint-cli2 v0.24.0
+        run: |
+          npx --yes markdownlint-cli2@0.24.0 "README.md" "README-workflow.md" "scripts/README.md"
