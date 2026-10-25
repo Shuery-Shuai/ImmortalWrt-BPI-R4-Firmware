@@ -135,7 +135,7 @@ scripts/
 │   ├── generate-release-notes.sh  生成 release.txt
 │   ├── generate-summary.sh        运行总结 → $GITHUB_STEP_SUMMARY
 │   ├── check-apt-deps.sh          依赖清单的包名是否仍存在于 noble 索引
-│   ├── check-pinned-tools.sh      手钉常量（upx / padjffs2 / po2lmo）与上游的差距
+│   ├── check-pinned-tools.sh      手钉常量（upx / padjffs2 / po2lmo / dae / fan2go）与上游的差距
 │   └── generate-index.sh    生成 Pages 索引页
 └── inputs/                  构建输入：被复制进 immortalwrt/ 后在上游源码树内执行
     ├── diy-part1.sh
@@ -238,13 +238,18 @@ bash scripts/ci/generate-summary.sh [build|update-checker]   # 缺省 build
 
 ### 依赖自动更新与巡检
 
-这个仓库的"依赖"有三类，能力边界各不相同——**不要以为装了机器人就都有人管**：
+这个仓库的"依赖"有四类，能力边界各不相同——**不要以为装了机器人就都有人管**：
 
 | 对象                                  | 谁来管                                              | 能自动做什么                                                       |
 | ------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------ |
 | `.github/workflows/` 里的 action 引用 | `.github/dependabot.yml`                            | 开 PR 升版本（major 单独开 PR，minor/patch 归组）                  |
 | `build/dependencies.txt` 的包名       | `ci/check-apt-deps.sh` + `dependency-audit.yml`     | **只开 issue**：包名失效能发现，但改名映射不在任何机器可读数据源里 |
 | `install-deps.sh` 的 `EXTRAS_*` 常量  | `ci/check-pinned-tools.sh` + `dependency-audit.yml` | upx 开 PR；padjffs2 / po2lmo 只开 issue                            |
+| `diy-part2.sh` 的 dae / fan2go 固定行 | `ci/check-pinned-tools.sh` + `dependency-audit.yml` | 两者都开 PR；dae 同时改版本号与 sha256，fan2go 只改版本号          |
+
+dae 那一行的 sha256 优先取上游 release 的 `.dgst` 里的 `sha256` 行（只有几十字节）；上游没发 `.dgst` 时
+（实测 v2.1.0 是 404）回退为下载源码包现算。两条路径都必须走通，不能只认 `.dgst`。
+fan2go 的 hash 参数是字面量 `auto`（构建时现算），所以 PR 只动版本号那一个 token，改完必须仍是 `"<版本>" auto`。
 
 两点必须说清楚：
 
