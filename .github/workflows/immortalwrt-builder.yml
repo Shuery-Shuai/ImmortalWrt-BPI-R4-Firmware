@@ -97,7 +97,7 @@ jobs:
         id: checkout
         uses: actions/checkout@v7
 
-      # 只保留 CI 独占的部分：清理 runner 预装的重型运行时、设置 runner 时区、修正工作区属主。
+      # 只保留 CI 独占的部分：清理 runner 预装的重型运行时与第三方源、设置 runner 时区、修正工作区属主。
       # 依赖安装已收敛到 scripts/build/build.sh deps（唯一会调用 apt 的阶段）；
       # purge 里含 llvm*，脚本会重新装回 clang-18 全套，二者逻辑自洽。
       - name: Initialization environment
@@ -108,8 +108,25 @@ jobs:
           sudo -E apt-get -y purge azure-cli* docker* ghc* zulu* hhvm* llvm* firefox* google* dotnet* aspnetcore* powershell* openjdk* adoptopenjdk* mysql* php* mongodb* moby* snap* || true
           sudo -E apt-get -qq autoremove --purge
           sudo -E apt-get -qq clean
-          sudo rm -rf /etc/apt/sources.list.d/* /usr/local/lib/android /opt/ghc /usr/share/dotnet /usr/local/graalvm /usr/local/.ghcup \
+          # 清理 runner 预装的第三方源（azure / claude / ppa 等），但【必须保留 Ubuntu 自身的源】。
+          # 不能沿用上游 P3TERX 的 rm -rf /etc/apt/sources.list.d/*：那是 22.04 时代的写法（主源在
+          # /etc/apt/sources.list）。24.04 起 apt 改用 deb822，主源挪进了 sources.list.d/ubuntu.sources，
+          # 而 sources.list 只剩注释，整目录删空后 apt-get update 会「成功」地空转（不报错！），
+          # 随后 install 的每个包都变成 Unable to locate package / has no installation candidate。
+          # 因此按内容判断：含 ubuntu.com / ports.ubuntu 的源文件一律保留，其余删除。
+          while IFS= read -r src; do
+            grep -qiE 'ubuntu\.com|ports\.ubuntu' "$src" || sudo rm -f "$src"
+          done < <(find /etc/apt/sources.list.d -maxdepth 1 -type f 2>/dev/null)
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet /usr/local/graalvm /usr/local/.ghcup \
           /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules
+          # 源目录被清空时 apt 不报错、只让后续安装集体失败，所以在这里一次性断言：
+          # 宁可这一步红，也不要让 deps 阶段拿 85 条 Unable to locate 去误导排查。
+          # 判据只能是「文件里还写着 ubuntu 源」：apt-get indextargets 依赖已下载的索引，
+          # 而本步骤跑在 apt-get update 之前，那时它恒为空，用它断言会把正常状态误判成断源。
+          if ! grep -qiE 'ubuntu\.com|ports\.ubuntu' /etc/apt/sources.list.d/* 2>/dev/null; then
+            echo "::error::No Ubuntu apt source left in /etc/apt/sources.list.d; check the source pruning above."
+            exit 1
+          fi
           sudo timedatectl set-timezone "$TZ"
           sudo chown "$USER:${GROUPS[0]}" "$GITHUB_WORKSPACE"
 
