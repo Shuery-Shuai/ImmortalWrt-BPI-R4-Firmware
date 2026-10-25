@@ -48,6 +48,7 @@ jobs:
 
     steps:
       - name: Check Server Performance
+        id: hw
         run: |
           echo "警告⚠"
           echo "分配的服务器性能有限，若选择的插件过多，务必注意CPU性能！"
@@ -63,6 +64,7 @@ jobs:
           echo "硬盘数量: $(ls /dev/sd* | grep -v [1-9] | wc -l)" && df -hT
 
       - name: "Optimize Disk Space"
+        id: disk
         uses: "hugoalh/disk-space-optimizer-ghaction@v0.8.1"
         with:
           operate_sudo: "True"
@@ -84,6 +86,7 @@ jobs:
           os_swap: "True"
 
       - name: Free up disk space complete
+        id: diskdone
         run: |
           echo "Free up disk space complete"
           echo "=============================================================================="
@@ -91,12 +94,14 @@ jobs:
           echo "=============================================================================="
 
       - name: Checkout
+        id: checkout
         uses: actions/checkout@main
 
       # 只保留 CI 独占的部分：清理 runner 预装的重型运行时、设置 runner 时区、修正工作区属主。
       # 依赖安装已收敛到 scripts/build/build.sh deps（唯一会调用 apt 的阶段）；
       # purge 里含 llvm*，脚本会重新装回 clang-18 全套，二者逻辑自洽。
       - name: Initialization environment
+        id: env_setup
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
@@ -111,6 +116,7 @@ jobs:
       # 安装主机编译依赖（scripts/build/dependencies.txt）+ upx/padjffs2/po2lmo。
       # REQUIRED=1：缺依赖清单或装依赖失败必须让流水线红，不得降级为警告。
       - name: Install build dependencies
+        id: deps
         env:
           DEBIAN_FRONTEND: noninteractive
           REQUIRED: "1"
@@ -127,6 +133,7 @@ jobs:
       # 这里准备的输入在第二步不变，第二次 prepare 是空操作，不会重复 clone/feeds/defconfig，
       # 也不会因为重新执行 copy_custom_files 而删掉本步骤之后生成的 99-release-info。
       - name: Prepare build workspace
+        id: prepare
         env:
           REQUIRED: "1"
           APK_PRIVATE_KEY_B64: ${{ secrets.APK_PRIVATE_KEY_B64 }}
@@ -134,6 +141,7 @@ jobs:
 
       # 缓存依赖 immortalwrt/ 已存在，必须排在 prepare 之后、下载/编译之前。
       - name: cache
+        id: cache
         if: github.event.inputs.cache != 'false'
         uses: klever1988/cachewrtbuild@main
         with:
@@ -145,9 +153,11 @@ jobs:
       # 不需要把结果镜像回仓库根 files/：随后 'Build firmware' 内部的第二次 prepare 因幂等而空操作，
       # copy_custom_files 不会再执行，生成的文件能留到 make 打进镜像。
       - name: ImmortalWrt AutoUpdate
+        id: release_info
         run: bash scripts/ci/generate-release-info.sh
 
       - name: SSH connection to Actions
+        id: ssh
         uses: P3TERX/ssh2actions@v1.0.0
         if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
         env:
@@ -179,17 +189,20 @@ jobs:
       # 体积报告只是诊断信息：脚本自身不改动工作区，且失败时不能让已编好的产物丢失，
       # 故 continue-on-error，同时把编译成功与否一起作为执行条件。
       - name: Report firmware size
+        id: size
         if: steps.compile.outputs.status == 'success' && !cancelled()
         continue-on-error: true
         run: bash scripts/build/build.sh check
 
       - name: Check space usage
+        id: space
         if: (!cancelled())
         run: df -hT
 
       # 构建脚本的完整日志（scripts/libs/01-shell-logger.sh 默认落到仓库根 logs/）。
       # 放在编译之后：失败时也要拿到日志，故条件用 always() + !cancelled()。
       - name: Upload build logs
+        id: artifact_logs
         uses: actions/upload-artifact@main
         if: always() && !cancelled()
         with:
@@ -199,6 +212,7 @@ jobs:
           retention-days: 7
 
       - name: Upload bin directory
+        id: artifact_bin
         uses: actions/upload-artifact@main
         if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true' && !cancelled()
         with:
@@ -216,6 +230,7 @@ jobs:
           echo "status=success" >> $GITHUB_OUTPUT
 
       - name: Compressed kernel packages
+        id: zip_kernel
         uses: thedoctor0/zip-release@master
         if: steps.environment.outputs.status == 'success' && steps.compile.outputs.status == 'success' && !cancelled()
         with:
@@ -225,6 +240,7 @@ jobs:
           filename: ${{ env.UPLOAD_PATH }}/ImmortalWrt_firmware_kernel_packages${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}.tar.gz
 
       - name: Compressed firmware packages
+        id: zip_packages
         uses: thedoctor0/zip-release@master
         if: steps.environment.outputs.status == 'success' && steps.compile.outputs.status == 'success' && !cancelled()
         with:
@@ -243,6 +259,7 @@ jobs:
           echo "status=success" >> $GITHUB_OUTPUT
 
       - name: Upload firmware directory
+        id: artifact_firmware
         uses: actions/upload-artifact@main
         if: steps.organize.outputs.status == 'success' && !cancelled()
         with:
@@ -279,6 +296,7 @@ jobs:
           echo "status=success" >> "$GITHUB_OUTPUT"
 
       - name: Upload firmware to release
+        id: release
         uses: softprops/action-gh-release@v1
         if: steps.tag.outputs.status == 'success' && !cancelled()
         env:
@@ -291,12 +309,14 @@ jobs:
             keys/public-key.pem
 
       - name: Delete workflow runs
+        id: cleanup_runs
         uses: GitRML/delete-workflow-runs@main
         with:
           retain_days: 7
           keep_minimum_runs: 7
 
       - name: Remove old Releases
+        id: cleanup_releases
         uses: dev-drprasad/delete-older-releases@v0.1.0
         if: env.UPLOAD_RELEASE == 'true' && !cancelled()
         with:
@@ -304,6 +324,83 @@ jobs:
           delete_tags: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 运行总结：把各步骤 outcome 汇总成一段 Markdown 写进 job summary。
+      # if: always() —— 失败/取消时同样要出总结，这正是排障最需要的时刻。
+      # continue-on-error + 脚本恒 0 退出码双保险：摘要绝不能让已经红了或被取消的流水线变得更糟。
+      # 步骤 outcome 只能通过 steps.<id>.outcome 取（.conclusion 需要前置 job 才能拿到等价信息），
+      # 因此上面每个步骤都补了 id；STEP_SEQUENCE 的顺序必须与 steps 顺序一致，脚本按它渲染表格。
+      - name: Run summary
+        if: always()
+        continue-on-error: true
+        env:
+          JOB_STATUS: ${{ job.status }}
+          # 多行块：每行 "KEY|显示名称"，顺序 = 步骤在 job 中的顺序。
+          STEP_SEQUENCE: |
+        hw|Check Server Performance
+        disk|Optimize Disk Space
+        diskdone|Free up disk space complete
+        checkout|Checkout
+        env_setup|Initialization environment
+        deps|Install build dependencies
+        prepare|Prepare build workspace
+        cache|cache
+        release_info|ImmortalWrt AutoUpdate
+        ssh|SSH connection to Actions
+        compile|Build firmware
+        size|Report firmware size
+        space|Check space usage
+        artifact_logs|Upload build logs
+        artifact_bin|Upload bin directory
+        environment|Get environment path
+        zip_kernel|Compressed kernel packages
+        zip_packages|Compressed firmware packages
+        organize|Organize files
+        artifact_firmware|Upload firmware directory
+        cowtransfer|Upload firmware to cowtransfer
+        wetransfer|Upload firmware to WeTransfer
+        tag|Generate release tag
+        release|Upload firmware to release
+        cleanup_runs|Delete workflow runs
+        cleanup_releases|Remove old Releases
+          STEP_hw: ${{ steps.hw.outcome }}
+          STEP_disk: ${{ steps.disk.outcome }}
+          STEP_diskdone: ${{ steps.diskdone.outcome }}
+          STEP_checkout: ${{ steps.checkout.outcome }}
+          STEP_env_setup: ${{ steps.env_setup.outcome }}
+          STEP_deps: ${{ steps.deps.outcome }}
+          STEP_prepare: ${{ steps.prepare.outcome }}
+          STEP_cache: ${{ steps.cache.outcome }}
+          STEP_release_info: ${{ steps.release_info.outcome }}
+          STEP_ssh: ${{ steps.ssh.outcome }}
+          STEP_compile: ${{ steps.compile.outcome }}
+          STEP_size: ${{ steps.size.outcome }}
+          STEP_space: ${{ steps.space.outcome }}
+          STEP_artifact_logs: ${{ steps.artifact_logs.outcome }}
+          STEP_artifact_bin: ${{ steps.artifact_bin.outcome }}
+          STEP_environment: ${{ steps.environment.outcome }}
+          STEP_zip_kernel: ${{ steps.zip_kernel.outcome }}
+          STEP_zip_packages: ${{ steps.zip_packages.outcome }}
+          STEP_organize: ${{ steps.organize.outcome }}
+          STEP_artifact_firmware: ${{ steps.artifact_firmware.outcome }}
+          STEP_cowtransfer: ${{ steps.cowtransfer.outcome }}
+          STEP_wetransfer: ${{ steps.wetransfer.outcome }}
+          STEP_tag: ${{ steps.tag.outcome }}
+          STEP_release: ${{ steps.release.outcome }}
+          STEP_cleanup_runs: ${{ steps.cleanup_runs.outcome }}
+          STEP_cleanup_releases: ${{ steps.cleanup_releases.outcome }}
+          DEVICE_NAME: ${{ env.DEVICE_NAME }}
+          FILE_DATE: ${{ env.FILE_DATE }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+          # artifact 名必须与对应 upload-artifact 的 name 逐字一致，含表达式时原样照抄，
+          # 否则摘要里给出的 artifact 名与实际可下载的名字对不上。
+          ARTIFACT_BIN_NAME: ImmortalWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+          ARTIFACT_FIRMWARE_NAME: ImmortalWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+          ARTIFACT_LOGS_NAME: ImmortalWrt_logs${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+          # 空字符串也是合法值，脚本按"缺失即跳过"处理。
+          CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+          LOG_DIR: logs
+        run: bash scripts/ci/generate-summary.sh build
 
   deploy:
     runs-on: ubuntu-latest

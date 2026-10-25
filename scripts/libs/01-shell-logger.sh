@@ -104,6 +104,12 @@ if [[ -z "${LOG_FILE_PATH:-}" ]]; then
         LOG_FILE_PATH="/tmp/build-$(date +%Y%m%d_%H%M%S)-$$.log"
     fi
 fi
+# 导出日志目录的【绝对路径】，供其它模块（如 compile 的阶段日志）复用，
+# 避免它们各自写相对路径 ${LOG_DIR}/ 而依赖调用者的 CWD。
+# export 而非 readonly：readonly 在重复 source 时会报『只读变量』中断调用者；
+# export 也让 shellcheck 认可『该变量供外部使用』（否则赋值后无人引用会报 SC2034）。
+LOG_DIR_ABS="$(dirname "${LOG_FILE_PATH}")"
+export LOG_DIR_ABS
 unset _LOG_ROOT
 
 # 目录不存在时追加会静默失败（>> 到一个不存在的目录什么都不写、也不报错），

@@ -9,6 +9,12 @@ ORIGINAL_DIR="$(pwd)"
 readonly ORIGINAL_DIR
 trap 'cd "$ORIGINAL_DIR"' EXIT
 
+# 所有 source 与下面的 cd 都按 SCRIPT_DIR 定位，因此必须在第一个 source 之前确定它。
+# 本文件位于 scripts/ci/，CI 是按仓库根下的 `bash scripts/ci/xxx.sh` 调起的（也可从任意 CWD 直接执行），
+# 用 $PWD 或相对路径去解析 ../libs/ 必然失败。
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+
 # 加载顺序即依赖顺序：logger 最先（唯一 log 实现），strictness 次之（调用 log_error）。
 # shellcheck source=scripts/libs/01-shell-logger.sh
 source "${SCRIPT_DIR}/../libs/01-shell-logger.sh"

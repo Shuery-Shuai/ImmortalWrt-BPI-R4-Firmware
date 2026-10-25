@@ -106,7 +106,8 @@ _make_once() {
 # 清理（最后手段）只在三段全失败、且日志显示是工作区/产物问题后才发生一次。
 compile_firmware() {
   local jobs="${COMPILE_JOBS:-$(nproc)}"
-  local logdir="${LOG_DIR:-logs}"
+  # 优先用 logger 导出的绝对目录：本函数可能在任何 CWD 下被调用，相对路径会散落。
+  local logdir="${LOG_DIR_ABS:-${LOG_DIR:-logs}}"
   mkdir -p "${logdir}" || true
   local log1="${logdir}/build-parallel.log"
   local log2="${logdir}/build-single.log"

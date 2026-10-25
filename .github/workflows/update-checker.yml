@@ -45,11 +45,13 @@ jobs:
         key: HEAD-${{ steps.getHash.outputs.commitHash }}
 
     - name: Save New Commit Hash
+      id: saveHash
       if: steps.cacheHash.outputs.cache-hit != 'true'
       run: |
         echo ${{ steps.getHash.outputs.commitHash }} | tee .commitHash
 
     - name: Trigger build
+      id: trigger
       if: steps.cacheHash.outputs.cache-hit != 'true' || github.event.inputs.update == 'true'
       uses: peter-evans/repository-dispatch@v1
       with:
@@ -57,7 +59,35 @@ jobs:
         event-type: Source Code Update
 
     - name: Delete workflow runs
+      id: cleanup_runs
       uses: GitRML/delete-workflow-runs@main
       with:
         retain_days: 7
         keep_minimum_runs: 7
+
+    # 运行总结：调度型流水线同样需要留痕（这次检到哪个 commit、有没有真的触发构建）。
+    # if: always() —— 构建未触发时也要出总结，否则"没触发"会和"没跑"混在一起无从分辨。
+    # continue-on-error 保证摘要问题绝不影响 check job 自身的结论。
+    - name: Run summary
+      if: always()
+      continue-on-error: true
+      env:
+        JOB_STATUS: ${{ job.status }}
+        # 每行 "KEY|显示名称"，顺序 = 步骤顺序；脚本按它渲染，STEP_<KEY> 与 KEY 一一对应。
+        STEP_SEQUENCE: |
+        getHash|Get Commit Hash
+        cacheHash|Compare Commit Hash
+        saveHash|Save New Commit Hash
+        trigger|Trigger build
+        cleanup_runs|Delete workflow runs
+        STEP_getHash: ${{ steps.getHash.outcome }}
+        STEP_cacheHash: ${{ steps.cacheHash.outcome }}
+        STEP_saveHash: ${{ steps.saveHash.outcome }}
+        STEP_trigger: ${{ steps.trigger.outcome }}
+        STEP_cleanup_runs: ${{ steps.cleanup_runs.outcome }}
+        # 本次真实检出的上游 commit，失败时也照样能写进总结。
+        COMMIT_HASH: ${{ steps.getHash.outputs.commitHash }}
+        # 以步骤 outcome 判定是否触发，而不是读 repository-dispatch 的返回值：
+        # trigger 被 skip（缓存命中且非强制）时 outcome 为 skipped，恰好等于"未触发"。
+        BUILD_TRIGGERED: ${{ steps.trigger.outcome == 'success' }}
+      run: bash scripts/ci/generate-summary.sh update-checker
