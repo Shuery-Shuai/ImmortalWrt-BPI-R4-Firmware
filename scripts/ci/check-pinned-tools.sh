@@ -21,7 +21,7 @@
 #     因此本脚本只巡检它的版本号，不维护它的 hash。
 #
 # 本脚本只读：不修改 install-deps.sh / diy-part2.sh、不改任何文件，只把"钉住的 vs 上游的"打出来，
-# 由 .github/workflows/dependency-audit.yml 决定开 issue 还是开 PR。
+# 由 .github/workflows/dependency-auditor.yml 决定开 issue 还是开 PR。
 #
 # 用法：
 #   scripts/ci/check-pinned-tools.sh
@@ -95,7 +95,7 @@ _github_api_get() {
     local url="$1"
     local -a args=(-fsSL --retry 3 --retry-delay 2 --max-time 60
         -H 'Accept: application/vnd.github+json'
-        -H 'User-Agent: dependency-audit')
+        -H 'User-Agent: dependency-auditor')
 
     # 公开仓库匿名也能读，但匿名额度只有 60 次/小时；环境里给了 token 就带上，
     # 免得批量调试或频繁重跑把额度打满后误报成网络故障。

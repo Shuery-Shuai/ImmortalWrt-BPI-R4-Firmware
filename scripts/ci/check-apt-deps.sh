@@ -8,7 +8,7 @@
 # mkisofs -> xorriso），这里校验失败就是最早能拿到的信号。
 #
 # 本脚本只【报告】不改文件：改名映射无法从索引里自动获得，猜一个近似包名只会把清单改坏，
-# 因此失效包名交给 .github/workflows/dependency-audit.yml 开/更新 issue 由人确认。
+# 因此失效包名交给 .github/workflows/dependency-auditor.yml 开/更新 issue 由人确认。
 #
 # 解析规则必须与 scripts/build/steps/install-deps.sh 的 install_dependencies 完全一致
 # （grep -vE '^[[:space:]]*(#|$)' 过滤后每行切词），否则"脚本认为存在的包"与

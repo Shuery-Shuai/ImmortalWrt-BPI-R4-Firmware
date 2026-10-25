@@ -1,11 +1,11 @@
-# Lint 门禁：shellcheck / actionlint / markdownlint 三条并列检查。
+# 语法与规范门禁（syntax-linter）：shellcheck / actionlint / markdownlint 三条并列检查。
 #
 # 为什么 pull_request 不加 paths 过滤：
-#   Dependabot 的 PR 只改 .github/workflows/*.yml，dependency-audit 自动开的 PR 只改
-#   scripts/inputs/diy-part2.sh —— 两者都落在 dependency-audit.yml 的 paths 之外。
+#   Dependabot 的 PR 只改 .github/workflows/*.yml，dependency-auditor 自动开的 PR 只改
+#   scripts/inputs/diy-part2.sh —— 两者都落在 dependency-auditor.yml 的 paths 之外。
 #   一旦按 paths 过滤，恰恰是「自动改 workflow」这类最需要校验的 PR 会绕过门禁，
 #   所以这里必须对全部 PR 无条件生效。三个 job 互不依赖，任一失败即整体红。
-name: Lint
+name: Syntax Linter
 
 on:
   pull_request:

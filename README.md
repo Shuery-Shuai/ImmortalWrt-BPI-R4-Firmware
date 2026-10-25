@@ -4,7 +4,7 @@
 
 [![ImmortalWrt Builder](https://github.com/Shuery-Shuai/ImmortalWrt-BPI-R4-Firmware/actions/workflows/immortalwrt-builder.yml/badge.svg)](https://github.com/Shuery-Shuai/ImmortalWrt-BPI-R4-Firmware/actions/workflows/immortalwrt-builder.yml)
 [![Update Checker](https://github.com/Shuery-Shuai/ImmortalWrt-BPI-R4-Firmware/actions/workflows/update-checker.yml/badge.svg)](https://github.com/Shuery-Shuai/ImmortalWrt-BPI-R4-Firmware/actions/workflows/update-checker.yml)
-[![Dependency Audit](https://github.com/Shuery-Shuai/ImmortalWrt-BPI-R4-Firmware/actions/workflows/dependency-audit.yml/badge.svg)](https://github.com/Shuery-Shuai/ImmortalWrt-BPI-R4-Firmware/actions/workflows/dependency-audit.yml)
+[![Dependency Auditor](https://github.com/Shuery-Shuai/ImmortalWrt-BPI-R4-Firmware/actions/workflows/dependency-auditor.yml/badge.svg)](https://github.com/Shuery-Shuai/ImmortalWrt-BPI-R4-Firmware/actions/workflows/dependency-auditor.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Target](https://img.shields.io/badge/target-mediatek%2Ffilogic-blue)](https://openwrt.org/docs/techref/targets)
 [![Base](https://img.shields.io/badge/base-ImmortalWrt-9cf)](https://github.com/immortalwrt/immortalwrt)
@@ -209,7 +209,8 @@ flowchart TD
 | :---------------------- | :-------------------------------------- | :-------------------------------------------------- |
 | **ImmortalWrt Builder** | 上游更新后 `repository_dispatch` / 手动 | 编译固件、上传 artifact 与 Release、发布 Pages 索引 |
 | **Update Checker**      | 每 3 天定时 / 手动                      | 探测上游新提交，有变化则触发 Builder                |
-| **Dependency Audit**    | 每周定时 / PR 改动依赖清单              | 校验依赖包名在 noble 仍存在、检查手钉工具是否有新版 |
+| **Dependency Auditor**  | 每周定时 / PR 改动依赖清单              | 校验依赖包名在 noble 仍存在、检查手钉工具是否有新版 |
+| **Syntax Linter**       | 每次 PR / push 到 main / 手动           | shellcheck、actionlint、markdownlint 三条并列检查   |
 
 构建产物与日志会分别作为 artifact 上传；日志位于仓库根 `logs/`（已 gitignore）。
 

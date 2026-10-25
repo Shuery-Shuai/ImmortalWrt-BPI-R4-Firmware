@@ -1,5 +1,5 @@
 #
-# 依赖巡检（Dependency Audit）
+# 依赖巡检（Dependency Auditor）
 #
 # 用途（中文说明）：
 #   Dependabot 覆盖不到这个仓库的两类"会漂"的东西，本工作流把它们补上，且【只检测、不擅自改清单】：
@@ -19,7 +19,7 @@
 #
 # 约束：不引入任何新的第三方 action，副作用全部用 run: 里的 gh / git / sed 完成。
 
-name: Dependency Audit
+name: Dependency Auditor
 
 on:
   schedule:
@@ -31,7 +31,7 @@ on:
       - scripts/build/dependencies.txt
       - scripts/ci/check-apt-deps.sh
       - scripts/ci/check-pinned-tools.sh
-      - .github/workflows/dependency-audit.yml
+      - .github/workflows/dependency-auditor.yml
   push:
     branches:
       - main
@@ -39,15 +39,15 @@ on:
       - scripts/build/dependencies.txt
       - scripts/ci/check-apt-deps.sh
       - scripts/ci/check-pinned-tools.sh
-      - .github/workflows/dependency-audit.yml
+      - .github/workflows/dependency-auditor.yml
 
 # 固定标题前缀既是检索键也是幂等键：已有 open issue 就追加评论，不再另开一个。
 # 检索式只用不含特殊字符的关键词：方括号在 GitHub issue 搜索里是语法字符，
 # 写进 --search 可能被当成 range 而搜不到，精确匹配交给 jq 的 startswith 判定。
 # 注意 GitHub 不允许在 env 里引用 secrets.*，token 只在真正需要的那几步单独给。
 env:
-  ISSUE_TITLE: '[dependency-audit] 依赖巡检发现问题'
-  ISSUE_SEARCH: 'in:title dependency-audit'
+  ISSUE_TITLE: '[dependency-auditor] 依赖巡检发现问题'
+  ISSUE_SEARCH: 'in:title dependency-auditor'
   # 分支前缀按工具拆开：每个工具的升级 PR 各占一个命名空间，既好检索，
   # 也让某一种工具的分支清理掉时不会误伤另两种。装配后仍是 "<前缀><新版本>"（见各 PR step）。
   BRANCH_PREFIX_UPX: 'chore/upx-bump-'
@@ -246,12 +246,12 @@ jobs:
             echo "\`\`\`"
             echo
             echo "---"
-            echo "由 .github/workflows/dependency-audit.yml 自动生成。"
+            echo "由 .github/workflows/dependency-auditor.yml 自动生成。"
           } >"${body_file}"
 
           # 幂等：先用 --search 收窄，再按固定标题前缀精确确认，避免搜索分词带来的误命中。
           existing="$(gh issue list --state open --search "${ISSUE_SEARCH}" --json number,title \
-            --jq '[.[] | select(.title | startswith("[dependency-audit]"))][0].number // empty')"
+            --jq '[.[] | select(.title | startswith("[dependency-auditor]"))][0].number // empty')"
           if [[ -n "${existing}" ]]; then
             gh issue comment "${existing}" --body-file "${body_file}"
             echo "已把本次巡检结果追加到既有 issue #${existing}"
@@ -315,7 +315,7 @@ jobs:
 
           pr_body_file="$(mktemp)"
           {
-            echo "由 .github/workflows/dependency-audit.yml 自动生成。"
+            echo "由 .github/workflows/dependency-auditor.yml 自动生成。"
             echo
             echo "上游 release：https://github.com/upx/upx/releases/tag/v${UPX_LATEST}"
             echo "旧值 ${UPX_PINNED} -> 新值 ${UPX_LATEST}"
@@ -392,7 +392,7 @@ jobs:
 
           pr_body_file="$(mktemp)"
           {
-            echo "由 .github/workflows/dependency-audit.yml 自动生成。"
+            echo "由 .github/workflows/dependency-auditor.yml 自动生成。"
             echo
             echo "上游 release：https://github.com/daeuniverse/dae/releases/tag/v${DAE_LATEST}"
             echo "旧值 ${DAE_PINNED} -> 新值 ${DAE_LATEST}"
@@ -458,7 +458,7 @@ jobs:
 
           pr_body_file="$(mktemp)"
           {
-            echo "由 .github/workflows/dependency-audit.yml 自动生成。"
+            echo "由 .github/workflows/dependency-auditor.yml 自动生成。"
             echo
             echo "上游 release：https://github.com/markusressel/fan2go/releases/tag/${FAN2GO_LATEST}"
             echo "旧值 ${FAN2GO_PINNED} -> 新值 ${FAN2GO_LATEST}"

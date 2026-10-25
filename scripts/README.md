@@ -240,12 +240,12 @@ bash scripts/ci/generate-summary.sh [build|update-checker]   # 缺省 build
 
 这个仓库的"依赖"有四类，能力边界各不相同——**不要以为装了机器人就都有人管**：
 
-| 对象                                  | 谁来管                                              | 能自动做什么                                                       |
-| ------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------ |
-| `.github/workflows/` 里的 action 引用 | `.github/dependabot.yml`                            | 开 PR 升版本（major 单独开 PR，minor/patch 归组）                  |
-| `build/dependencies.txt` 的包名       | `ci/check-apt-deps.sh` + `dependency-audit.yml`     | **只开 issue**：包名失效能发现，但改名映射不在任何机器可读数据源里 |
-| `install-deps.sh` 的 `EXTRAS_*` 常量  | `ci/check-pinned-tools.sh` + `dependency-audit.yml` | upx 开 PR；padjffs2 / po2lmo 只开 issue                            |
-| `diy-part2.sh` 的 dae / fan2go 固定行 | `ci/check-pinned-tools.sh` + `dependency-audit.yml` | 两者都开 PR；dae 同时改版本号与 sha256，fan2go 只改版本号          |
+| 对象                                  | 谁来管                                                | 能自动做什么                                                       |
+| ------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------ |
+| `.github/workflows/` 里的 action 引用 | `.github/dependabot.yml`                              | 开 PR 升版本（major 单独开 PR，minor/patch 归组）                  |
+| `build/dependencies.txt` 的包名       | `ci/check-apt-deps.sh` + `dependency-auditor.yml`     | **只开 issue**：包名失效能发现，但改名映射不在任何机器可读数据源里 |
+| `install-deps.sh` 的 `EXTRAS_*` 常量  | `ci/check-pinned-tools.sh` + `dependency-auditor.yml` | upx 开 PR；padjffs2 / po2lmo 只开 issue                            |
+| `diy-part2.sh` 的 dae / fan2go 固定行 | `ci/check-pinned-tools.sh` + `dependency-auditor.yml` | 两者都开 PR；dae 同时改版本号与 sha256，fan2go 只改版本号          |
 
 dae 那一行的 sha256 优先取上游 release 的 `.dgst` 里的 `sha256` 行（只有几十字节）；上游没发 `.dgst` 时
 （实测 v2.1.0 是 404）回退为下载源码包现算。两条路径都必须走通，不能只认 `.dgst`。
@@ -264,7 +264,7 @@ fan2go 的 hash 参数是字面量 `auto`（构建时现算），所以 PR 只�
 `E_USAGE(64)`/`E_NOINPUT(66)` 参数与输入错误。
 workflow 只把 65 当"依赖问题"，其余非零码一律红叉（避免网络故障被静默吞掉）。
 
-`dependency-audit.yml` 的事件分工同样是刻意的：`pull_request` / `push` 只对改动依赖清单的路径跑包名校验并**当门禁**（非零即红叉）；
+`dependency-auditor.yml` 的事件分工同样是刻意的：`pull_request` / `push` 只对改动依赖清单的路径跑包名校验并**当门禁**（非零即红叉）；
 开 issue、开 PR 这些副作用只在 `schedule` / `workflow_dispatch` 下发生，PR 上绝不自动改文件。
 
 ### 错误处理（`libs/02-error-handler.sh`）
