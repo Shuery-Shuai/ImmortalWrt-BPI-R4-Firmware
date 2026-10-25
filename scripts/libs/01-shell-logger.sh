@@ -85,12 +85,36 @@ export COLOR_RESET COLOR_GRAY COLOR_CYAN COLOR_BLUE COLOR_YELLOW COLOR_RED COLOR
 #
 # 全局变量：
 #   LOG_LEVEL      - 当前日志级别，低于此级别的日志将被过滤
-#   LOG_TO_FILE    - 是否同时写入日志文件
-#   LOG_FILE_PATH  - 日志文件的存储路径
+#   LOG_TO_FILE    - 是否同时写入日志文件（默认 true，便于本地与 CI 事后排查）
+#   LOG_FILE_PATH  - 日志文件的存储路径（默认项目根 logs/build-<时间戳>.log）
+#   LOG_DIR        - 日志目录（未显式给 LOG_FILE_PATH 时用它拼文件名）
 #######################################
 : "${LOG_LEVEL:=INFO}"
-: "${LOG_TO_FILE:=false}"
-: "${LOG_FILE_PATH:=/tmp/openwrt_build_$(date +%Y%m%d_%H%M%S).log}"
+: "${LOG_TO_FILE:=true}"
+: "${LOG_DIR:=logs}"
+# 关键：必须用【绝对路径】。各脚本会 cd 到 immortalwrt/ 等子目录，
+# 相对路径 logs/ 会解析到 <当前目录>/logs，造成日志散落各处、甚至目录不存在时写入失败。
+# 项目根 = 本文件所在目录上溯两级（scripts/libs/ -> scripts/ -> 仓库根）。
+_LOG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)"
+if [[ -z "${LOG_FILE_PATH:-}" ]]; then
+    if [[ -n "${_LOG_ROOT}" ]]; then
+        LOG_FILE_PATH="${_LOG_ROOT}/${LOG_DIR}/build-$(date +%Y%m%d_%H%M%S)-$$.log"
+    else
+        # 仓库根不可解析（极少见）时退化到 /tmp，保证仍能记录。
+        LOG_FILE_PATH="/tmp/build-$(date +%Y%m%d_%H%M%S)-$$.log"
+    fi
+fi
+unset _LOG_ROOT
+
+# 目录不存在时追加会静默失败（>> 到一个不存在的目录什么都不写、也不报错），
+# 因此首次写日志前必须先建目录；建不出来则退化为只写 stderr，不能让日志系统本身成为故障源。
+# mkdir -p 幂等且开销极小，因此不做跨调用缓存 —— 缓存变量在子 shell 中赋值不会传回父 shell，
+# 反而会让后续子 shell 误判『已就绪』而跳过建目录。
+_log_file_ready() {
+    mkdir -p "$(dirname "${LOG_FILE_PATH}")" 2>/dev/null || { LOG_TO_FILE=false; return 1; }
+    [[ -e "${LOG_FILE_PATH}" ]] || : >"${LOG_FILE_PATH}" 2>/dev/null || { LOG_TO_FILE=false; return 1; }
+    return 0
+}
 
 #######################################
 # 获取日志级别的显示样式（内部函数）
@@ -253,7 +277,7 @@ log() {
     printf '%b\n' "[${timestamp}] ${color}[${emoji} ${level}]${COLOR_RESET} [${script_name}]${cat_tag} ${message}" >&2
 
     # 输出到文件（不带颜色代码）
-    if [[ "${to_file}" == "true" ]]; then
+    if [[ "${to_file}" == "true" ]] && _log_file_ready; then
         echo "[${timestamp}] [${emoji} ${level}] [${script_name}]${cat_tag_plain} ${message}" >>"${LOG_FILE_PATH}"
     fi
 }

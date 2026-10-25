@@ -187,6 +187,17 @@ jobs:
         if: (!cancelled())
         run: df -hT
 
+      # 构建脚本的完整日志（scripts/libs/01-shell-logger.sh 默认落到仓库根 logs/）。
+      # 放在编译之后：失败时也要拿到日志，故条件用 always() + !cancelled()。
+      - name: Upload build logs
+        uses: actions/upload-artifact@main
+        if: always() && !cancelled()
+        with:
+          name: ImmortalWrt_logs${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+          path: logs/
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Upload bin directory
         uses: actions/upload-artifact@main
         if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true' && !cancelled()
