@@ -1,0 +1,127 @@
+# dependencies.txt — Ubuntu 24.04 (noble) build dependencies for ImmortalWrt
+#
+# 目标运行时 = Ubuntu 24.04 LTS (noble)。CI 与本地统一在这一个发行版上验证，
+# 因此本清单里的每一个包名都必须在 noble 的 main + universe 索引中真实存在。
+#
+# 相对 Ubuntu 22.04 (jammy) 的三处包名变更（jammy 的旧名在 noble 已不存在）：
+#   gnutls-dev  -> libgnutls28-dev
+#   libz-dev    -> zlib1g-dev
+#   mkisofs     -> xorriso（genisoimage 在 noble 仍可用，见下方 rtfw-builder 段）
+#
+# 关于 Clang/LLVM 的版本取舍：
+#   Ubuntu 自带的默认版本与上游要求的 18 冲突，故显式装 18 全套。
+#   jammy 默认 clang 是 14，内核 6.18 起的 BPF 头文件编译要求
+#   "Minimum Clang version: 18.0.0"（早期是 15），会在 build 阶段直接中止；
+#   noble 默认已是 18，但本清单仍显式列出 18 全套，以免依赖 metapackage 漂移。
+#
+# upx 不在本清单中：noble 的 upx-ucl 包版本落后于上游要求，
+# 改由 scripts/build/steps/install-deps.sh 的 install_extra_toolchains() 以官方 release 二进制落地。
+
+# === ImmortalWrt 官方推荐：编译主机基础工具链 ===
+ack
+antlr3
+asciidoc
+autoconf
+automake
+autopoint
+binutils
+bison
+build-essential
+bzip2
+ccache
+cmake
+cpio
+curl
+device-tree-compiler
+ecj
+fastjar
+flex
+gawk
+gettext
+gcc-multilib
+g++-multilib
+git
+gperf
+haveged
+help2man
+intltool
+lib32gcc-s1
+libc6-dev-i386
+libelf-dev
+libglib2.0-dev
+libgmp3-dev
+libgnutls28-dev
+libltdl-dev
+libmpc-dev
+libmpfr-dev
+libncurses-dev
+libpython3-dev
+libreadline-dev
+libssl-dev
+libtool
+libyaml-dev
+lrzsz
+msmtp
+nano
+ninja-build
+p7zip
+p7zip-full
+patch
+pkgconf
+python3
+python3-pip
+python3-ply
+python3-docutils
+python3-pyelftools
+qemu-utils
+re2c
+rsync
+scons
+squashfs-tools
+subversion
+swig
+texinfo
+uglifyjs
+unzip
+vim
+wget
+xmlto
+xorriso
+xxd
+zlib1g-dev
+zstd
+
+# === LLVM/Clang 18 工具链 ===
+# 用于编译内核 BPF 组件（如 bpf-headers）以及部分依赖 LLVM 的包。
+# clang-18/lld-18/llvm-18 提供带版本号的可执行文件，llvm-18-dev 提供头文件与
+# 静态库（个别包在 configure 阶段需要 llvm-config 与 LLVM headers）。
+clang
+lld
+llvm
+clang-18
+lld-18
+llvm-18
+llvm-18-dev
+
+# === 补入 rtfw-builder 已装、而本清单原先缺失的构建工具 ===
+# 逐项来源见 rtfw-builder 的 vendor/init_build_environment.sh（noble 上均存在）。
+#   fakeroot/quilt/sharutils  打包与打补丁流程
+#   genisoimage/xorriso       ISO 镜像生成（mkisofs 在 noble 已无此名）
+#   jq                        脚本内解析 JSON（feeds/release 信息）
+#   irqbalance                构建主机中断分发（与上游 init 保持一致）
+#   python3-cryptography      签名/校验相关脚本
+#   python3-requests          feeds 与镜像下载脚本
+fakeroot
+genisoimage
+quilt
+sharutils
+jq
+irqbalance
+python3-cryptography
+python3-requests
+
+# === 额外补充：FUSE 用户态文件系统开发支持 ===
+# 提供 fuse.h 头文件与 libfuse 链接库，供构建主机编译
+# 依赖 FUSE 的软件包（如 alist、sshfs 等）使用；
+# 缺少时会在编译阶段报 "fuse.h: No such file or directory"。
+libfuse-dev

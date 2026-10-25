@@ -36,6 +36,12 @@
 
 - 针对 BPI-R4 硬件优化的内核配置
 
+## 构建与脚本
+
+- 本地构建：`scripts/build/build.sh <stage>`（stage ∈ deps / prepare / download / compile / check / all）。
+- CI 与本机走同一套脚本，CI 只是把 stage 拆成几个 workflow 步骤。
+- 脚本目录结构、各 stage 含义、目录划分判据等开发者说明，见 [`scripts/README.md`](scripts/README.md)。
+
 ## 固件内置组件
 
 | 分类     | 软件包                | 说明           |
