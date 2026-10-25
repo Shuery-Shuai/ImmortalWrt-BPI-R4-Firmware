@@ -93,10 +93,13 @@ zstd
 
 # === LLVM/Clang 工具链 ===
 # 用于编译内核 BPF 组件（如 bpf-headers）以及部分依赖 LLVM 的包。
-# 只装 metapackage：noble 的默认版本即 18，无需再写 clang-18/lld-18/llvm-18/llvm-18-dev。
+# metapackage 已覆盖 clang-18 / lld-18 / llvm-18（noble 默认版本即 18），故只列这三个；
+# 但 llvm-18-dev【不在任何 metapackage 的依赖里】，必须显式声明 —— BPF 工具链编译需要它，
+# 这也是 rtfw-builder 用 0002-add-llvm-dev.patch 给上游脚本补的那个包。
 clang
 lld
 llvm
+llvm-18-dev
 
 # === 补入 rtfw-builder 已装、而本清单原先缺失的构建工具 ===
 # 逐项来源见 rtfw-builder 的 vendor/init_build_environment.sh（noble 上均存在）。
