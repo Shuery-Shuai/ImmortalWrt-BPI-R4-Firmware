@@ -175,6 +175,7 @@ _parse_first_commit_sha() {
 #       缺段按 0 补齐（5.2 == 5.2.0）。
 #       后缀按 semver 惯例：数字部分相同时 正式版 > 预发布版；预发布之间
 #       alpha < beta < pre < rc；前缀相同再比序号（rc2 > rc1）。
+#       后缀前的 -/_ 分隔符与大小写都做归一，2.0.0-rc1 与 2.0.0RC1 视为同一个预发布。
 #       两侧先由调用方用 _require_version_shape 卡过形状，这里不再兜底解析失败。
 #######################################
 _version_is_newer() {
@@ -205,9 +206,16 @@ _version_is_newer() {
     # 这一最该报警的时机反而被静默漏报。
     cand_core="${candidate%%[A-Za-z]*}"
     pinned_core="${pinned%%[A-Za-z]*}"
+    # 后缀前的分隔符（1.0.0-rc1 / 1.0.0_rc1）不能留在数字部分里：
+    # 留着会拼成 10#0- 这种记号，算术照样炸。
+    cand_core="${cand_core%[-_]}"
+    pinned_core="${pinned_core%[-_]}"
     # 统一小写再比后缀：上游标签大小写不统一时不至于让 RC 与 rc 判成两个不同前缀。
+    # 这里同样把前导分隔符剥掉，1.0.0-rc1 才能与 1.0.0rc1 归一。
     cand_pre="${candidate#"${cand_core}"}"
     pinned_pre="${pinned#"${pinned_core}"}"
+    cand_pre="${cand_pre#[-_]}"
+    pinned_pre="${pinned_pre#[-_]}"
     cand_pre="${cand_pre,,}"
     pinned_pre="${pinned_pre,,}"
 
@@ -235,12 +243,17 @@ _version_is_newer() {
     done
 
     # 数字部分打平后只剩后缀决定：没后缀的一侧是正式版，正式版更高。
-    if [[ -z "${cand_pre}" || -z "${pinned_pre}" ]]; then
-        if [[ -n "${cand_pre}" ]]; then
-            return 1
-        fi
-        # 候选有后缀 / 钉住无后缀 -> 候选更低；两者都无后缀 -> 版本相同，都不算更新。
+    if [[ -z "${cand_pre}" && -z "${pinned_pre}" ]]; then
+        # 两侧都是正式版且数字部分相同 -> 版本相同，不算更新。
+        return 1
+    fi
+    if [[ -z "${cand_pre}" ]]; then
+        # 候选是正式版、钉住还停在预发布 -> 正是"上游从 rc 转正"那一刻，必须判更新。
         return 0
+    fi
+    if [[ -z "${pinned_pre}" ]]; then
+        # 反过来：候选还是预发布、钉住已是正式版 -> 不该误报。
+        return 1
     fi
 
     # 先按 semver 惯例排字母前缀；未列入的前缀（如 dev / snapshot）排在 rc 之后，
@@ -442,8 +455,9 @@ _require_version_shape() {
     local value="$1"
     local name="$2"
 
-    # 允许 2.1.1、2.0.0rc1、5.2.1；数字段只收数字与点，后缀只收字母加可选序号。
-    if ! [[ "${value}" =~ ^[0-9]+(\.[0-9]+)*([A-Za-z]+[0-9]*)?$ ]]; then
+    # 允许 2.1.1、2.0.0rc1、1.0.0-rc1、5.2.1：数字段只收数字与点，
+    # 后缀只收字母加可选序号，前面的 -/_ 分隔符可有可无（上游两种写法都用过）。
+    if ! [[ "${value}" =~ ^[0-9]+(\.[0-9]+)*([-_]?[A-Za-z]+[0-9]*)?$ ]]; then
         log_error "${name} 的版本串形状无法比较（期望 <数字>.<数字>[...][rc1] 之类）：'${value}'"
         return 1
     fi
