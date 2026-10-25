@@ -1,4 +1,4 @@
-# Dependabot 自动合并（dependabot-auto-merge）：只对 minor / patch 升级武装 auto-merge。
+# Dependabot 自动合并（dependabot-merger）：只对 minor / patch 升级武装 auto-merge。
 #
 # 为什么需要这个文件：Dependabot 自身【没有】自动合并的配置项（dependabot-options 参考里查不到），
 # 官方做法是仓库开 auto-merge + 分支保护配必需检查 + 由 workflow 调 gh pr merge --auto。
@@ -12,7 +12,7 @@
 # 所以 0.1.0 -> 0.3.4 这种 minor 位跳跃在处理 0.x 时必须按 major 对待。
 # 本仓库正好有实例：dev-drprasad/delete-older-releases 0.1.0 -> 0.3.4 是「删旧 Release 与 tag」
 # 的破坏性动作（delete_tags: true），自动合进来自动删错东西的代价远高于手动点一下。
-name: Dependabot Auto Merge
+name: Dependabot Merger
 
 on:
   pull_request:
@@ -25,8 +25,8 @@ permissions:
   pull-requests: write
 
 jobs:
-  auto-merge:
-    name: auto-merge
+  merger:
+    name: merger
     runs-on: ubuntu-24.04
     # 只处理 Dependabot 自己开的 PR；本仓库其余 PR（含 dependency-auditor 自建的）一律人工合并。
     if: github.event.pull_request.user.login == 'dependabot[bot]'
