@@ -59,7 +59,8 @@
 | 系统管理 | luci-app-diskman              | 磁盘管理                |
 |          | luci-app-easyupdate           | 系统简易更新            |
 |          | luci-app-rtfwupgrade          | 路由器固件更新          |
-| 系统工具 | fan2go                        | 风扇控制守护            |
+| 系统工具 | bpi-r4-pwm-fan               | BPI-R4 PWM 风扇调速守护 |
+|          | fan2go                        | 风扇控制守护            |
 |          | luci-app-fancontrol           | 简易风扇控制            |
 |          | luci-app-fanxpert             | 风扇控制                |
 |          | zram-swap                     | 内存压缩交换            |
