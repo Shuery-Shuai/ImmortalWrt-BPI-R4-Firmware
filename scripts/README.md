@@ -53,6 +53,7 @@ scripts/
 ├── ci/                      仅 CI 用的产物生成脚本，本地日常构建无需关心
 │   ├── generate-release-info.sh   生成 99-release-info 与 RELEASE_TAG
 │   ├── generate-release-notes.sh  生成 release.txt
+│   ├── generate-summary.sh        运行总结 → $GITHUB_STEP_SUMMARY
 │   └── generate-index.sh    生成 Pages 索引页
 └── inputs/                  构建输入：被复制进 immortalwrt/ 后在上游源码树内执行
     ├── diy-part1.sh
@@ -91,6 +92,63 @@ scripts/
 >
 > 复制到 `immortalwrt/` 后，`libs/`、`utils/`、`mods/` 与 `diy-part*.sh` 必须**保持同层**：DIY 脚本用 `${SCRIPT_DIR}/libs/load.sh` 定位依赖。
 > 它们会被复制到 `immortalwrt/` 根的同一层，因此迁移目录时只能改仓库侧位置，不能改变复制后的相对布局。
+
+### CI 运行总结（`ci/generate-summary.sh`）
+
+一次运行的结论散落在各步骤日志里，想知道为什么红要逐个点开。`generate-summary.sh` 把它压成一段 Markdown 写进
+`$GITHUB_STEP_SUMMARY`，运行页顶部直接能看到步骤状态、产物和关键错误行。
+
+```sh
+bash scripts/ci/generate-summary.sh [build|update-checker]   # 缺省 build
+```
+
+| 项 | 约定 |
+| ---- | ---- |
+| 输出 | 设了 `GITHUB_STEP_SUMMARY` 就追加写入该文件，否则打印到 stdout（本地预览用） |
+| 退出码 | 恒为 `0`——摘要自身绝不能让流水线变红 |
+| 参数 | `build` / `update-checker`，决定标题与适用章节；缺省 `build` |
+
+**入参全是环境变量，缺哪个就跳过对应小节**，所以本地不设任何变量也能跑出可用的一段 Markdown。
+
+| 变量 | 用途 |
+| ---- | ---- |
+| `JOB_STATUS` | job 总状态（`${{ job.status }}`），表头成败的依据 |
+| `STEP_SEQUENCE` | 多行，按显示顺序每行 `KEY\|显示名称`，决定步骤状态表的行序与显示名 |
+| `STEP_<KEY>` | 该步骤的 outcome（`success` / `failure` / `cancelled` / `skipped` / 空） |
+| `DEVICE_NAME` / `FILE_DATE` / `RELEASE_TAG` | 元信息：机型、文件日期、发布 tag |
+| `ARTIFACT_BIN_NAME` / `ARTIFACT_FIRMWARE_NAME` / `ARTIFACT_LOGS_NAME` | 产物名 |
+| `CACHE_HIT` | ccache / 构建缓存是否命中（`true` / `false`） |
+| `LOG_DIR` | 日志目录，相对仓库根，缺省 `logs` |
+| `COMMIT_HASH` / `BUILD_TRIGGERED` | `update-checker` 专用：检出的上游 commit、是否触发了构建 |
+| 标准 `GITHUB_*` | `GITHUB_REPOSITORY` / `_SERVER_URL` / `_RUN_ID` / `_RUN_ATTEMPT` / `_WORKFLOW` / `_REF_NAME` / `_EVENT_NAME` / `_ACTOR` / `_JOB`、`RUNNER_OS`：链接、run 号、触发方式等 |
+
+摘要按下面几块拼装，每一块都只在自己的输入存在时才出现：
+
+| 小节 | 内容 | 依据 |
+| ---- | ---- | ---- |
+| 结论 + 运行链接 | 成功 / 失败、`server/repo/actions/runs/<id>` | `JOB_STATUS`、`GITHUB_REPOSITORY`、`GITHUB_RUN_ID` |
+| 运行信息 | workflow、job、事件、分支、提交、触发人、Runner OS、run attempt | 标准 `GITHUB_*` + `git rev-parse` |
+| 上游更新 | 检出的上游 commit、是否触发构建（仅 `update-checker`） | `COMMIT_HASH`、`BUILD_TRIGGERED` |
+| 步骤状态 | 按 `STEP_SEQUENCE` 逐行列出 outcome，带结果徽标 | `STEP_SEQUENCE` + `STEP_<KEY>` |
+| 构建产物（仅 `build`） | 设备、文件日期、Release tag、缓存命中、artifact 名、固件体积 | `DEVICE_NAME` / `FILE_DATE` / `RELEASE_TAG` / `CACHE_HIT` / `ARTIFACT_*_NAME` |
+| 耗时与缓存 | 取 `LOG_DIR` 最新一份日志的首尾时间戳，算时长；有 ccache 时附命中率 | `LOG_DIR` |
+| 失败详情 | 从最新日志末尾筛出关键错误行，折叠在 `<details>` 里 | job 失败时的 `LOG_DIR` |
+
+失败摘录是「诊断辅助」而非「原因判定」：它扫描的是最新一份日志的末尾若干行并按关键字过滤，
+真正的原因仍以该日志为准，摘要只负责把人带到那一行。
+
+两种模式各有取舍：`update-checker` 那个 job 拿不到固件，所以不渲染产物与体积小节（渲染了只会骗人）；
+反过来「上游更新」小节只在 `update-checker` 出现。
+
+> [!IMPORTANT]
+>
+> 两个 workflow 都以 `if: always()` + `continue-on-error: true` 调它：摘要是「事后报告」，编译失败或被取消时它更要跑到，
+> 而它自己挂掉也绝不能给已经失败的 job 再补一刀。脚本内置的「恒 0」是第二道保险，两道都在。
+
+> [!NOTE]
+>
+> `STEP_SEQUENCE` 给顺序和显示名，`STEP_<KEY>` 给状态值，是同一份数据的两种视图——新增步骤时两处都要登记。
+> 本地预览：`bash scripts/ci/generate-summary.sh`（不设 `GITHUB_STEP_SUMMARY` 即打印到终端）。
 
 ### 错误处理（`libs/02-error-handler.sh`）
 

@@ -60,7 +60,7 @@ jobs:
 
     - name: Delete workflow runs
       id: cleanup_runs
-      uses: GitRML/delete-workflow-runs@main
+      uses: GitRML/delete-workflow-runs@v1.2
       with:
         retain_days: 7
         keep_minimum_runs: 7
@@ -75,11 +75,11 @@ jobs:
         JOB_STATUS: ${{ job.status }}
         # 每行 "KEY|显示名称"，顺序 = 步骤顺序；脚本按它渲染，STEP_<KEY> 与 KEY 一一对应。
         STEP_SEQUENCE: |
-        getHash|Get Commit Hash
-        cacheHash|Compare Commit Hash
-        saveHash|Save New Commit Hash
-        trigger|Trigger build
-        cleanup_runs|Delete workflow runs
+          getHash|Get Commit Hash
+          cacheHash|Compare Commit Hash
+          saveHash|Save New Commit Hash
+          trigger|Trigger build
+          cleanup_runs|Delete workflow runs
         STEP_getHash: ${{ steps.getHash.outcome }}
         STEP_cacheHash: ${{ steps.cacheHash.outcome }}
         STEP_saveHash: ${{ steps.saveHash.outcome }}

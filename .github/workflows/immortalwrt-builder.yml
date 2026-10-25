@@ -95,7 +95,7 @@ jobs:
 
       - name: Checkout
         id: checkout
-        uses: actions/checkout@main
+        uses: actions/checkout@v7
 
       # 只保留 CI 独占的部分：清理 runner 预装的重型运行时、设置 runner 时区、修正工作区属主。
       # 依赖安装已收敛到 scripts/build/build.sh deps（唯一会调用 apt 的阶段）；
@@ -140,6 +140,8 @@ jobs:
         run: bash scripts/build/build.sh prepare
 
       # 缓存依赖 immortalwrt/ 已存在，必须排在 prepare 之后、下载/编译之前。
+      # klever1988/cachewrtbuild 没有发布过任何 tag（gh api repos/klever1988/cachewrtbuild/tags 返回 0 条），
+      # 无法钉版本，也不受 Dependabot 管理，只能继续跟 main。
       - name: cache
         id: cache
         if: github.event.inputs.cache != 'false'
@@ -203,7 +205,7 @@ jobs:
       # 放在编译之后：失败时也要拿到日志，故条件用 always() + !cancelled()。
       - name: Upload build logs
         id: artifact_logs
-        uses: actions/upload-artifact@main
+        uses: actions/upload-artifact@v7
         if: always() && !cancelled()
         with:
           name: ImmortalWrt_logs${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
@@ -213,7 +215,7 @@ jobs:
 
       - name: Upload bin directory
         id: artifact_bin
-        uses: actions/upload-artifact@main
+        uses: actions/upload-artifact@v7
         if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true' && !cancelled()
         with:
           name: ImmortalWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
@@ -231,7 +233,7 @@ jobs:
 
       - name: Compressed kernel packages
         id: zip_kernel
-        uses: thedoctor0/zip-release@master
+        uses: thedoctor0/zip-release@0.7.6
         if: steps.environment.outputs.status == 'success' && steps.compile.outputs.status == 'success' && !cancelled()
         with:
           type: tar
@@ -241,7 +243,7 @@ jobs:
 
       - name: Compressed firmware packages
         id: zip_packages
-        uses: thedoctor0/zip-release@master
+        uses: thedoctor0/zip-release@0.7.6
         if: steps.environment.outputs.status == 'success' && steps.compile.outputs.status == 'success' && !cancelled()
         with:
           type: tar
@@ -260,7 +262,7 @@ jobs:
 
       - name: Upload firmware directory
         id: artifact_firmware
-        uses: actions/upload-artifact@main
+        uses: actions/upload-artifact@v7
         if: steps.organize.outputs.status == 'success' && !cancelled()
         with:
           name: ImmortalWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
@@ -310,7 +312,7 @@ jobs:
 
       - name: Delete workflow runs
         id: cleanup_runs
-        uses: GitRML/delete-workflow-runs@main
+        uses: GitRML/delete-workflow-runs@v1.2
         with:
           retain_days: 7
           keep_minimum_runs: 7
@@ -337,32 +339,32 @@ jobs:
           JOB_STATUS: ${{ job.status }}
           # 多行块：每行 "KEY|显示名称"，顺序 = 步骤在 job 中的顺序。
           STEP_SEQUENCE: |
-        hw|Check Server Performance
-        disk|Optimize Disk Space
-        diskdone|Free up disk space complete
-        checkout|Checkout
-        env_setup|Initialization environment
-        deps|Install build dependencies
-        prepare|Prepare build workspace
-        cache|cache
-        release_info|ImmortalWrt AutoUpdate
-        ssh|SSH connection to Actions
-        compile|Build firmware
-        size|Report firmware size
-        space|Check space usage
-        artifact_logs|Upload build logs
-        artifact_bin|Upload bin directory
-        environment|Get environment path
-        zip_kernel|Compressed kernel packages
-        zip_packages|Compressed firmware packages
-        organize|Organize files
-        artifact_firmware|Upload firmware directory
-        cowtransfer|Upload firmware to cowtransfer
-        wetransfer|Upload firmware to WeTransfer
-        tag|Generate release tag
-        release|Upload firmware to release
-        cleanup_runs|Delete workflow runs
-        cleanup_releases|Remove old Releases
+            hw|Check Server Performance
+            disk|Optimize Disk Space
+            diskdone|Free up disk space complete
+            checkout|Checkout
+            env_setup|Initialization environment
+            deps|Install build dependencies
+            prepare|Prepare build workspace
+            cache|cache
+            release_info|ImmortalWrt AutoUpdate
+            ssh|SSH connection to Actions
+            compile|Build firmware
+            size|Report firmware size
+            space|Check space usage
+            artifact_logs|Upload build logs
+            artifact_bin|Upload bin directory
+            environment|Get environment path
+            zip_kernel|Compressed kernel packages
+            zip_packages|Compressed firmware packages
+            organize|Organize files
+            artifact_firmware|Upload firmware directory
+            cowtransfer|Upload firmware to cowtransfer
+            wetransfer|Upload firmware to WeTransfer
+            tag|Generate release tag
+            release|Upload firmware to release
+            cleanup_runs|Delete workflow runs
+            cleanup_releases|Remove old Releases
           STEP_hw: ${{ steps.hw.outcome }}
           STEP_disk: ${{ steps.disk.outcome }}
           STEP_diskdone: ${{ steps.diskdone.outcome }}
