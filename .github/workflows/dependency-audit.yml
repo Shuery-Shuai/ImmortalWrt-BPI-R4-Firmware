@@ -1,0 +1,298 @@
+#
+# 依赖巡检（Dependency Audit）
+#
+# 用途（中文说明）：
+#   Dependabot 覆盖不到这个仓库的两类"会漂"的东西，本工作流把它们补上，且【只检测、不擅自改清单】：
+#   1) scripts/build/dependencies.txt 的 85 个裸包名 —— noble 改包名时（历史上 gnutls-dev ->
+#      libgnutls28-dev、mkisofs -> xorriso）能报警。改名映射拿不到，所以只开/更新 issue，由人确认。
+#   2) scripts/build/steps/install-deps.sh 里三个手钉常量 —— upx 有新 release 就开 PR（版本号可直接替换）；
+#      padjffs2 / po2lmo 钉的是 commit，钉死就是为了防上游 main 漂移，因此只开 issue，绝不自动升级。
+#
+# 触发与职责划分：
+#   · schedule / workflow_dispatch：定时巡检（北京时间周一 04:00），全量跑，结果汇成 issue / PR。
+#   · pull_request / push(main) 且只改依赖清单或本工作流的文件：只跑 apt 包名校验（apt-names），
+#     且【不吞错】——脚本非零即 job 失败，即门禁红叉。别的 PR 不触发本工作流。
+#
+# 约束：不引入任何新的第三方 action，副作用全部用 run: 里的 gh / git / sed 完成。
+
+name: Dependency Audit
+
+on:
+  schedule:
+    # GitHub cron 用 UTC。北京时间周一 04:00 = UTC 周日 20:00。
+    - cron: '0 20 * * 0'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - scripts/build/dependencies.txt
+      - scripts/ci/check-apt-deps.sh
+      - scripts/ci/check-pinned-tools.sh
+      - .github/workflows/dependency-audit.yml
+  push:
+    branches:
+      - main
+    paths:
+      - scripts/build/dependencies.txt
+      - scripts/ci/check-apt-deps.sh
+      - scripts/ci/check-pinned-tools.sh
+      - .github/workflows/dependency-audit.yml
+
+# 固定标题前缀既是检索键也是幂等键：已有 open issue 就追加评论，不再另开一个。
+# 检索式只用不含特殊字符的关键词：方括号在 GitHub issue 搜索里是语法字符，
+# 写进 --search 可能被当成 range 而搜不到，精确匹配交给 jq 的 startswith 判定。
+# 注意 GitHub 不允许在 env 里引用 secrets.*，token 只在真正需要的那几步单独给。
+env:
+  ISSUE_TITLE: '[dependency-audit] 依赖巡检发现问题'
+  ISSUE_SEARCH: 'in:title dependency-audit'
+  BRANCH_PREFIX: 'chore/upx-bump-'
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # job 1：apt 包名存活校验
+  #   PR / push 事件下是本工作流的门禁：脚本非零退出即 job 失败（不 continue-on-error）。
+  #   schedule / workflow_dispatch 下不因"有缺失"失败，把 MISSING 行收集起来交给报告 job。
+  # ---------------------------------------------------------------------------
+  apt-names:
+    name: Check apt package names (noble)
+    runs-on: ubuntu-latest
+    outputs:
+      missing: ${{ steps.audit.outputs.missing }}
+      missing_count: ${{ steps.audit.outputs.missing_count }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Check apt package names against noble indexes
+        id: audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          output_file="$(mktemp)"
+          rc=0
+          scripts/ci/check-apt-deps.sh >"${output_file}" 2>&1 || rc=$?
+          cat "${output_file}"
+          # 契约输出：MISSING <name> 每行一个失效包名；all N packages present 表示全在。
+          missing="$(grep -E '^MISSING ' "${output_file}" | sed -e 's/^MISSING //' || true)"
+          missing_count="$(grep -c -E '^MISSING ' "${output_file}" || true)"
+          rm -f "${output_file}"
+
+          echo "missing_count=${missing_count}" >>"${GITHUB_OUTPUT}"
+          {
+            echo 'missing<<__APT_MISSING_EOF__'
+            printf '%s\n' "${missing}"
+            echo '__APT_MISSING_EOF__'
+          } >>"${GITHUB_OUTPUT}"
+
+          if [[ "${rc}" -eq 0 ]]; then
+            echo "apt 包名校验通过。"
+            exit 0
+          fi
+          # 65 = E_DATAERR：确有包名查不到，属于依赖清单本身的问题，不是网络问题。
+          if [[ "${rc}" -eq 65 ]]; then
+            if [[ "${GITHUB_EVENT_NAME}" == "pull_request" || "${GITHUB_EVENT_NAME}" == "push" ]]; then
+              echo "::error::依赖清单里有 ${missing_count} 个包名在 noble 索引中不存在（门禁失败）"
+              exit 1
+            fi
+            echo "::warning::依赖清单里有 ${missing_count} 个包名在 noble 索引中不存在，交给报告 job 开/更新 issue"
+            exit 0
+          fi
+          # 其余非零码（64/66/69）是网络、临时目录或参数问题，与依赖是否失效无关：
+          # 定时巡检下不算"发现依赖问题"，但仍要让整条巡检可见地失败，避免静默漏报。
+          echo "::error::check-apt-deps.sh 异常退出（rc=${rc}，非依赖失效，通常是网络或输入问题）"
+          exit 1
+
+  # ---------------------------------------------------------------------------
+  # job 2：手钉常量巡检（仅定时 / 手动触发）
+  #   输出经 GITHUB_OUTPUT 传给报告 job（脚本原生支持，这里不需要再解析）。
+  # ---------------------------------------------------------------------------
+  pinned-tools:
+    name: Check pinned tool constants
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      upx_pinned: ${{ steps.audit.outputs.upx_pinned }}
+      upx_latest: ${{ steps.audit.outputs.upx_latest }}
+      upx_outdated: ${{ steps.audit.outputs.upx_outdated }}
+      padjffs2_pinned: ${{ steps.audit.outputs.padjffs2_pinned }}
+      padjffs2_upstream: ${{ steps.audit.outputs.padjffs2_upstream }}
+      padjffs2_outdated: ${{ steps.audit.outputs.padjffs2_outdated }}
+      po2lmo_pinned: ${{ steps.audit.outputs.po2lmo_pinned }}
+      po2lmo_upstream: ${{ steps.audit.outputs.po2lmo_upstream }}
+      po2lmo_outdated: ${{ steps.audit.outputs.po2lmo_outdated }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Query upstream versions of pinned tools
+        id: audit
+        shell: bash
+        env:
+          # 带 token 走鉴权请求：匿名额度只有 60 次/小时，同一 runner 出口 IP 打满后会误报成网络失败。
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          scripts/ci/check-pinned-tools.sh
+
+  # ---------------------------------------------------------------------------
+  # job 3：报告与副作用（仅定时 / 手动触发）——全部用 run: 里的 gh / git / sed，不起第三方 action
+  #   · apt 有缺失 或 有 commit 漂移 -> 幂等开/更新 issue（不自动改依赖清单 / 不改 commit）
+  #   · upx 有新版本 -> 起分支 + sed 改常量 + 开 PR（唯一允许的自动改动）
+  # ---------------------------------------------------------------------------
+  report:
+    name: Report findings and open issue / PR
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: [apt-names, pinned-tools]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Open or update the dependency audit issue
+        if: needs.apt-names.outputs.missing_count != '0' || needs.pinned-tools.outputs.padjffs2_outdated == 'true' || needs.pinned-tools.outputs.po2lmo_outdated == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MISSING: ${{ needs.apt-names.outputs.missing }}
+          MISSING_COUNT: ${{ needs.apt-names.outputs.missing_count }}
+          UPX_PINNED: ${{ needs.pinned-tools.outputs.upx_pinned }}
+          UPX_LATEST: ${{ needs.pinned-tools.outputs.upx_latest }}
+          UPX_OUTDATED: ${{ needs.pinned-tools.outputs.upx_outdated }}
+          PADJFFS2_PINNED: ${{ needs.pinned-tools.outputs.padjffs2_pinned }}
+          PADJFFS2_UPSTREAM: ${{ needs.pinned-tools.outputs.padjffs2_upstream }}
+          PADJFFS2_OUTDATED: ${{ needs.pinned-tools.outputs.padjffs2_outdated }}
+          PO2LMO_PINNED: ${{ needs.pinned-tools.outputs.po2lmo_pinned }}
+          PO2LMO_UPSTREAM: ${{ needs.pinned-tools.outputs.po2lmo_upstream }}
+          PO2LMO_OUTDATED: ${{ needs.pinned-tools.outputs.po2lmo_outdated }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          body_file="$(mktemp)"
+          {
+            echo "巡检时间（UTC）：$(date -u '+%Y-%m-%d %H:%M:%S')"
+            echo "触发方式：${GITHUB_EVENT_NAME}"
+            echo "运行记录：${RUN_URL}"
+            echo
+            if [[ "${MISSING_COUNT}" != "0" ]]; then
+              echo "## apt 包名失效（共 ${MISSING_COUNT} 个）"
+              echo
+              echo "以下包名在 noble 的 main / universe / noble-updates 索引中查不到。"
+              echo "本工作流只报告、不擅自改清单：索引里不会留下改名映射，"
+              echo "替换用的新包名需要人确认后再改 scripts/build/dependencies.txt。"
+              echo
+              echo "\`\`\`"
+              printf '%s\n' "${MISSING}"
+              echo "\`\`\`"
+              echo
+            fi
+            if [[ "${PADJFFS2_OUTDATED}" == "true" || "${PO2LMO_OUTDATED}" == "true" ]]; then
+              echo "## 手钉 commit 已漂移"
+              echo
+              echo "这两个 commit 钉死就是为了防上游 main 漂移，因此只报告、不自动升级；"
+              echo "确认上游改动可以接受后，手动更新 scripts/build/steps/install-deps.sh 里的常量。"
+              echo
+              echo "| 工具 | 仓库内钉住 | 上游 HEAD 首条 commit | 是否漂移 |"
+              echo "| --- | --- | --- | --- |"
+              echo "| padjffs2 (openwrt/openwrt) | ${PADJFFS2_PINNED} | ${PADJFFS2_UPSTREAM} | ${PADJFFS2_OUTDATED} |"
+              echo "| po2lmo (openwrt/luci) | ${PO2LMO_PINNED} | ${PO2LMO_UPSTREAM} | ${PO2LMO_OUTDATED} |"
+              echo
+            fi
+            echo "## check-pinned-tools.sh 原始输出"
+            echo
+            echo "\`\`\`"
+            echo "upx_pinned=${UPX_PINNED}"
+            echo "upx_latest=${UPX_LATEST}"
+            echo "upx_outdated=${UPX_OUTDATED}"
+            echo "padjffs2_pinned=${PADJFFS2_PINNED}"
+            echo "padjffs2_upstream=${PADJFFS2_UPSTREAM}"
+            echo "padjffs2_outdated=${PADJFFS2_OUTDATED}"
+            echo "po2lmo_pinned=${PO2LMO_PINNED}"
+            echo "po2lmo_upstream=${PO2LMO_UPSTREAM}"
+            echo "po2lmo_outdated=${PO2LMO_OUTDATED}"
+            echo "\`\`\`"
+            echo
+            echo "---"
+            echo "由 .github/workflows/dependency-audit.yml 自动生成。"
+          } >"${body_file}"
+
+          # 幂等：先用 --search 收窄，再按固定标题前缀精确确认，避免搜索分词带来的误命中。
+          existing="$(gh issue list --state open --search "${ISSUE_SEARCH}" --json number,title \
+            --jq '[.[] | select(.title | startswith("[dependency-audit]"))][0].number // empty')"
+          if [[ -n "${existing}" ]]; then
+            gh issue comment "${existing}" --body-file "${body_file}"
+            echo "已把本次巡检结果追加到既有 issue #${existing}"
+          else
+            gh issue create --title "${ISSUE_TITLE}" --body-file "${body_file}"
+            echo "已新建依赖巡检 issue"
+          fi
+          rm -f "${body_file}"
+
+      - name: Open a PR to bump upx when a newer release exists
+        if: needs.pinned-tools.outputs.upx_outdated == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          UPX_PINNED: ${{ needs.pinned-tools.outputs.upx_pinned }}
+          UPX_LATEST: ${{ needs.pinned-tools.outputs.upx_latest }}
+        run: |
+          set -euo pipefail
+          branch="${BRANCH_PREFIX}${UPX_LATEST}"
+          file="scripts/build/steps/install-deps.sh"
+          commit_msg="🐳 chore(deps): 升级 upx 到 ${UPX_LATEST}"
+
+          # 有无分支以远端为准：上一次跑到一半、或 PR 开完后分支仍在，都要跳过，
+          # 否则会重复开 PR 或用同名分支强推覆盖已评审的改动。
+          if git ls-remote --exit-code --heads origin "${branch}" >/dev/null 2>&1; then
+            echo "分支 ${branch} 已存在于远端，跳过（避免重复 PR）。"
+            exit 0
+          fi
+          if [[ -n "$(gh pr list --head "${branch}" --state all --json number --jq '.[0].number // empty')" ]]; then
+            echo "分支 ${branch} 已有 PR，跳过。"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git switch -c "${branch}"
+
+          # 只改这一行常量：下载 URL 由变量拼接（"v${version}"），改版本号就够了，不动其它任何内容。
+          # 行首缩进交给捕获组原样保留，避免把 if 块里那两格缩进吃掉。
+          sed -i "s|^\([[:space:]]*readonly EXTRAS_UPX_VERSION=\).*|\1\"${UPX_LATEST}\"|" "${file}"
+          if ! grep -qF "readonly EXTRAS_UPX_VERSION=\"${UPX_LATEST}\"" "${file}"; then
+            echo "::error::未能改写 ${file} 里的 EXTRAS_UPX_VERSION，已中止（未推送）"
+            exit 1
+          fi
+          # 二次确认只替了 1 行：--numstat 输出是「删除行数<TAB>新增行数<TAB>路径」，
+          # 单行替换正好是 1/1。任一不是 1 就说明表达式匹配过宽（可能删掉整块或改到别处），
+          # 宁可失败也不推一个语义不明的 PR。
+          # 先赋空值再 read：diff 为空时 read 会在 EOF 返回非零并不赋值，set -u 下直接展开会中断。
+          removed_lines=""
+          added_lines=""
+          read -r removed_lines added_lines _rest < <(git diff --numstat -- "${file}") || true
+          if [[ "${removed_lines}" != "1" || "${added_lines}" != "1" ]]; then
+            echo "::error::本次改动 删 ${removed_lines} / 增 ${added_lines} 行（期望 1/1），已中止"
+            exit 1
+          fi
+
+          git add "${file}"
+          git commit -m "${commit_msg}"
+          git push origin "${branch}"
+
+          pr_body_file="$(mktemp)"
+          {
+            echo "由 .github/workflows/dependency-audit.yml 自动生成。"
+            echo
+            echo "上游 release：https://github.com/upx/upx/releases/tag/v${UPX_LATEST}"
+            echo "旧值 ${UPX_PINNED} -> 新值 ${UPX_LATEST}"
+            echo
+            echo "只改了 scripts/build/steps/install-deps.sh 里的一行常量；"
+            echo "下载 URL 由 EXTRAS_UPX_VERSION 拼接，无需同步其它位置。"
+          } >"${pr_body_file}"
+          gh pr create --head "${branch}" --base "${DEFAULT_BRANCH}" \
+            --title "${commit_msg}" --body-file "${pr_body_file}"
+          rm -f "${pr_body_file}"

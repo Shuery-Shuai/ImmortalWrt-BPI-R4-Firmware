@@ -1,0 +1,32 @@
+# 让 Dependabot 接管 GitHub Actions 的版本更新。
+#
+# 两条既有的 pin 理由，改这里的策略前先读：
+# 1. 避免构建环境无声漂移：action 若跟着 main/master 走，上游一次推送就可能让固件构建
+#    在不相关的提交上突然变红，问题还定位不到本仓库。
+# 2. 已刻意不用浮动标签：固件构建 job 固定 ubuntu-24.04 而非 ubuntu-latest，同理 action 也要钉版本。
+#
+# 例外：klever1988/cachewrtbuild 从未打过 tag（该仓库 tags 为 0 条），没法钉版本，
+# 只能继续跟 main，也不在本文件的管理范围内。
+#
+# major 升级不归入分组，Dependabot 会单独开 PR，方便逐个人工确认破坏性变更。
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+      timezone: "Asia/Shanghai"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "🐳 chore(deps)"
