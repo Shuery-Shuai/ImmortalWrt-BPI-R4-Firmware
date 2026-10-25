@@ -7,6 +7,10 @@
 #      libgnutls28-dev、mkisofs -> xorriso）能报警。改名映射拿不到，所以只开/更新 issue，由人确认。
 #   2) scripts/build/steps/install-deps.sh 里三个手钉常量 —— upx 有新 release 就开 PR（版本号可直接替换）；
 #      padjffs2 / po2lmo 钉的是 commit，钉死就是为了防上游 main 漂移，因此只开 issue，绝不自动升级。
+#   3) scripts/inputs/diy-part2.sh 里两处固定项 —— dae 与 fan2go 有新 release 就开 PR：
+#      dae 的版本号与源码包 sha256 一起钉死，两个 token 必须在同一行里同时改；
+#      fan2go 的 hash 保持字面量 auto（构建时现算），PR 只动版本号一个 token。
+#      这两项与 upx 同属"钉版本号"，所以走 PR 而不是 issue。
 #
 # 触发与职责划分：
 #   · schedule / workflow_dispatch：定时巡检（北京时间周一 04:00），全量跑，结果汇成 issue / PR。
@@ -44,7 +48,11 @@ on:
 env:
   ISSUE_TITLE: '[dependency-audit] 依赖巡检发现问题'
   ISSUE_SEARCH: 'in:title dependency-audit'
-  BRANCH_PREFIX: 'chore/upx-bump-'
+  # 分支前缀按工具拆开：每个工具的升级 PR 各占一个命名空间，既好检索，
+  # 也让某一种工具的分支清理掉时不会误伤另两种。装配后仍是 "<前缀><新版本>"（见各 PR step）。
+  BRANCH_PREFIX_UPX: 'chore/upx-bump-'
+  BRANCH_PREFIX_DAE: 'chore/dae-bump-'
+  BRANCH_PREFIX_FAN2GO: 'chore/fan2go-bump-'
 
 permissions:
   contents: write
@@ -124,6 +132,13 @@ jobs:
       po2lmo_pinned: ${{ steps.audit.outputs.po2lmo_pinned }}
       po2lmo_upstream: ${{ steps.audit.outputs.po2lmo_upstream }}
       po2lmo_outdated: ${{ steps.audit.outputs.po2lmo_outdated }}
+      dae_pinned: ${{ steps.audit.outputs.dae_pinned }}
+      dae_latest: ${{ steps.audit.outputs.dae_latest }}
+      dae_outdated: ${{ steps.audit.outputs.dae_outdated }}
+      dae_new_hash: ${{ steps.audit.outputs.dae_new_hash }}
+      fan2go_pinned: ${{ steps.audit.outputs.fan2go_pinned }}
+      fan2go_latest: ${{ steps.audit.outputs.fan2go_latest }}
+      fan2go_outdated: ${{ steps.audit.outputs.fan2go_outdated }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -141,7 +156,7 @@ jobs:
   # ---------------------------------------------------------------------------
   # job 3：报告与副作用（仅定时 / 手动触发）——全部用 run: 里的 gh / git / sed，不起第三方 action
   #   · apt 有缺失 或 有 commit 漂移 -> 幂等开/更新 issue（不自动改依赖清单 / 不改 commit）
-  #   · upx 有新版本 -> 起分支 + sed 改常量 + 开 PR（唯一允许的自动改动）
+  #   · upx / dae / fan2go 有新版本 -> 各起一个分支 + sed 改固定行 + 开 PR（唯一允许的自动改动）
   # ---------------------------------------------------------------------------
   report:
     name: Report findings and open issue / PR
@@ -168,6 +183,13 @@ jobs:
           PO2LMO_PINNED: ${{ needs.pinned-tools.outputs.po2lmo_pinned }}
           PO2LMO_UPSTREAM: ${{ needs.pinned-tools.outputs.po2lmo_upstream }}
           PO2LMO_OUTDATED: ${{ needs.pinned-tools.outputs.po2lmo_outdated }}
+          DAE_PINNED: ${{ needs.pinned-tools.outputs.dae_pinned }}
+          DAE_LATEST: ${{ needs.pinned-tools.outputs.dae_latest }}
+          DAE_OUTDATED: ${{ needs.pinned-tools.outputs.dae_outdated }}
+          DAE_NEW_HASH: ${{ needs.pinned-tools.outputs.dae_new_hash }}
+          FAN2GO_PINNED: ${{ needs.pinned-tools.outputs.fan2go_pinned }}
+          FAN2GO_LATEST: ${{ needs.pinned-tools.outputs.fan2go_latest }}
+          FAN2GO_OUTDATED: ${{ needs.pinned-tools.outputs.fan2go_outdated }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
@@ -213,6 +235,14 @@ jobs:
             echo "po2lmo_pinned=${PO2LMO_PINNED}"
             echo "po2lmo_upstream=${PO2LMO_UPSTREAM}"
             echo "po2lmo_outdated=${PO2LMO_OUTDATED}"
+            echo "dae_pinned=${DAE_PINNED}"
+            echo "dae_latest=${DAE_LATEST}"
+            echo "dae_outdated=${DAE_OUTDATED}"
+            # hash 只在漂移时才有值，未漂移时脚本输出的就是空值，这里照原样展示。
+            echo "dae_new_hash=${DAE_NEW_HASH}"
+            echo "fan2go_pinned=${FAN2GO_PINNED}"
+            echo "fan2go_latest=${FAN2GO_LATEST}"
+            echo "fan2go_outdated=${FAN2GO_OUTDATED}"
             echo "\`\`\`"
             echo
             echo "---"
@@ -241,7 +271,7 @@ jobs:
           UPX_LATEST: ${{ needs.pinned-tools.outputs.upx_latest }}
         run: |
           set -euo pipefail
-          branch="${BRANCH_PREFIX}${UPX_LATEST}"
+          branch="${BRANCH_PREFIX_UPX}${UPX_LATEST}"
           file="scripts/build/steps/install-deps.sh"
           commit_msg="🐳 chore(deps): 升级 upx 到 ${UPX_LATEST}"
 
@@ -292,6 +322,149 @@ jobs:
             echo
             echo "只改了 scripts/build/steps/install-deps.sh 里的一行常量；"
             echo "下载 URL 由 EXTRAS_UPX_VERSION 拼接，无需同步其它位置。"
+          } >"${pr_body_file}"
+          gh pr create --head "${branch}" --base "${DEFAULT_BRANCH}" \
+            --title "${commit_msg}" --body-file "${pr_body_file}"
+          rm -f "${pr_body_file}"
+
+      - name: Open a PR to bump dae when a newer release exists
+        if: needs.pinned-tools.outputs.dae_outdated == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          DAE_PINNED: ${{ needs.pinned-tools.outputs.dae_pinned }}
+          DAE_LATEST: ${{ needs.pinned-tools.outputs.dae_latest }}
+          DAE_NEW_HASH: ${{ needs.pinned-tools.outputs.dae_new_hash }}
+        run: |
+          set -euo pipefail
+          branch="${BRANCH_PREFIX_DAE}${DAE_LATEST}"
+          file="scripts/inputs/diy-part2.sh"
+          commit_msg="🐳 chore(deps): 升级 dae 到 ${DAE_LATEST}"
+
+          # 有无分支以远端为准：上一次跑到一半、或 PR 开完后分支仍在，都要跳过，
+          # 否则会重复开 PR 或用同名分支强推覆盖已评审的改动。
+          if git ls-remote --exit-code --heads origin "${branch}" >/dev/null 2>&1; then
+            echo "分支 ${branch} 已存在于远端，跳过（避免重复 PR）。"
+            exit 0
+          fi
+          if [[ -n "$(gh pr list --head "${branch}" --state all --json number --jq '.[0].number // empty')" ]]; then
+            echo "分支 ${branch} 已有 PR，跳过。"
+            exit 0
+          fi
+
+          # 两个 token 必须一起改：dae 的源码包 hash 是固定死的，只换版本号会让构建拉到的包
+          # 与固定 hash 不匹配而直接失败，所以版本号与 hash 必须在同一条 sed 里同时替换。
+          # 匹配式锚定 64 位十六进制，确保命中的就是那条固定行；未漂移时脚本不会给出新 hash，
+          # 空 hash 在这里按失败处理，绝不拿旧 hash 凑数。
+          if [[ ! "${DAE_NEW_HASH}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::check-pinned-tools.sh 没有提供合法的 dae 新 hash，已中止（未推送）"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git switch -c "${branch}"
+
+          sed -i -E "s|^(set_dae_version )\"[^\"]+\"( )\"[0-9a-f]{64}\"|\1\"${DAE_LATEST}\"\2\"${DAE_NEW_HASH}\"|" "${file}"
+          if ! grep -qF "set_dae_version \"${DAE_LATEST}\"" "${file}"; then
+            echo "::error::未能改写 ${file} 里的 dae 版本号，已中止（未推送）"
+            exit 1
+          fi
+          if ! grep -qF "\"${DAE_NEW_HASH}\"" "${file}"; then
+            echo "::error::未能改写 ${file} 里的 dae 源码包 hash，已中止（未推送）"
+            exit 1
+          fi
+          # 二次确认只替了 1 行（版本号与 hash 在同一行，所以仍应是单行替换）：
+          # --numstat 输出是「删除行数<TAB>新增行数<TAB>路径」，任一不是 1 就中止，
+          # 宁可失败也不推一个把别处一起改掉的 PR。
+          # 先赋空值再 read：diff 为空时 read 会在 EOF 返回非零并不赋值，set -u 下直接展开会中断。
+          removed_lines=""
+          added_lines=""
+          read -r removed_lines added_lines _rest < <(git diff --numstat -- "${file}") || true
+          if [[ "${removed_lines}" != "1" || "${added_lines}" != "1" ]]; then
+            echo "::error::本次改动 删 ${removed_lines} / 增 ${added_lines} 行（期望 1/1），已中止"
+            exit 1
+          fi
+
+          git add "${file}"
+          git commit -m "${commit_msg}"
+          git push origin "${branch}"
+
+          pr_body_file="$(mktemp)"
+          {
+            echo "由 .github/workflows/dependency-audit.yml 自动生成。"
+            echo
+            echo "上游 release：https://github.com/daeuniverse/dae/releases/tag/v${DAE_LATEST}"
+            echo "旧值 ${DAE_PINNED} -> 新值 ${DAE_LATEST}"
+            echo
+            echo "同时把源码包 hash 改成 ${DAE_NEW_HASH}（同一行里的两个 token 一起改）。"
+            echo "该 hash 优先取自上游 release 的 dae-full-src.zip.dgst 里的 sha256 行；"
+            echo "上游没有发 dgst 时回退为下载 dae-full-src.zip 现算，两种取法都由"
+            echo "scripts/ci/check-pinned-tools.sh 完成并写入本次巡检输出。"
+            echo
+            echo "只改了 scripts/inputs/diy-part2.sh 里的一行固定项，未改动其它任何内容。"
+          } >"${pr_body_file}"
+          gh pr create --head "${branch}" --base "${DEFAULT_BRANCH}" \
+            --title "${commit_msg}" --body-file "${pr_body_file}"
+          rm -f "${pr_body_file}"
+
+      - name: Open a PR to bump fan2go when a newer release exists
+        if: needs.pinned-tools.outputs.fan2go_outdated == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          FAN2GO_PINNED: ${{ needs.pinned-tools.outputs.fan2go_pinned }}
+          FAN2GO_LATEST: ${{ needs.pinned-tools.outputs.fan2go_latest }}
+        run: |
+          set -euo pipefail
+          branch="${BRANCH_PREFIX_FAN2GO}${FAN2GO_LATEST}"
+          file="scripts/inputs/diy-part2.sh"
+          commit_msg="🐳 chore(deps): 升级 fan2go 到 ${FAN2GO_LATEST}"
+
+          # 同样的远端分支 / 既有 PR 去重：fan2go 与 dae 各占一个分支前缀，互不干扰。
+          if git ls-remote --exit-code --heads origin "${branch}" >/dev/null 2>&1; then
+            echo "分支 ${branch} 已存在于远端，跳过（避免重复 PR）。"
+            exit 0
+          fi
+          if [[ -n "$(gh pr list --head "${branch}" --state all --json number --jq '.[0].number // empty')" ]]; then
+            echo "分支 ${branch} 已有 PR，跳过。"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git switch -c "${branch}"
+
+          # fan2go 的 hash 参数是字面量 auto（构建时按上游源码包现算），本仓库不维护确定值，
+          # 所以表达式只锚第一个引号串、整段不碰后半段；改完必须仍是 "<版本>" auto。
+          sed -i -E "s|^(set_fan2go_version )\"[^\"]+\"|\1\"${FAN2GO_LATEST}\"|" "${file}"
+          if ! grep -qF "set_fan2go_version \"${FAN2GO_LATEST}\" auto" "${file}"; then
+            echo "::error::未能按预期改写 ${file} 里的 fan2go 固定项（结尾应仍是 auto），已中止（未推送）"
+            exit 1
+          fi
+          # 同 upx / dae：单行替换必然是 1/1，别的比例说明表达式匹配过宽，宁可失败也不推。
+          removed_lines=""
+          added_lines=""
+          read -r removed_lines added_lines _rest < <(git diff --numstat -- "${file}") || true
+          if [[ "${removed_lines}" != "1" || "${added_lines}" != "1" ]]; then
+            echo "::error::本次改动 删 ${removed_lines} / 增 ${added_lines} 行（期望 1/1），已中止"
+            exit 1
+          fi
+
+          git add "${file}"
+          git commit -m "${commit_msg}"
+          git push origin "${branch}"
+
+          pr_body_file="$(mktemp)"
+          {
+            echo "由 .github/workflows/dependency-audit.yml 自动生成。"
+            echo
+            echo "上游 release：https://github.com/markusressel/fan2go/releases/tag/${FAN2GO_LATEST}"
+            echo "旧值 ${FAN2GO_PINNED} -> 新值 ${FAN2GO_LATEST}"
+            echo
+            echo "只改了 scripts/inputs/diy-part2.sh 里的一行固定项，且只动版本号 token；"
+            echo "hash 参数保持字面量 auto，构建时按上游源码包现算，无需同步其它位置。"
           } >"${pr_body_file}"
           gh pr create --head "${branch}" --base "${DEFAULT_BRANCH}" \
             --title "${commit_msg}" --body-file "${pr_body_file}"

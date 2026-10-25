@@ -1,0 +1,10 @@
+# markdownlint 配置（YAML：天然支持注释）
+config:
+  MD013:
+    line_length: 120
+    tables: false
+    code_blocks: false
+    headings: false
+  MD033:
+    allowed_elements: [img, br, details, summary, sub, sup, kbd]
+  MD041: false

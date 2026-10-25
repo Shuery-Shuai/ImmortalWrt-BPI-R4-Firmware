@@ -1,37 +1,117 @@
-# scripts/ —— 构建脚本说明
+# <img alt="scripts" src="https://cdn.simpleicons.org/gnubash/4EAA25" width="26" height="26" align="top"> scripts/ · 构建脚本说明
 
-> 本目录是本地与 CI 共用的构建脚本。固件本身的功能、刷机、签名密钥等说明见[仓库根 README](../README.md)。
+> 🛠️ 本地与 CI **共用同一套构建脚本**。固件功能、刷机、签名密钥等面向使用者的说明见 [仓库根 README](../README.md)。
 
-## 本地构建
+[![ImmortalWrt Builder](https://github.com/Shuery-Shuai/ImmortalWrt-BPI-R4-Firmware/actions/workflows/immortalwrt-builder.yml/badge.svg)](https://github.com/Shuery-Shuai/ImmortalWrt-BPI-R4-Firmware/actions/workflows/immortalwrt-builder.yml)
+[![Shell: bash](https://img.shields.io/badge/shell-bash%205.x-4EAA25)](https://www.gnu.org/software/bash/)
+[![Lint: shellcheck](https://img.shields.io/badge/lint-shellcheck-blue)](https://www.shellcheck.net/)
+[![Runner](https://img.shields.io/badge/target-ubuntu--24.04-8A2BE2)](https://github.com/Shuery-Shuai/ImmortalWrt-BPI-R4-Firmware/blob/main/scripts/build/dependencies.txt)
+
+## 📖 目录
+
+- [🗺️ 架构总览](#️-架构总览)
+- [🚀 本地构建](#-本地构建)
+- [🌲 目录结构](#-目录结构)
+- [📊 CI 运行总结](#ci-运行总结cigenerate-summarysh)
+- [📦 依赖自动更新与巡检](#依赖自动更新与巡检)
+- [🛡️ 错误处理](#错误处理libs02-error-handlersh)
+
+## 🗺️ 架构总览
+
+脚本分成三层，**按消费方划分**而非按文件类型：
+
+```mermaid
+flowchart TB
+    subgraph entry[入口层]
+        B[build.sh · 命令行入口]
+        L[load.sh · 目录聚合加载器]
+    end
+    subgraph libs[共享库 scripts/libs/ · 所有脚本可用]
+        L1[01-shell-logger.sh<br/>日志唯一实现]
+        L2[02-error-handler.sh<br/>fail/die · 断言 · 命令包装]
+        L3[03-argument-parser.sh<br/>规格驱动参数解析]
+    end
+    subgraph build[构建层 scripts/build/]
+        P[pipeline.sh · 编排]
+        S1[steps/install-deps.sh]
+        S2[steps/compile.sh]
+        C[common/strictness.sh · REQUIRED 策略]
+        U[utils/ · 体积统计]
+    end
+    subgraph ci[CI 专属 scripts/ci/]
+        G1[generate-summary.sh]
+        G2[generate-release-*.sh]
+        G3[generate-index.sh]
+        G4[check-apt-deps.sh / check-pinned-tools.sh]
+    end
+    subgraph inputs[构建输入 scripts/inputs/ · 复制进 immortalwrt/]
+        I1[diy-part1.sh · diy-part2.sh]
+        I2[mods/ · 14 个修改]
+        I3[utils/ · 纯工具函数]
+    end
+
+    B --> L
+    L --> L1 --> L2 --> L3
+    L --> P
+    P --> S1
+    P --> S2
+    P --> C
+    B --> U
+    G1 --> L1
+    G2 --> L1
+    G3 --> L1
+    G4 --> L2
+    I1 -.复制后在上游树内执行.-> I2
+```
+
+> [!NOTE]
+>
+> 加载顺序即依赖顺序，编号 `01 → 02 → 03` 不可调换：`02-error-handler` 调用 `log_error`，
+> 因此必须晚于 `01-shell-logger`；`03-argument-parser` 报错时同样依赖 logger。
+
+## 🚀 本地构建
 
 CI 与本地走同一套脚本，唯一入口是 `scripts/build/build.sh`。CI 只是把下面几个 stage 拆成几个步骤。
 
-```sh
+```shell
 scripts/build/build.sh <stage>
 ```
 
-| stage      | 做什么                                                                             |
-| ---------- | ---------------------------------------------------------------------------------- |
+| stage      | 做什么                                                                                            |
+| :--------- | :------------------------------------------------------------------------------------------------ |
 | `deps`     | 按 `scripts/build/dependencies.txt` 安装主机依赖（目标 ubuntu-24.04），再补装 upx/padjffs2/po2lmo |
-| `prepare`  | 克隆 immortalwrt → 还原 APK 私钥 → feeds → 放置 `.config` → DIY → `make defconfig`     |
-| `download` | `prepare` + `make download`                                                        |
-| `compile`  | `download` + 编译（并行 → 单线程 → 单线程 V=s，失败后按需清理重试）                   |
-| `check`    | 只统计 `bin/targets` 产物体积，**不改动工作区**                                     |
-| `all`      | `compile` + `check`                                                                |
+| `prepare`  | 克隆 immortalwrt → 还原 APK 私钥 → feeds → 放置 `.config` → DIY → `make defconfig`                |
+| `download` | `prepare` + `make download`                                                                       |
+| `compile`  | `download` + 编译（并行 → 单线程 → 单线程 V=s，失败后按需清理重试）                               |
+| `check`    | 只统计 `bin/targets` 产物体积，**不改动工作区**                                                   |
+| `all`      | `compile` + `check`                                                                               |
+
+```mermaid
+stateDiagram-v2
+    [*] --> deps: 手动（唯一调 apt）
+    deps --> prepare
+    [*] --> prepare: compile/all 隐含起点
+    prepare --> download
+    download --> compile_fw: make
+    compile_fw --> compile_fw: 并行失败→单线程→V=s
+    compile_fw --> check: 成功
+    check --> [*]
+```
 
 阶段是累进的：`compile` 隐含 `download` 与 `prepare`，所以一条 `scripts/build/build.sh compile` 就能从零到编译完成。
 
 > [!NOTE]
 >
 > - `deps` 不会被任何阶段自动触发（本地通常已装好依赖，自动跑 apt 既重复又慢）。
-> - `prepare` 是幂等的：它按输入指纹（上游 commit、`.config`、DIY 脚本、`files/`、`feeds.conf`、`libs/`、`mods/`）判断，输入没变就跳过。
->   因此 CI 里「`prepare` 步骤 + `compile` 内含的 prepare」不会重复工作，也不会删掉期间生成的 `99-release-info`。
+> - `prepare` 是**幂等**的：它按输入指纹（上游 commit、`.config`、DIY 脚本、`files/`、`feeds.conf`、`libs/`、`mods/`）判断，
+>   输入没变就跳过。因此 CI 里「`prepare` 步骤 + `compile` 内含的 prepare」不会重复工作，也不会删掉期间生成的 `99-release-info`。
 >   需要强制重跑时设 `FORCE_PREPARE=1`。
 > - `REQUIRED=1` 启用严格模式：缺 APK 私钥、缺依赖清单、装依赖失败都直接失败。CI 使用该模式，本地缺省为降级告警。
 > - 早期 4 个薄转发入口（旧 `make.sh` / `prepare-workdir.sh` / `set-config.sh` / `initialize-environment.sh`）已删除，
 >   一律用 `scripts/build/build.sh <stage>` 代替：compile / prepare / prepare / deps 一一对应。
+> - **日志**：默认落仓库根 `logs/`（`build-<时间戳>-<PID>.log`），编译阶段另存 `build-parallel/single/verbose.log`。
 
-### scripts/ 目录结构
+## 🌲 目录结构
 
 ```text
 scripts/
@@ -71,11 +151,11 @@ scripts/
 >
 > `build/` 内部按**职责**分四类，改文件时先认清它属于哪一类：
 >
-> | 类别 | 文件 | 判据 |
-> | ---- | ---- | ---- |
-> | 入口 | `build.sh`、`load.sh` | 只做分派 / source，不含业务逻辑 |
-> | 编排 | `pipeline.sh` | 串起多个步骤、决定顺序与幂等 |
-> | 阶段 | `steps/*.sh` | 实现单个 stage（deps / download / compile） |
+> | 类别 | 文件                         | 判据                                          |
+> | ---- | ---------------------------- | --------------------------------------------- |
+> | 入口 | `build.sh`、`load.sh`        | 只做分派 / source，不含业务逻辑               |
+> | 编排 | `pipeline.sh`                | 串起多个步骤、决定顺序与幂等                  |
+> | 阶段 | `steps/*.sh`                 | 实现单个 stage（deps / download / compile）   |
 > | 策略 | `build/common/strictness.sh` | REQUIRED 严格度（项目专属语义，换项目不适用） |
 >
 > `build.sh` 与 `load.sh` **职责不同，不可合并**：`build.sh` 是**命令行入口**（解析 stage、打印 usage、`cd` 到仓库根）；
@@ -89,6 +169,8 @@ scripts/
 >
 > `build/build.sh` 保持原名：它是多 stage 的分派器（deps / prepare / download / compile / check / all），
 > 名字表达的是「构建唯一入口」，改成动宾反而失真。
+
+<!-- 复制后的布局约束：与上方目录结构 NOTE 分开，避免两个 alert 被视为同一引用块 -->
 
 > [!IMPORTANT]
 >
@@ -104,37 +186,37 @@ scripts/
 bash scripts/ci/generate-summary.sh [build|update-checker]   # 缺省 build
 ```
 
-| 项 | 约定 |
-| ---- | ---- |
-| 输出 | 设了 `GITHUB_STEP_SUMMARY` 就追加写入该文件，否则打印到 stdout（本地预览用） |
-| 退出码 | 恒为 `0`——摘要自身绝不能让流水线变红 |
-| 参数 | `build` / `update-checker`，决定标题与适用章节；缺省 `build` |
+| 项     | 约定                                                                         |
+| ------ | ---------------------------------------------------------------------------- |
+| 输出   | 设了 `GITHUB_STEP_SUMMARY` 就追加写入该文件，否则打印到 stdout（本地预览用） |
+| 退出码 | 恒为 `0`——摘要自身绝不能让流水线变红                                         |
+| 参数   | `build` / `update-checker`，决定标题与适用章节；缺省 `build`                 |
 
 **入参全是环境变量，缺哪个就跳过对应小节**，所以本地不设任何变量也能跑出可用的一段 Markdown。
 
-| 变量 | 用途 |
-| ---- | ---- |
-| `JOB_STATUS` | job 总状态（`${{ job.status }}`），表头成败的依据 |
-| `STEP_SEQUENCE` | 多行，按显示顺序每行 `KEY\|显示名称`，决定步骤状态表的行序与显示名 |
-| `STEP_<KEY>` | 该步骤的 outcome（`success` / `failure` / `cancelled` / `skipped` / 空） |
-| `DEVICE_NAME` / `FILE_DATE` / `RELEASE_TAG` | 元信息：机型、文件日期、发布 tag |
-| `ARTIFACT_BIN_NAME` / `ARTIFACT_FIRMWARE_NAME` / `ARTIFACT_LOGS_NAME` | 产物名 |
-| `CACHE_HIT` | ccache / 构建缓存是否命中（`true` / `false`） |
-| `LOG_DIR` | 日志目录，相对仓库根，缺省 `logs` |
-| `COMMIT_HASH` / `BUILD_TRIGGERED` | `update-checker` 专用：检出的上游 commit、是否触发了构建 |
-| 标准 `GITHUB_*` | `GITHUB_REPOSITORY` / `_SERVER_URL` / `_RUN_ID` / `_RUN_ATTEMPT` / `_WORKFLOW` / `_REF_NAME` / `_EVENT_NAME` / `_ACTOR` / `_JOB`、`RUNNER_OS`：链接、run 号、触发方式等 |
+| 变量                                                                  | 用途                                                                                                                                                                    |
+| --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `JOB_STATUS`                                                          | job 总状态（`${{ job.status }}`），表头成败的依据                                                                                                                       |
+| `STEP_SEQUENCE`                                                       | 多行，按显示顺序每行 `KEY\|显示名称`，决定步骤状态表的行序与显示名                                                                                                      |
+| `STEP_<KEY>`                                                          | 该步骤的 outcome（`success` / `failure` / `cancelled` / `skipped` / 空）                                                                                                |
+| `DEVICE_NAME` / `FILE_DATE` / `RELEASE_TAG`                           | 元信息：机型、文件日期、发布 tag                                                                                                                                        |
+| `ARTIFACT_BIN_NAME` / `ARTIFACT_FIRMWARE_NAME` / `ARTIFACT_LOGS_NAME` | 产物名                                                                                                                                                                  |
+| `CACHE_HIT`                                                           | ccache / 构建缓存是否命中（`true` / `false`）                                                                                                                           |
+| `LOG_DIR`                                                             | 日志目录，相对仓库根，缺省 `logs`                                                                                                                                       |
+| `COMMIT_HASH` / `BUILD_TRIGGERED`                                     | `update-checker` 专用：检出的上游 commit、是否触发了构建                                                                                                                |
+| 标准 `GITHUB_*`                                                       | `GITHUB_REPOSITORY` / `_SERVER_URL` / `_RUN_ID` / `_RUN_ATTEMPT` / `_WORKFLOW` / `_REF_NAME` / `_EVENT_NAME` / `_ACTOR` / `_JOB`、`RUNNER_OS`：链接、run 号、触发方式等 |
 
 摘要按下面几块拼装，每一块都只在自己的输入存在时才出现：
 
-| 小节 | 内容 | 依据 |
-| ---- | ---- | ---- |
-| 结论 + 运行链接 | 成功 / 失败、`server/repo/actions/runs/<id>` | `JOB_STATUS`、`GITHUB_REPOSITORY`、`GITHUB_RUN_ID` |
-| 运行信息 | workflow、job、事件、分支、提交、触发人、Runner OS、run attempt | 标准 `GITHUB_*` + `git rev-parse` |
-| 上游更新 | 检出的上游 commit、是否触发构建（仅 `update-checker`） | `COMMIT_HASH`、`BUILD_TRIGGERED` |
-| 步骤状态 | 按 `STEP_SEQUENCE` 逐行列出 outcome，带结果徽标 | `STEP_SEQUENCE` + `STEP_<KEY>` |
-| 构建产物（仅 `build`） | 设备、文件日期、Release tag、缓存命中、artifact 名、固件体积 | `DEVICE_NAME` / `FILE_DATE` / `RELEASE_TAG` / `CACHE_HIT` / `ARTIFACT_*_NAME` |
-| 耗时与缓存 | 取 `LOG_DIR` 最新一份日志的首尾时间戳，算时长；有 ccache 时附命中率 | `LOG_DIR` |
-| 失败详情 | 从最新日志末尾筛出关键错误行，折叠在 `<details>` 里 | job 失败时的 `LOG_DIR` |
+| 小节                   | 内容                                                                | 依据                                                                          |
+| ---------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| 结论 + 运行链接        | 成功 / 失败、`server/repo/actions/runs/<id>`                        | `JOB_STATUS`、`GITHUB_REPOSITORY`、`GITHUB_RUN_ID`                            |
+| 运行信息               | workflow、job、事件、分支、提交、触发人、Runner OS、run attempt     | 标准 `GITHUB_*` + `git rev-parse`                                             |
+| 上游更新               | 检出的上游 commit、是否触发构建（仅 `update-checker`）              | `COMMIT_HASH`、`BUILD_TRIGGERED`                                              |
+| 步骤状态               | 按 `STEP_SEQUENCE` 逐行列出 outcome，带结果徽标                     | `STEP_SEQUENCE` + `STEP_<KEY>`                                                |
+| 构建产物（仅 `build`） | 设备、文件日期、Release tag、缓存命中、artifact 名、固件体积        | `DEVICE_NAME` / `FILE_DATE` / `RELEASE_TAG` / `CACHE_HIT` / `ARTIFACT_*_NAME` |
+| 耗时与缓存             | 取 `LOG_DIR` 最新一份日志的首尾时间戳，算时长；有 ccache 时附命中率 | `LOG_DIR`                                                                     |
+| 失败详情               | 从最新日志末尾筛出关键错误行，折叠在 `<details>` 里                 | job 失败时的 `LOG_DIR`                                                        |
 
 失败摘录是「诊断辅助」而非「原因判定」：它扫描的是最新一份日志的末尾若干行并按关键字过滤，
 真正的原因仍以该日志为准，摘要只负责把人带到那一行。
@@ -147,6 +229,8 @@ bash scripts/ci/generate-summary.sh [build|update-checker]   # 缺省 build
 > 两个 workflow 都以 `if: always()` + `continue-on-error: true` 调它：摘要是「事后报告」，编译失败或被取消时它更要跑到，
 > 而它自己挂掉也绝不能给已经失败的 job 再补一刀。脚本内置的「恒 0」是第二道保险，两道都在。
 
+<!-- 本地预览：与上方 IMPORTANT 分开，避免两个 alert 被视为同一引用块 -->
+
 > [!NOTE]
 >
 > `STEP_SEQUENCE` 给顺序和显示名，`STEP_<KEY>` 给状态值，是同一份数据的两种视图——新增步骤时两处都要登记。
@@ -156,51 +240,57 @@ bash scripts/ci/generate-summary.sh [build|update-checker]   # 缺省 build
 
 这个仓库的"依赖"有三类，能力边界各不相同——**不要以为装了机器人就都有人管**：
 
-| 对象 | 谁来管 | 能自动做什么 |
-| ---- | ---- | ---- |
-| `.github/workflows/` 里的 action 引用 | `.github/dependabot.yml` | 开 PR 升版本（major 单独开 PR，minor/patch 归组） |
-| `build/dependencies.txt` 的包名 | `ci/check-apt-deps.sh` + `dependency-audit.yml` | **只开 issue**：包名失效能发现，但改名映射不在任何机器可读数据源里 |
-| `install-deps.sh` 的 `EXTRAS_*` 常量 | `ci/check-pinned-tools.sh` + `dependency-audit.yml` | upx 开 PR；padjffs2 / po2lmo 只开 issue |
+| 对象                                  | 谁来管                                              | 能自动做什么                                                       |
+| ------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------ |
+| `.github/workflows/` 里的 action 引用 | `.github/dependabot.yml`                            | 开 PR 升版本（major 单独开 PR，minor/patch 归组）                  |
+| `build/dependencies.txt` 的包名       | `ci/check-apt-deps.sh` + `dependency-audit.yml`     | **只开 issue**：包名失效能发现，但改名映射不在任何机器可读数据源里 |
+| `install-deps.sh` 的 `EXTRAS_*` 常量  | `ci/check-pinned-tools.sh` + `dependency-audit.yml` | upx 开 PR；padjffs2 / po2lmo 只开 issue                            |
 
 两点必须说清楚：
 
 - **Dependabot 没有 apt/deb 生态。** 官方支持的 `package-ecosystem` 里没有 apt，所以 `dependencies.txt` 不存在"被机器人自动升版本"这回事——那份清单本身也全是裸包名、零版本号。
-- **action 引用只在有 tag 时才可能被钉住。** `klever1988/cachewrtbuild` 从未打过 tag（tags 为 0 条），只能继续跟 `main`，也不在 Dependabot 管理范围内；其余 7 处飘分支引用已钉到 tag，理由与构建 job 固定 `ubuntu-24.04` 而非 `ubuntu-latest` 相同：不让上游一次推送在不相关的提交上把构建搞红。
+- **action 引用只在有 tag 时才可能被钉住。** `klever1988/cachewrtbuild` 从未打过 tag（tags 为 0 条），
+  只能继续跟 `main`，也不在 Dependabot 管理范围内；
+  其余 7 处飘分支引用已钉到 tag，理由与构建 job 固定 `ubuntu-24.04` 而非 `ubuntu-latest` 相同：
+  不让上游一次推送在不相关的提交上把构建搞红。
 
-**退出码约定**（两个检测脚本一致）：`E_SUCCESS(0)` 正常跑完（有漂移也是 0，脚本只报告不改文件）、`E_DATAERR(65)` 确有包名查不到、`E_UNAVAILABLE(69)` 网络或索引下载失败、`E_USAGE(64)`/`E_NOINPUT(66)` 参数与输入错误。workflow 只把 65 当"依赖问题"，其余非零码一律红叉（避免网络故障被静默吞掉）。
+**退出码约定**（两个检测脚本一致）：`E_SUCCESS(0)` 正常跑完（有漂移也是 0，脚本只报告不改文件）、
+`E_DATAERR(65)` 确有包名查不到、`E_UNAVAILABLE(69)` 网络或索引下载失败、
+`E_USAGE(64)`/`E_NOINPUT(66)` 参数与输入错误。
+workflow 只把 65 当"依赖问题"，其余非零码一律红叉（避免网络故障被静默吞掉）。
 
-`dependency-audit.yml` 的事件分工同样是刻意的：`pull_request` / `push` 只对改动依赖清单的路径跑包名校验并**当门禁**（非零即红叉）；开 issue、开 PR 这些副作用只在 `schedule` / `workflow_dispatch` 下发生，PR 上绝不自动改文件。
+`dependency-audit.yml` 的事件分工同样是刻意的：`pull_request` / `push` 只对改动依赖清单的路径跑包名校验并**当门禁**（非零即红叉）；
+开 issue、开 PR 这些副作用只在 `schedule` / `workflow_dispatch` 下发生，PR 上绝不自动改文件。
 
 ### 错误处理（`libs/02-error-handler.sh`）
 
 Shell 没有异常机制，错误处理围绕**退出码、`return`/`exit`、断言**展开。本库只做「控制流 + 退出码」，
 日志格式归 `01-shell-logger.sh`，两者边界清晰。
 
-**核心分工（不可混用）**
+#### 核心分工（不可混用）
 
-| 函数 | 行为 | 适用场景 |
-| ---- | ---- | -------- |
+| 函数         | 行为                          | 适用场景                                     |
+| ------------ | ----------------------------- | -------------------------------------------- |
 | `fail <msg>` | `log_error` 后 **`return 1`** | 被 `source` 的库与函数——调用者必须能继续处理 |
-| `die <msg>` | `log_error` 后 **`exit 1`** | 仅顶层可执行脚本（`build.sh`、`ci/*.sh`） |
+| `die <msg>`  | `log_error` 后 **`exit 1`**   | 仅顶层可执行脚本（`build.sh`、`ci/*.sh`）    |
 
 > [!WARNING]
 >
 > 库函数里调 `die` 是反模式：它会杀掉调用者的整个 shell，导致清理、重试、错误上报全部被跳过。
 
-**退出码常量**（沿用 `sysexits.h`，避免 `exit 1` 满天飞）
+#### 退出码常量（沿用 `sysexits.h`）
 
 `E_SUCCESS=0`、`E_GENERAL=1`、`E_USAGE=64`、`E_DATAERR=65`、`E_NOINPUT=66`、
 `E_UNAVAILABLE=69`、`E_SOFTWARE=70`、`E_OSERR=71`、`E_CANTCREAT=73`、`E_IOERR=74`。
 `exit_code_to_name <code>` 把码转成可读名（`64` → `USAGE`，未知 → `UNKNOWN`）。
 
-**当前退出码用法**
+#### 当前退出码用法
 
-
-| 场景 | 退出码 | 说明 |
-| ---- | ------ | ---- |
-| 成功 | `E_SUCCESS` 0 | |
-| 用法错误（stage 非法、缺必需参数） | `E_USAGE` 64 | `build.sh` 已迁移，便于区分「敲错命令」与「构建失败」 |
-| 通用失败 | `E_GENERAL` 1 | 存量 `exit 1` 保持原样，未强制迁移 |
+| 场景                               | 退出码        | 说明                                                  |
+| ---------------------------------- | ------------- | ----------------------------------------------------- |
+| 成功                               | `E_SUCCESS` 0 |                                                       |
+| 用法错误（stage 非法、缺必需参数） | `E_USAGE` 64  | `build.sh` 已迁移，便于区分「敲错命令」与「构建失败」 |
+| 通用失败                           | `E_GENERAL` 1 | 存量 `exit 1` 保持原样，未强制迁移                    |
 
 > [!NOTE]
 >
@@ -209,19 +299,19 @@ Shell 没有异常机制，错误处理围绕**退出码、`return`/`exit`、断
 >
 > CI 对任何非零退出码一视同仁（都判失败），因此 `64` 与 `1` 在流水线里没有区别；区分的价值在于**本地与人读**。
 
-**断言与前置检查**（全部 `return 1`，不 `exit`）
+#### 断言与前置检查（全部 `return 1`）
 
 `require_cmd` / `require_var` / `require_file` / `require_dir` / `require_exec`。
 多参数时在第一个缺失项处返回，错误信息始终指向一个具体路径或命令名。
 
-**命令执行包装**
+#### 命令执行包装
 
-| 函数 | 失败行为 |
-| ---- | -------- |
-| `run <cmd...>` | 保留原 stdout/stderr，追加「命令 + 退出码」后 `return 1` |
-| `try <cmd...>` | **不报错不退出**，仅返回命令退出码，供 `if` 判断 |
-| `run_or_fail <msg> <cmd...>` | 用自定义消息 `return 1` |
-| `with_retry <N> <cmd...>` | 重试 N 次（无固定间隔，只为吸收瞬时竞态），最终失败 `return 1` |
+| 函数                         | 失败行为                                                       |
+| ---------------------------- | -------------------------------------------------------------- |
+| `run <cmd...>`               | 保留原 stdout/stderr，追加「命令 + 退出码」后 `return 1`       |
+| `try <cmd...>`               | **不报错不退出**，仅返回命令退出码，供 `if` 判断               |
+| `run_or_fail <msg> <cmd...>` | 用自定义消息 `return 1`                                        |
+| `with_retry <N> <cmd...>`    | 重试 N 次（无固定间隔，只为吸收瞬时竞态），最终失败 `return 1` |
 
 `run` 与 `try` 的区别就是两种错误处理风格：**失败即终止** vs **失败可捕获**。
 
