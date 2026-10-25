@@ -54,6 +54,8 @@ scripts/
 │   ├── generate-release-info.sh   生成 99-release-info 与 RELEASE_TAG
 │   ├── generate-release-notes.sh  生成 release.txt
 │   ├── generate-summary.sh        运行总结 → $GITHUB_STEP_SUMMARY
+│   ├── check-apt-deps.sh          依赖清单的包名是否仍存在于 noble 索引
+│   ├── check-pinned-tools.sh      手钉常量（upx / padjffs2 / po2lmo）与上游的差距
 │   └── generate-index.sh    生成 Pages 索引页
 └── inputs/                  构建输入：被复制进 immortalwrt/ 后在上游源码树内执行
     ├── diy-part1.sh
@@ -149,6 +151,25 @@ bash scripts/ci/generate-summary.sh [build|update-checker]   # 缺省 build
 >
 > `STEP_SEQUENCE` 给顺序和显示名，`STEP_<KEY>` 给状态值，是同一份数据的两种视图——新增步骤时两处都要登记。
 > 本地预览：`bash scripts/ci/generate-summary.sh`（不设 `GITHUB_STEP_SUMMARY` 即打印到终端）。
+
+### 依赖自动更新与巡检
+
+这个仓库的"依赖"有三类，能力边界各不相同——**不要以为装了机器人就都有人管**：
+
+| 对象 | 谁来管 | 能自动做什么 |
+| ---- | ---- | ---- |
+| `.github/workflows/` 里的 action 引用 | `.github/dependabot.yml` | 开 PR 升版本（major 单独开 PR，minor/patch 归组） |
+| `build/dependencies.txt` 的包名 | `ci/check-apt-deps.sh` + `dependency-audit.yml` | **只开 issue**：包名失效能发现，但改名映射不在任何机器可读数据源里 |
+| `install-deps.sh` 的 `EXTRAS_*` 常量 | `ci/check-pinned-tools.sh` + `dependency-audit.yml` | upx 开 PR；padjffs2 / po2lmo 只开 issue |
+
+两点必须说清楚：
+
+- **Dependabot 没有 apt/deb 生态。** 官方支持的 `package-ecosystem` 里没有 apt，所以 `dependencies.txt` 不存在"被机器人自动升版本"这回事——那份清单本身也全是裸包名、零版本号。
+- **action 引用只在有 tag 时才可能被钉住。** `klever1988/cachewrtbuild` 从未打过 tag（tags 为 0 条），只能继续跟 `main`，也不在 Dependabot 管理范围内；其余 7 处飘分支引用已钉到 tag，理由与构建 job 固定 `ubuntu-24.04` 而非 `ubuntu-latest` 相同：不让上游一次推送在不相关的提交上把构建搞红。
+
+**退出码约定**（两个检测脚本一致）：`E_SUCCESS(0)` 正常跑完（有漂移也是 0，脚本只报告不改文件）、`E_DATAERR(65)` 确有包名查不到、`E_UNAVAILABLE(69)` 网络或索引下载失败、`E_USAGE(64)`/`E_NOINPUT(66)` 参数与输入错误。workflow 只把 65 当"依赖问题"，其余非零码一律红叉（避免网络故障被静默吞掉）。
+
+`dependency-audit.yml` 的事件分工同样是刻意的：`pull_request` / `push` 只对改动依赖清单的路径跑包名校验并**当门禁**（非零即红叉）；开 issue、开 PR 这些副作用只在 `schedule` / `workflow_dispatch` 下发生，PR 上绝不自动改文件。
 
 ### 错误处理（`libs/02-error-handler.sh`）
 
