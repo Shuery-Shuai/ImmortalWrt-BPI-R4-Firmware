@@ -426,7 +426,7 @@ jobs:
 
       - name: Download artifact
         if: env.UPLOAD_BIN_DIR == 'true' && env.DEPLOY_TO_PAGES == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ImmortalWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
           path: bin
