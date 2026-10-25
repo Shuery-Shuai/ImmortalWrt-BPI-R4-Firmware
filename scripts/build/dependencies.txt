@@ -9,10 +9,10 @@
 #   mkisofs     -> xorriso（genisoimage 在 noble 仍可用，见下方 rtfw-builder 段）
 #
 # 关于 Clang/LLVM 的版本取舍：
-#   Ubuntu 自带的默认版本与上游要求的 18 冲突，故显式装 18 全套。
+#   noble 的默认 clang/lld/llvm 就是 18，与上游要求一致，故只装 metapackage。
 #   jammy 默认 clang 是 14，内核 6.18 起的 BPF 头文件编译要求
 #   "Minimum Clang version: 18.0.0"（早期是 15），会在 build 阶段直接中止；
-#   noble 默认已是 18，但本清单仍显式列出 18 全套，以免依赖 metapackage 漂移。
+#   noble 默认已是 18，故只列 clang/lld/llvm 三个 metapackage，不再额外声明 -18 套件。
 #
 # upx 不在本清单中：noble 的 upx-ucl 包版本落后于上游要求，
 # 改由 scripts/build/steps/install-deps.sh 的 install_extra_toolchains() 以官方 release 二进制落地。
@@ -91,17 +91,12 @@ xxd
 zlib1g-dev
 zstd
 
-# === LLVM/Clang 18 工具链 ===
+# === LLVM/Clang 工具链 ===
 # 用于编译内核 BPF 组件（如 bpf-headers）以及部分依赖 LLVM 的包。
-# clang-18/lld-18/llvm-18 提供带版本号的可执行文件，llvm-18-dev 提供头文件与
-# 静态库（个别包在 configure 阶段需要 llvm-config 与 LLVM headers）。
+# 只装 metapackage：noble 的默认版本即 18，无需再写 clang-18/lld-18/llvm-18/llvm-18-dev。
 clang
 lld
 llvm
-clang-18
-lld-18
-llvm-18
-llvm-18-dev
 
 # === 补入 rtfw-builder 已装、而本清单原先缺失的构建工具 ===
 # 逐项来源见 rtfw-builder 的 vendor/init_build_environment.sh（noble 上均存在）。
