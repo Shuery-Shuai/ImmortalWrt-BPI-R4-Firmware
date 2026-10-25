@@ -114,6 +114,22 @@ Shell 没有异常机制，错误处理围绕**退出码、`return`/`exit`、断
 `E_UNAVAILABLE=69`、`E_SOFTWARE=70`、`E_OSERR=71`、`E_CANTCREAT=73`、`E_IOERR=74`。
 `exit_code_to_name <code>` 把码转成可读名（`64` → `USAGE`，未知 → `UNKNOWN`）。
 
+**当前退出码用法**
+
+
+| 场景 | 退出码 | 说明 |
+| ---- | ------ | ---- |
+| 成功 | `E_SUCCESS` 0 | |
+| 用法错误（stage 非法、缺必需参数） | `E_USAGE` 64 | `build.sh` 已迁移，便于区分「敲错命令」与「构建失败」 |
+| 通用失败 | `E_GENERAL` 1 | 存量 `exit 1` 保持原样，未强制迁移 |
+
+> [!NOTE]
+>
+> 子 shell 内部的 `exit`（如 `( cd immortalwrt || exit 1; ... )`）**不迁移**：那里的 `exit` 是控制流机制——
+> 只结束子 shell、由外层 `|| return 1` 接住返回码，与「错误分类」无关。把 `exit 1` 改成 `exit $E_OSERR` 不会改变任何行为。
+>
+> CI 对任何非零退出码一视同仁（都判失败），因此 `64` 与 `1` 在流水线里没有区别；区分的价值在于**本地与人读**。
+
 **断言与前置检查**（全部 `return 1`，不 `exit`）
 
 `require_cmd` / `require_var` / `require_file` / `require_dir` / `require_exec`。

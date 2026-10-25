@@ -28,6 +28,9 @@ readonly SCRIPT_DIR
 _REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck source=scripts/libs/01-shell-logger.sh
 source "${_REPO_ROOT}/scripts/libs/01-shell-logger.sh"
+# error-handler 必须在 logger 之后（fail/die 调用 log_error），提供 E_* 退出码常量。
+# shellcheck source=scripts/libs/02-error-handler.sh
+source "${_REPO_ROOT}/scripts/libs/02-error-handler.sh"
 # shellcheck source=scripts/build/common/strictness.sh
 source "${SCRIPT_DIR}/common/strictness.sh"
 # shellcheck source=scripts/build/steps/install-deps.sh
@@ -88,7 +91,8 @@ main() {
     deps | prepare | download | compile | check | all) ;;
     *)
       usage
-      exit 1
+      # 用法错误：sysexits 的 E_USAGE=64，便于调用方区分『敲错命令』与『构建失败』。
+      exit "${E_USAGE}"
       ;;
   esac
 
