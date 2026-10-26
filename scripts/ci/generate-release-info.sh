@@ -15,6 +15,12 @@ trap 'cd "$ORIGINAL_DIR"' EXIT
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 
+# 本脚本是 build job 的一个步骤，日志也要跟着进 logs/ artifact，故沿用 build-<步骤> 这套命名；
+# 名字必须在 source 之前给出 —— 库在 source 那一刻就把路径拼好了，之后再改已经晚了。
+# 库本身不认这套前缀（它对任何仓库都该通用），约定由调用方负责。
+LOG_FILE_BASENAME="build-generate-release-info"
+export LOG_FILE_BASENAME
+
 # 加载顺序即依赖顺序：logger 最先（唯一 log 实现），strictness 次之（调用 log_error）。
 # shellcheck source=scripts/libs/01-shell-logger.sh
 source "${SCRIPT_DIR}/../libs/01-shell-logger.sh"

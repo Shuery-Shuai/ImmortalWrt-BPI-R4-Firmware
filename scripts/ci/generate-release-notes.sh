@@ -17,6 +17,9 @@ readonly SCRIPT_DIR
 # 加载顺序即依赖顺序：logger 最先（唯一 log 实现），strictness 次之（调用 log_error）。
 # shellcheck source=scripts/libs/01-shell-logger.sh
 source "${SCRIPT_DIR}/../libs/01-shell-logger.sh"
+# 本脚本排在 Upload build logs 之后运行，写下的日志注定进不了 artifact，
+# 只会在 logs/ 里冒充一次构建留下的记录；产物是 release.txt，日志不是它的交付物。
+LOG_TO_FILE=false
 # shellcheck source=scripts/build/common/strictness.sh
 source "${SCRIPT_DIR}/../build/common/strictness.sh"
 # shellcheck source=scripts/build/steps/install-deps.sh

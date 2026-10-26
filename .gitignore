@@ -4,5 +4,8 @@ openwrt
 output
 docker/
 keys/private-key.pem
+keys/public-key.pem
+/private-key.pem
+/public-key.pem
 logs/
 .tmp-*

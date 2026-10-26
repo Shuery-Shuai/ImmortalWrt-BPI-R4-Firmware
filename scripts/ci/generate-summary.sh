@@ -5,7 +5,7 @@
 #   - 未设置时打印到 stdout，便于本地预览；
 #   - 失败路径下，同一段错误行还会打到 stderr，让本地终端与 CI 页面看到同一份证据。
 #
-# 用法：bash scripts/ci/generate-summary.sh [build|update-checker]
+# 用法：bash scripts/ci/generate-summary.sh [build|update-checker|dependency-auditor|syntax-linter]
 #
 # 为什么退出码恒为 0：本脚本挂在 workflow 收尾步骤（if: always()）上，它只负责“汇报”。
 # 若它自己非零退出，就会覆盖掉真正的构建结论，所以任何输入缺失、命令不存在，
@@ -18,6 +18,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # log_* 全仓库只有这一份实现，不在这里另造（重复定义会撞上 logger 的 readonly 常量）。
 # shellcheck source=scripts/libs/01-shell-logger.sh
 source "${SCRIPT_DIR}/../libs/01-shell-logger.sh"
+# 摘要只读日志、不写日志：它一写就会在 logs/ 里多出一份"最新"的文件，
+# 而它正是挑"哪份日志属于本次构建"的那个读者——自己制造候选、再去匹配自己，是上一轮的 bug 根源。
+LOG_TO_FILE=false
 
 # 摘要要按仓库根找 logs/ 与 immortalwrt/bin/targets，因此先记住调用者 cwd，
 # 退出时还原，免得把“改了 cwd”这个副作用留给调用它的 shell。
@@ -44,8 +47,9 @@ readonly FIRMWARE_NAMES=(-name '*.bin' -o -name '*.itb' -o -name '*.img.gz' -o -
 FAILURE_DETECTED=false
 CANCELLED_DETECTED=false
 ERROR_LOG_NAME=""
-# stage = make 原始输出（含编译器错误原行）；logger = 构建脚本日志（可能只有汇总提示）。
-ERROR_SOURCE_KIND=""
+# 摘录出自哪一步：文件名（ERROR_LOG_NAME）只说得出"哪份"，说不出"哪步"，
+# 两者都进摘要，读者才不用回 artifact 里猜。
+ERROR_LOG_SOURCE=""
 ERROR_EXCERPT=""
 ERROR_NOTE=""
 
@@ -57,28 +61,40 @@ md_cell() {
 # 步骤结果的可读映射；空值代表该步骤因前序失败/取消而根本没执行。
 step_badge() {
   case "${1}" in
-    success) printf '✅ success' ;;
-    failure) printf '❌ failure' ;;
-    cancelled) printf '✖ cancelled' ;;
-    skipped) printf '⏭ skipped' ;;
+    success) printf '✅ 成功' ;;
+    failure) printf '❌ 失败' ;;
+    cancelled) printf '✖ 已取消' ;;
+    skipped) printf '⏭ 跳过' ;;
     "") printf '⚪ 未执行' ;;
     *) printf '❔ %s' "${1}" ;;
   esac
 }
 
-# STEP_SEQUENCE 的 KEY 是给人看的（hw / env_setup / release_info），但环境变量名
-# 大小写并不统一：STEP_hw 与 STEP_HW 都出现过，而 bash 变量名大小写敏感。
+# 通用取值：把 <PREFIX><KEY> 解析成值。KEY 是给人看的（hw / env_setup / release_info），
+# 但环境变量名大小写并不统一：STEP_hw 与 STEP_HW 都出现过，而 bash 变量名大小写敏感。
 # 故三个候选依次试（原样 / 全大写 / 全小写），取第一个非空值；用间接取值读，不 eval。
-step_value() {
-  local key="${1}"
-  local cand
-  for cand in "STEP_${key}" "STEP_${key^^}" "STEP_${key,,}"; do
+env_value() {
+  local prefix="${1}" key="${2}" cand
+  for cand in "${prefix}${key}" "${prefix}${key^^}" "${prefix}${key,,}"; do
     if [[ -n "${!cand:-}" ]]; then
       printf '%s' "${!cand}"
       return 0
     fi
   done
   return 0
+}
+
+step_value() {
+  env_value "STEP_" "${1}"
+}
+
+metric_value() {
+  env_value "METRIC_" "${1}"
+}
+
+# shellcheck disable=SC2329  # 仅在 render_details 的命令替换里调用，静态分析看不到这层引用
+detail_value() {
+  env_value "DETAIL_" "${1}"
 }
 
 # 只输出有值的那一行：契约里所有输入都是可选的，缺失即跳过。
@@ -137,12 +153,12 @@ resolve_verdict() {
 }
 
 render_header() {
-  local mode="${1}"
-  if [[ "${mode}" == "update-checker" ]]; then
-    printf '## 🔄 上游更新检查总结\n\n'
-  else
-    printf '## 🏗️ ImmortalWrt BPI-R4 构建总结\n\n'
-  fi
+  case "${1}" in
+    update-checker) printf '## 🔄 上游更新检查总结\n\n' ;;
+    dependency-auditor) printf '## 🔍 依赖巡检总结\n\n' ;;
+    syntax-linter) printf '## 🧹 语法与规范门禁总结\n\n' ;;
+    *) printf '## 🏗️ ImmortalWrt BPI-R4 构建总结\n\n' ;;
+  esac
   printf '**结论：** %s\n\n' "$(resolve_verdict)"
   if [[ -n "${GITHUB_REPOSITORY:-}" && -n "${GITHUB_RUN_ID:-}" ]]; then
     printf '运行链接：%s/%s/actions/runs/%s\n\n' \
@@ -155,14 +171,14 @@ render_meta() {
   # git 取不到（浅克隆无 HEAD、或不在仓库内）就留空，不报错。
   commit="$(git rev-parse --short HEAD 2>/dev/null)" || commit=""
   rows="$(
-    meta_row "Workflow" "${GITHUB_WORKFLOW:-}"
-    meta_row "Job" "${GITHUB_JOB:-}"
+    meta_row "工作流" "${GITHUB_WORKFLOW:-}"
+    meta_row "任务" "${GITHUB_JOB:-}"
     meta_row "事件" "${GITHUB_EVENT_NAME:-}"
     meta_row "分支" "${GITHUB_REF_NAME:-}"
     meta_row "提交" "${commit}"
     meta_row "触发人" "${GITHUB_ACTOR:-}"
-    meta_row "Runner" "${RUNNER_OS:-}"
-    meta_row "Run attempt" "${GITHUB_RUN_ATTEMPT:-}"
+    meta_row "运行器" "${RUNNER_OS:-}"
+    meta_row "运行次数" "${GITHUB_RUN_ATTEMPT:-}"
   )"
   [[ -n "${rows}" ]] || return 0
   printf '### 运行信息\n\n| 项 | 值 |\n| --- | --- |\n%s\n\n' "${rows}"
@@ -184,6 +200,66 @@ render_steps() {
     value="$(step_value "${key}")"
     printf '| %s | %s |\n' "$(md_cell "${name}")" "$(step_badge "${value}")"
   done <<<"${STEP_SEQUENCE}"
+  printf '\n'
+}
+
+# 日志文件名里能出现的步骤段 → 它能再往上对应到的 workflow 步骤。
+# 为什么需要这一跳：workflow 步骤叫 "Build firmware"，而日志文件叫 build-compile.log，
+# 名字是脚本名而不是步骤名，词面对不上，读者只能靠猜。
+log_step_source() {
+  # 入参是完整日志文件名（build-compile-verbose.log）：前缀与扩展名在这层剥掉，
+  # 调用方不必各自记着该切哪一段。
+  local step="${1:-}"
+  step="${step%.log}"
+  case "${step}" in
+    build-compile-verbose) printf 'Workflow 步骤 Build firmware（V=s 重试）' ;;
+    build-compile-single) printf 'Workflow 步骤 Build firmware（单线程重试）' ;;
+    build-compile-parallel) printf 'Workflow 步骤 Build firmware（并行）' ;;
+    build-deps) printf 'Workflow 步骤 Install build dependencies' ;;
+    build-prepare) printf 'Workflow 步骤 Prepare build workspace' ;;
+    build-download) printf 'Workflow 步骤 Build firmware（下载阶段）' ;;
+    build-check) printf 'Workflow 步骤 Report firmware size' ;;
+    build-compile) printf 'Workflow 步骤 Build firmware' ;;
+    build-all) printf 'Workflow 步骤 Build firmware（含体积统计）' ;;
+    build-generate-release-info) printf 'Workflow 步骤 ImmortalWrt AutoUpdate' ;;
+    build-generate-release-notes) printf 'Workflow 步骤 Generate release tag' ;;
+    *) printf '未登记命名的日志（%s）' "${1:-}" ;;
+  esac
+}
+
+# logs/ 里实际有哪些日志、各自属于哪一步：整包上传的 artifact 交给人之前，
+# 先在这里把"文件名 → 步骤"的对照摊开，省得逐个下载再翻。
+render_logs() {
+  # 与耗时同理：update-checker 的 job 不产出构建日志，本地预览时若渲染，
+  # 就会把仓库里残留的上一次构建日志当成这次的事实。
+  [[ "${1}" == "build" ]] || return 0
+  local dir="${LOG_DIR:-${DEFAULT_LOG_DIR}}"
+  [[ -d "${dir}" ]] || return 0
+  # artifact 是整包上传的 logs/，所以这里按目录实际内容列，而不是照抄候选全集：
+  # 读者要的是"这次运行真的产出了哪几个文件"，不是"理论上能有哪几个"。
+  local base tick listed=0 unexpected=""
+  # 反引号用 \x60 生成：直接写会被 shellcheck 当成命令替换（SC2006）。
+  tick="$(printf '\x60')"
+  local -a rows=()
+  while IFS= read -r base; do
+    [[ -n "${base}" ]] || continue
+    if is_catalog_log "${base}"; then
+      rows+=("| ${tick}${base}${tick} | $(md_cell "$(log_step_source "${base}" | sed 's/^Workflow 步骤 //')") |")
+      listed=1
+    else
+      unexpected+="${base} "
+    fi
+  done < <(find "${dir}" -maxdepth 1 -type f -name '*.log' -printf '%f\n' 2>/dev/null | sort)
+  [[ "${listed}" == "1" || -n "${unexpected}" ]] || return 0
+  printf '### 日志文件\n\n'
+  if [[ "${listed}" == "1" ]]; then
+    printf '| 日志文件 | 所属步骤 |\n| --- | --- |\n'
+    printf '%s\n' "${rows[@]}"
+  fi
+  if [[ -n "${unexpected}" ]]; then
+    [[ "${listed}" == "1" ]] && printf '\n'
+    printf '未按约定命名、因此不会被摘要引用：%s\n' "$(md_cell "${unexpected}")"
+  fi
   printf '\n'
 }
 
@@ -244,11 +320,21 @@ render_build_info() {
   # update-checker 的 job 拿不到固件，渲染体积/产物只会骗人；模式隔离在这里收口。
   [[ "${1}" == "build" ]] || return 0
   local rows size_line artifacts
+  # 前导下划线是流水线的拼接分隔符（artifact 名要拼成 xxx_<设备>_<日期>），
+  # 在这里读的却是列值，留着就是纯噪音；只在这一层去掉，不做成"值也改了"。
+  # CACHE_HIT 是 cachewrtbuild 的 true/false，直接照抄等于往中文摘要里塞英文。
+  local cache_text
+  case "${CACHE_HIT:-}" in
+    true) cache_text="命中" ;;
+    false) cache_text="未命中" ;;
+    "") cache_text="" ;;
+    *) cache_text="${CACHE_HIT}" ;;
+  esac
   rows="$(
-    meta_row "设备" "${DEVICE_NAME:-}"
-    meta_row "文件日期" "${FILE_DATE:-}"
-    meta_row "Release tag" "${RELEASE_TAG:-}"
-    meta_row "构建缓存命中" "${CACHE_HIT:-}"
+    meta_row "设备" "${DEVICE_NAME#_}"
+    meta_row "文件日期" "${FILE_DATE#_}"
+    meta_row "发布标签" "${RELEASE_TAG:-}"
+    meta_row "构建缓存" "${cache_text}"
   )"
   artifacts="$(artifact_rows)"
   size_line="$(firmware_size_line)"
@@ -264,7 +350,7 @@ render_build_info() {
     [[ -n "${rows}" ]] && printf '\n'
     # 末尾补一个换行终止表格：命令替换已吞掉 artifact_rows 的行尾换行，
     # 否则后面的「固件体积」会被 Markdown 当成表格的续行。
-    printf '| 产物类型 | artifact 名 |\n| --- | --- |\n%s\n' "${artifacts}"
+    printf '| 产物类型 | 产物名 |\n| --- | --- |\n%s\n' "${artifacts}"
   fi
   if [[ -n "${size_line}" ]]; then
     [[ -n "${rows}" || -n "${artifacts}" ]] && printf '\n'
@@ -273,7 +359,6 @@ render_build_info() {
   printf '\n'
 }
 
-# 最新日志用 mtime 排序而非文件名排序：并发构建的日志名不含时间语义。
 newest_log_file() {
   local dir="${1:-}"
   [[ -d "${dir}" ]] || return 1
@@ -284,87 +369,95 @@ newest_log_file() {
   printf '%s\n' "${found}"
 }
 
-# 阶段日志 = make 的原始输出（compile.sh 的三段重定向目标），真正的 "error:" / "Error N"
-# 只写在这里；logger 自己那份只记 log_* 行，从不含编译器原始错误行。
-# 所以错误源不能只看 mtime——logger 日志全程追加、结束时必然最新，会盖掉真正有用的那份。
-readonly STAGE_LOG_NAMES=(build-verbose.log build-single.log build-parallel.log)
+# 候选全集：只有这里列出的文件名才会被选源。顺序即优先级，
+# 让"哪份日志更该被引用"变成一份可 review 的列表，而不是一个 mtime 排序的输出。
+#
+# build-compile.log 是 compile 阶段的 logger 日志：download/prepare 进度、私钥门禁的失败原因、
+# make 失败时那句 "Compilation failed" 都只写在这里；三个 make 变体（-parallel/-single/-verbose）
+# 只装 make 原始输出。因此主日志排最前——摘录要先给人话结论，再给编译器原始错误行。
+readonly LOG_NAME_CATALOG=(
+  build-compile.log
+  build-compile-verbose.log
+  build-compile-single.log
+  build-compile-parallel.log
+  build-generate-release-info.log
+  build-deps.log
+  build-prepare.log
+  build-download.log
+  build-check.log
+  build-all.log
+  build-verbose.log
+  build-single.log
+  build-parallel.log
+)
 
-stage_log_file() {
-  local dir="${1:-}"
-  local name
-  for name in "${STAGE_LOG_NAMES[@]}"; do
-    if [[ -f "${dir}/${name}" ]]; then
-      printf '%s\n' "${dir}/${name}"
-      return 0
-    fi
-  done
-  return 1
+# 每份候选日志能"自证"到什么程度，决定它能否直接被引用：
+#   时间戳 - 首末行时间戳成对，说明它覆盖了一次完整的步骤运行（也就能算耗时）；
+#   内容   - 该步骤只写一句话，被写过本身就说明它属于本次运行（算不出耗时）；
+#   None   - 认不出来源，永不参与选源。
+# 这里只回答"能怎么自证"；步骤名由 log_step_source 从文件名推出，
+# 是否含 make 原行由 log_kind_label 推出——三处各管一件事，不互相抄。
+log_name_rule() {
+  case "${1:-}" in
+    build-compile.log | build-compile-verbose.log | build-compile-single.log | build-compile-parallel.log | \
+      build-verbose.log | build-single.log | build-parallel.log | \
+      build-deps.log | build-prepare.log | build-download.log | build-check.log | build-all.log)
+      printf '时间戳'
+      ;;
+    build-generate-release-info.log) printf '内容' ;;
+    *) printf 'None' ;;
+  esac
 }
 
-is_stage_log() {
-  local base name
-  base="$(basename -- "${1}")"
-  for name in "${STAGE_LOG_NAMES[@]}"; do
+# 文件名是否在候选全集里（"日志文件"小节与 resolve_log 共用同一份清单，不另造白名单）。
+is_catalog_log() {
+  local base="${1:-}" name
+  for name in "${LOG_NAME_CATALOG[@]}"; do
     [[ "${base}" == "${name}" ]] && return 0
   done
   return 1
 }
 
-# 只找 logger 日志（排除阶段日志）：同一秒内多文件 mtime 相同时，newest_log_file
-# 会按路径字典序挑到阶段日志，回退逻辑若不复用它就会原地打转、永远试不到 logger 日志。
-newest_logger_log_file() {
+# 输出 "<kind>|<路径>|<起始时间戳>|<结束时间戳>"；解析不出候选就返回非零。
+# 只认规则命名且能自证的日志，因此这里不需要 mtime 猜测。
+resolve_log() {
   local dir="${1:-}"
+  local mode="${2:-error}"
   [[ -d "${dir}" ]] || return 1
-  local found
-  found="$(find "${dir}" -maxdepth 1 -type f -name '*.log' -printf '%T@ %p\n' 2>/dev/null |
-    sort -n | cut -d' ' -f2- | tac | while IFS= read -r p; do
-      is_stage_log "${p}" || {
-        printf '%s\n' "${p}"
-        break
-      }
-    done)" || found=""
-  [[ -n "${found}" ]] || return 1
-  printf '%s\n' "${found}"
-}
-
-# 输出 "<kind>|<path>"：kind=stage 表示 make 原始输出，kind=logger 表示构建脚本日志。
-# 先按固定优先级找阶段日志（verbose 最后跑、信息最全，故排最前），没有才回退 mtime 最新的 logger 日志。
-select_log_file() {
-  local dir="${1:-}"
-  local stage newest
-  if stage="$(stage_log_file "${dir}")"; then
-    printf 'stage|%s\n' "${stage}"
+  local base path kind start end
+  for base in "${LOG_NAME_CATALOG[@]}"; do
+    path="${dir}/${base}"
+    [[ -f "${path}" ]] || continue
+    kind="$(log_name_rule "${base}")"
+    case "${kind}" in
+      None) continue ;;
+      时间戳)
+        start="$(first_ts "${path}")"
+        end="$(last_ts "${path}")"
+        [[ -n "${start}" && -n "${end}" ]] || continue
+        ;;
+    esac
+    printf '%s|%s|%s|%s\n' "${kind}" "${path}" "${start:-}" "${end:-}"
     return 0
-  fi
-  newest="$(newest_logger_log_file "${dir}")" || newest=""
-  [[ -n "${newest}" ]] || newest="$(newest_log_file "${dir}")" || return 1
-  printf 'logger|%s\n' "${newest}"
-}
-
-# 耗时候选：阶段日志没有 [时间] 前缀，取不到时间戳时由调用方继续试下一个，
-# 所以阶段日志在前、logger 日志在后兜底；两者都无时才回落所有 *.log。
-duration_log_candidates() {
-  local dir="${1:-}"
-  local name logger
-  for name in "${STAGE_LOG_NAMES[@]}"; do
-    [[ -f "${dir}/${name}" ]] && printf '%s\n' "${dir}/${name}"
   done
-  logger="$(newest_logger_log_file "${dir}")" || logger=""
-  if [[ -n "${logger}" ]]; then
-    printf '%s\n' "${logger}"
-    return 0
-  fi
-  newest_log_file "${dir}" 2>/dev/null || true
+  # 没有任何规则候选时，只在需要错误摘录的场景退回 mtime 兜底；
+  # 耗时不给兜底——宁可不报时长，也不拿一份读不懂的日志编一个数出来。
+  [[ "${mode}" == "error" ]] || return 1
+  path="$(newest_log_file "${dir}")" || return 1
+  printf '时间戳|%s||\n' "${path}"
 }
 
+# 时间戳可能带 UTC 偏移（[2026-10-26 11:45:21 +0800]），也可能不带（旧日志/阶段日志）。
+# 偏移必须原样传给 date -d：丢掉它就把"装 tzdata 前 UTC、装后 +08:00"当成了同一时钟，
+# 首末相减会算出几小时的假耗时（本地实测 6m54s 被算成 8h6m54s）。
 first_ts() {
   head -n 200 -- "${1}" 2>/dev/null |
-    grep -m1 -oE '\[[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\]' | tr -d '[]'
+    grep -m1 -oE '\[[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}( ?[+-][0-9]{4})?\]' | tr -d '[]'
 }
 
 last_ts() {
   tail -n 200 -- "${1}" 2>/dev/null |
-    grep -oE '\[[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\]' | tail -n 1 | tr -d '[]'
+    grep -oE '\[[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}( ?[+-][0-9]{4})?\]' | tail -n 1 | tr -d '[]'
 }
 
 human_duration() {
@@ -381,7 +474,7 @@ ccache_line() {
   local rate hits_line hits pct misses
   rate="$(printf '%s\n' "${out}" | grep -iE 'hit rate' | head -n 1 | sed 's/.*:[[:space:]]*//')"
   if [[ -n "${rate}" ]]; then
-    printf 'ccache 命中率：%s' "${rate}"
+    printf '编译缓存命中率：%s' "${rate}"
     return 0
   fi
   # ccache 4 的摘要形如 "Hits: 123 / 456 (26.97%)"，括号里就是命中率。
@@ -389,7 +482,7 @@ ccache_line() {
   [[ -n "${hits_line}" ]] || return 0
   pct="$(printf '%s' "${hits_line}" | grep -oE '\([0-9.]+%\)' | tr -d '()')"
   if [[ -n "${pct}" ]]; then
-    printf 'ccache 命中率：%s' "${pct}"
+    printf '编译缓存命中率：%s' "${pct}"
     return 0
   fi
   hits="$(printf '%s' "${hits_line}" | grep -oE '[0-9]+' | head -n 1)"
@@ -397,32 +490,39 @@ ccache_line() {
     grep -oE '[0-9]+' | head -n 1)"
   if [[ -n "${hits}" && -n "${misses}" ]] && ((hits + misses > 0)); then
     pct="$(awk -v h="${hits}" -v m="${misses}" 'BEGIN { printf "%.1f%%", 100 * h / (h + m) }')"
-    printf 'ccache 命中率：%s（%s hits / %s misses）' "${pct}" "${hits}" "${misses}"
+    printf '编译缓存命中率：%s（命中 %s 次 / 未命中 %s 次）' "${pct}" "${hits}" "${misses}"
   fi
   return 0
 }
 
+# 耗时只认规则命名日志的首末行时间戳。没有时间戳就不报时长——
+# 用错来源算出来的假时长（例如摘要步骤自己那份只有一句话的日志）比"没有时长"更误导人。
 render_duration() {
-  # 耗时靠 build 日志首末行、命中率靠 ccache，两者都只属于 build job；
+  # 耗时靠构建日志首末行、命中率靠 ccache，两者都只属于 build job；
   # update-checker 若渲染它们，本地预览就会把仓库里残留的旧 build 日志当成事实。
   [[ "${1}" == "build" ]] || return 0
   local dir="${LOG_DIR:-${DEFAULT_LOG_DIR}}"
-  local log line="" start end
-  # 阶段日志是 make 原始输出，没有 logger 的 [时间] 前缀，取不到首末行时间戳；
-  # 所以按候选顺序逐个试，第一个能给出时间戳的赢，logger 日志天然兜底。
-  while IFS= read -r log; do
-    [[ -n "${log}" ]] || continue
-    start="$(first_ts "${log}")"
-    end="$(last_ts "${log}")"
-    [[ -n "${start}" && -n "${end}" ]] || continue
-    local s e
-    s="$(date -d "${start}" +%s 2>/dev/null)" || s=""
-    e="$(date -d "${end}" +%s 2>/dev/null)" || e=""
-    [[ -n "${s}" && -n "${e}" ]] || continue
-    ((e >= s)) || continue
-    line="构建耗时：约 $(human_duration "$((e - s))")（${start} → ${end}，来源 $(basename -- "${log}")）"
-    break
-  done < <(duration_log_candidates "${dir}")
+  local line="" selected kind log start end s e
+  # 候选来自固定规则全集（resolve_log）：第一个既在清单里、又能自证的赢。
+  # 不再按 mtime 猜"哪份最新"——那只会挑到摘要步骤自己写的那份。
+  selected="$(resolve_log "${dir}" duration)" || selected=""
+  if [[ -n "${selected}" ]]; then
+    kind="${selected%%|*}"
+    selected="${selected#*|}"
+    log="${selected%%|*}"
+    selected="${selected#*|}"
+    start="${selected%%|*}"
+    end="${selected#*|}"
+    if [[ "${kind}" == "时间戳" ]]; then
+      s="$(date -d "${start}" +%s 2>/dev/null)" || s=""
+      e="$(date -d "${end}" +%s 2>/dev/null)" || e=""
+      if [[ -n "${s}" && -n "${e}" ]] && ((e >= s)); then
+        # 来源写两步：日志文件名（能对回 artifact）与它所属的 workflow 步骤（能对回运行页）。
+        # 步骤名走 log_step_source，"日志文件"小节与这里才对同一份文件说同一句话。
+        line="构建耗时：约 $(human_duration "$((e - s))")（${start} → ${end}，来源 $(basename -- "${log}")，$(log_step_source "$(basename -- "${log}")")）"
+      fi
+    fi
+  fi
   local cache
   cache="$(ccache_line)"
   if [[ -z "${line}" && -z "${cache}" ]]; then
@@ -438,14 +538,17 @@ render_duration() {
 collect_error_excerpt() {
   local dir="${LOG_DIR:-${DEFAULT_LOG_DIR}}"
   local selected log
-  selected="$(select_log_file "${dir}")" || selected=""
+  selected="$(resolve_log "${dir}" error)" || selected=""
   if [[ -z "${selected}" ]]; then
-    ERROR_NOTE="未找到构建日志：${dir} 不存在或不含 *.log"
+    ERROR_NOTE="未找到构建日志：${dir} 不存在或不含规则命名的 *.log"
     return 0
   fi
-  ERROR_SOURCE_KIND="${selected%%|*}"
-  log="${selected#*|}"
+  # resolve_log 输出 kind|路径|起始|结束：摘录要写清出自哪一步的哪份日志，
+  # 步骤名从文件名反推（log_step_source），读者不用回 artifact 里逐个猜。
+  selected="${selected#*|}"
+  log="${selected%%|*}"
   ERROR_LOG_NAME="$(basename -- "${log}")"
+  ERROR_LOG_SOURCE="$(log_step_source "${ERROR_LOG_NAME}")"
   ERROR_EXCERPT="$(tail -n "${ERROR_SOURCE_LINES}" -- "${log}" 2>/dev/null |
     grep -aE -- "${ERROR_PATTERN}" 2>/dev/null |
     awk -v max="${ERROR_SHOW_LINES}" -v len="${ERROR_LINE_MAX}" '
@@ -464,14 +567,22 @@ collect_error_excerpt() {
   return 0
 }
 
-# 日志类型要写进摘要：logger 日志通常只有「Compilation failed. Logs: ...」这类汇总行，
-# 读者看到来源是它时，才知道原行仍需回到 stage artifact 里查。
+# 日志类型要写进摘要：只有 make 原始输出才会有编译器 error 原行，
+# 脚本日志通常只有「Compilation failed. Logs: ...」这类汇总行。
 log_kind_label() {
-  case "${ERROR_SOURCE_KIND}" in
-    stage) printf 'make 原始输出' ;;
-    logger) printf '构建脚本日志，可能不含编译错误原行' ;;
-    *) printf '未知来源' ;;
+  local raw=""
+  case "${ERROR_LOG_NAME}" in
+    build-compile-verbose.log | build-compile-single.log | build-compile-parallel.log)
+      raw=1
+      ;;
+    build-verbose.log | build-single.log | build-parallel.log) raw=1 ;;
+    *) raw=0 ;;
   esac
+  if [[ "${raw}" == "1" ]]; then
+    printf 'make 原始输出'
+  else
+    printf '脚本日志，可能不含编译错误原行'
+  fi
 }
 
 render_failure() {
@@ -479,8 +590,9 @@ render_failure() {
   if [[ -n "${ERROR_EXCERPT}" ]]; then
     local count
     count="$(printf '%s\n' "${ERROR_EXCERPT}" | grep -c '')"
-    printf '<details><summary>关键错误摘录（%s 行，来自 <code>%s</code> — %s）</summary>\n\n' \
-      "${count}" "$(md_cell "${ERROR_LOG_NAME}")" "$(log_kind_label)"
+    printf '<details><summary>关键错误摘录（%s 行，来自 %s 的 <code>%s</code> — %s）</summary>\n\n' \
+      "${count}" "$(md_cell "${ERROR_LOG_SOURCE:-未登记命名的日志}")" \
+      "$(md_cell "${ERROR_LOG_NAME}")" "$(log_kind_label)"
     # 反引号用 \x60 生成，避免围栏字面量在 shell 里被当成命令替换。
     local fence
     fence="$(printf '\x60\x60\x60')"
@@ -509,6 +621,75 @@ render_update_checker() {
   printf '### 上游更新\n\n| 项 | 值 |\n| --- | --- |\n'
   printf '%s\n' "${rows[@]}"
   printf '\n'
+}
+
+# 只有 build / update-checker 这两个 job 会真的产出 logs/，
+# 其余流水线在没有日志的 runner 上扫描，只会把"没找到日志"写成一条假故障。
+uses_build_logs() {
+  case "${1}" in
+    build | update-checker) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# 指标表：回答"这次运行到底查了什么、查出什么"。KEY|显示名称 的写法与 STEP_SEQUENCE 一致，
+# 取值同样走 <PREFIX><KEY> 的三候选大小写规则——两条通道只差一个前缀，不另立规则。
+render_metrics() {
+  case "${1}" in
+    dependency-auditor | syntax-linter) ;;
+    *) return 0 ;;
+  esac
+  [[ -n "${METRIC_SEQUENCE:-}" ]] || return 0
+  printf '### 本次结果\n\n| 项 | 值 |\n| --- | --- |\n'
+  local line key name value
+  while IFS= read -r line; do
+    [[ -n "${line}" ]] || continue
+    key="${line%%|*}"
+    if [[ "${line}" == *"|"* ]]; then
+      name="${line#*|}"
+    else
+      name="${key}"
+    fi
+    [[ -n "${name}" ]] || name="${key}"
+    value="$(metric_value "${key}")"
+    # 空值是"这一步没跑到"，不是"结果是 0"；留空单元格会被读成后者，所以显式标出来。
+    [[ -n "${value}" ]] || value="⚪ 未提供"
+    printf '| %s | %s |\n' "$(md_cell "${name}")" "$(md_cell "${value}")"
+  done <<<"${METRIC_SEQUENCE}"
+  printf '\n'
+}
+
+# 明细通道：长正文（失效包名清单、lint 命中列表）折叠起来，默认不占版面、按需展开。
+# DETAIL_SEQUENCE 每行 KEY|折叠标题，DETAIL_<KEY> 是正文；正文进围栏不转义，
+# 因为它本身就是命令输出，转义后不能直接复制去排查。
+# 折叠标题用 md_cell 压平：<summary> 里再嵌一层 Markdown 表格会撑坏折叠块。
+render_details() {
+  case "${1}" in
+    dependency-auditor | syntax-linter) ;;
+    *) return 0 ;;
+  esac
+  [[ -n "${DETAIL_SEQUENCE:-}" ]] || return 0
+  local line key title body fence printed=0
+  fence="$(printf '\x60\x60\x60')"
+  while IFS= read -r line; do
+    [[ -n "${line}" ]] || continue
+    key="${line%%|*}"
+    if [[ "${line}" == *"|"* ]]; then
+      title="${line#*|}"
+    else
+      title="${key}"
+    fi
+    [[ -n "${title}" ]] || title="${key}"
+    body="$(detail_value "${key}")"
+    # 没有正文就不出折叠块：一个空 <details> 比不渲染更让人困惑。
+    [[ -n "${body}" ]] || continue
+    if [[ "${printed}" == "0" ]]; then
+      printf '### 明细\n\n'
+      printed=1
+    fi
+    printf '<details><summary>%s</summary>\n\n%stext\n%s\n%s\n\n</details>\n\n' \
+      "$(md_cell "${title}")" "${fence}" "${body}" "${fence}"
+  done <<<"${DETAIL_SEQUENCE}"
 }
 
 # 写入 GITHUB_STEP_SUMMARY；路径不可写时退回 stdout，信息不丢。
@@ -541,7 +722,7 @@ flush_error_to_stderr() {
 main() {
   local mode="${1:-build}"
   case "${mode}" in
-    build | update-checker) ;;
+    build | update-checker | dependency-auditor | syntax-linter) ;;
     *)
       log_warning "未知模式 '${mode}'，按 build 处理"
       mode="build"
@@ -549,7 +730,9 @@ main() {
   esac
 
   detect_failure
-  if [[ "${FAILURE_DETECTED}" == "true" ]]; then
+  # 摘录来源于 logs/，只有 build / update-checker 才会产出这份日志。
+  # 其余流水线的 runner 上没有 logs/，去扫描只会把"没找到日志"写成一条假故障。
+  if [[ "${FAILURE_DETECTED}" == "true" ]] && uses_build_logs "${mode}"; then
     collect_error_excerpt
   fi
 
@@ -558,16 +741,20 @@ main() {
     render_header "${mode}"
     render_meta
     render_update_checker "${mode}"
+    render_metrics "${mode}"
     render_steps
+    render_details "${mode}"
     render_build_info "${mode}"
+    render_logs "${mode}"
     render_duration "${mode}"
-    if [[ "${FAILURE_DETECTED}" == "true" ]]; then
+    # 失败摘录读的是 logs/，只有会产出构建日志的流水线才谈得上"从这里找原行"。
+    if [[ "${FAILURE_DETECTED}" == "true" ]] && uses_build_logs "${mode}"; then
       render_failure
     fi
   )"
 
   emit_summary "${summary}"
-  flush_error_to_stderr
+  uses_build_logs "${mode}" && flush_error_to_stderr
   return 0
 }
 

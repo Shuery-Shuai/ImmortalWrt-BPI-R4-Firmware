@@ -6,8 +6,9 @@
 #
 # 全局变量：
 #   LOG_LEVEL              - 当前日志级别 (默认 INFO)
-#   LOG_TO_FILE            - 是否写入日志文件 (默认 false)
-#   LOG_FILE_PATH          - 日志文件路径
+#   LOG_TO_FILE            - 是否写入日志文件 (默认 true)
+#   LOG_FILE_PATH          - 日志文件完整路径（显式给出时原样使用，优先级最高）
+#   LOG_FILE_BASENAME      - 日志文件名主干，缺省取主脚本文件名（不含目录与 .sh）
 #   LOG_LEVEL_TRACE..FATAL - 日志级别常量
 #   COLOR_*                - ANSI 颜色常量
 #
@@ -86,8 +87,9 @@ export COLOR_RESET COLOR_GRAY COLOR_CYAN COLOR_BLUE COLOR_YELLOW COLOR_RED COLOR
 # 全局变量：
 #   LOG_LEVEL      - 当前日志级别，低于此级别的日志将被过滤
 #   LOG_TO_FILE    - 是否同时写入日志文件（默认 true，便于本地与 CI 事后排查）
-#   LOG_FILE_PATH  - 日志文件的存储路径（默认项目根 logs/build-<时间戳>.log）
-#   LOG_DIR        - 日志目录（未显式给 LOG_FILE_PATH 时用它拼文件名）
+#   LOG_FILE_PATH     - 日志文件完整路径（显式给出时优先，不再拼接）
+#   LOG_DIR           - 日志目录（未显式给 LOG_FILE_PATH 时用它拼文件名）
+#   LOG_FILE_BASENAME - 日志文件名主干，缺省取主脚本文件名；命名约定由调用方决定
 #######################################
 : "${LOG_LEVEL:=INFO}"
 : "${LOG_TO_FILE:=true}"
@@ -96,18 +98,39 @@ export COLOR_RESET COLOR_GRAY COLOR_CYAN COLOR_BLUE COLOR_YELLOW COLOR_RED COLOR
 # 相对路径 logs/ 会解析到 <当前目录>/logs，造成日志散落各处、甚至目录不存在时写入失败。
 # 项目根 = 本文件所在目录上溯两级（scripts/libs/ -> scripts/ -> 仓库根）。
 _LOG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)"
+
+# 缺省文件名按【主脚本】而非【进程】决定：用 $(date) + $$ 拼，等于每个 bash 子进程各算一份，
+# 一次运行能散出十几份谁也认不出的日志，而按 mtime 只能挑出"最后写的"、挑不出"这次运行的"。
+# 固定名让同一次运行的父子 shell 追加进同一份；至于叫什么（前缀、阶段后缀）属于调用方约定，
+# 本库不预设 —— 需要时由调用方设 LOG_FILE_PATH（完整路径）或 LOG_FILE_BASENAME（文件名主干）覆盖。
+# 代价：同一目录里跑两次同名脚本，第二次追加在第一次之后（行内时间戳可区分先后）。
+_log_main_script_name() {
+    # 调用栈最底部的非本文件层级就是主脚本：它 source 本库时正处在栈底。
+    local _i _src
+    for ((_i = ${#BASH_SOURCE[@]} - 1; _i > 0; _i--)); do
+        _src="${BASH_SOURCE[_i]}"
+        [[ -n "${_src}" ]] || continue
+        [[ "$(basename "${_src}")" == "01-shell-logger.sh" ]] && continue
+        basename "${_src}" .sh
+        return 0
+    done
+    printf 'shell'
+}
+
 if [[ -z "${LOG_FILE_PATH:-}" ]]; then
+    LOG_FILE_BASENAME="${LOG_FILE_BASENAME:-$(_log_main_script_name)}"
     if [[ -n "${_LOG_ROOT}" ]]; then
-        LOG_FILE_PATH="${_LOG_ROOT}/${LOG_DIR}/build-$(date +%Y%m%d_%H%M%S)-$$.log"
+        LOG_FILE_PATH="${_LOG_ROOT}/${LOG_DIR}/${LOG_FILE_BASENAME}.log"
     else
         # 仓库根不可解析（极少见）时退化到 /tmp，保证仍能记录。
-        LOG_FILE_PATH="/tmp/build-$(date +%Y%m%d_%H%M%S)-$$.log"
+        LOG_FILE_PATH="/tmp/${LOG_FILE_BASENAME}.log"
     fi
 fi
+# 必须 export：子 bash 重新 source 本文件时若拿不到路径，就会再拼一个，父子的日志就此分家。
+# export 而非 readonly：readonly 在重复 source 时会报『只读变量』中断调用者。
+export LOG_FILE_PATH
 # 导出日志目录的【绝对路径】，供其它模块（如 compile 的阶段日志）复用，
 # 避免它们各自写相对路径 ${LOG_DIR}/ 而依赖调用者的 CWD。
-# export 而非 readonly：readonly 在重复 source 时会报『只读变量』中断调用者；
-# export 也让 shellcheck 认可『该变量供外部使用』（否则赋值后无人引用会报 SC2034）。
 LOG_DIR_ABS="$(dirname "${LOG_FILE_PATH}")"
 export LOG_DIR_ABS
 unset _LOG_ROOT
@@ -191,7 +214,7 @@ _normalize_log_level() {
 #   - log LEVEL CATEGORY MESSAGE
 #   - log LEVEL CATEGORY MESSAGE TO_FILE
 #
-# 日志格式: [时间戳] [级别] [脚本名][分类] 消息
+# 日志格式: [时间戳+偏移] [级别] [脚本名][分类] 消息  （如 [2026-10-26 11:45:21 +0800]）
 #
 # 参数：
 #   $1 - 日志级别 (TRACE|DEBUG|INFO|WARN|ERROR|FATAL|SUCCESS)
@@ -247,18 +270,16 @@ log() {
     color="${style%|*}"
     emoji="${style#*|}"
 
-    # 获取调用脚本名称（去除路径和扩展名）。
-    # 不能简单取 BASH_SOURCE[2]：调用链里每多一层薄包装（log_info → log，
-    # 或 log → _helper → log），层级就偏移一格，最终会把 'bash' 当成脚本名。
-    # 这里从调用栈里向下找第一个【非本文件、非 bash 自身】的层级，取它的文件名。
+    # 行内标记取【调用方源文件名】（不是文件名主干）：一份日志里往往有多个模块在写，
+    # 标记只有落到具体模块才有辨识度（mods/07-git-utils.sh 与 diy-part2.sh 要分得开）。
+    # 不能简单取 BASH_SOURCE[1]：每多一层薄包装（log_info → log）层级就偏移一格，会取到 'bash'，
+    # 因此从 1 起向下找第一个【非本文件、非 bash 自身】的层级。
     local script_name="unknown"
     local _i _src
     for ((_i = 1; _i < ${#BASH_SOURCE[@]}; _i++)); do
         _src="${BASH_SOURCE[_i]}"
         [[ -z "${_src}" ]] && continue
-        # 跳过本文件自身（logger 与它的包装函数都在这里定义）
         [[ "$(basename "${_src}")" == "01-shell-logger.sh" ]] && continue
-        # 跳过 bash 自身（bash -c 场景下 BASH_SOURCE 会是 'bash'）
         [[ "$(basename "${_src}")" == "bash" ]] && continue
         script_name="$(basename "${_src}" .sh)"
         break
@@ -279,7 +300,10 @@ log() {
 
     # 输出到 stderr（带颜色）
     local timestamp
-    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    # 时间戳必须带 UTC 偏移：容器/精简镜像在装 tzdata 之前 TZ 不生效（date 落回 UTC），
+    # 装完才变成 +08:00。同一份日志里混有两种时钟而又不留偏移标记，首末行相减就会算出
+    # 几个小时甚至更长的假耗时。带上 %z 后，任何时刻的行都能换算回绝对时间。
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S %z')
     printf '%b\n' "[${timestamp}] ${color}[${emoji} ${level}]${COLOR_RESET} [${script_name}]${cat_tag} ${message}" >&2
 
     # 输出到文件（不带颜色代码）

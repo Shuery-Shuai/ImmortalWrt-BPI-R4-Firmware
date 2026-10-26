@@ -121,10 +121,16 @@ load_custom_feeds() {
   fi
 }
 
-# 还原 APK 签名私钥（对齐 workflow: Restore APK signing key）。
+# 还原 APK 签名私钥并校验公钥指纹（对齐 workflow: Restore APK signing key）。
 # 私钥在 CI 来自 secret APK_PRIVATE_KEY_B64，本地从 keys/private-key.pem 读取。
 # 缺少私钥时构建会用一次性密钥，已刷机设备将无法信任新仓库，因此这里只报警不中断，
 # 以保证本地首次构建可用；CI 侧由 workflow 的 set -euo pipefail 负责强制。
+#
+# 门禁形态（相对迁移前的"与入库公钥逐字节比对"）：仓库不再入库公钥——keys/public-key.pem
+# 已随"公钥出库"删除，逐字节比对失去了比对对象，也无法在 CI 里凭空恢复该文件。
+# 现在改用环境变量指纹：私钥派生公钥 → 公钥 sha256 与仓库 Variable APK_PUBLIC_KEY_SHA256 比对，
+# 基准随代码仓库一起走版本管理，不再依赖任何入库密钥文件。比对逻辑只由
+# scripts/ci/check-apk-signing-key.sh 实现，CI 并行调用同一个脚本，两处不会分叉。
 restore_apk_signing_key() {
   local dest="immortalwrt/private-key.pem"
   local local_key="${APK_PRIVATE_KEY:-keys/private-key.pem}"
@@ -148,15 +154,30 @@ restore_apk_signing_key() {
     return 0
   fi
 
-  # 与仓库内公钥比对，防止私钥与 keys/public-key.pem 不一致（对齐 workflow 的 diff 校验）。
-  if [[ -f "keys/public-key.pem" ]]; then
-    local derived
-    derived="$(openssl ec -in "${dest}" -pubout 2>/dev/null)"
-    if [[ "${derived}" != "$(cat "keys/public-key.pem")" ]]; then
-      fail "The signing key does not match keys/public-key.pem; aborting."
-      return 1
-    fi
-    log_success "APK signing key verified against keys/public-key.pem"
+  # 门禁：私钥派生公钥 → 与 APK_PUBLIC_KEY_SHA256 指纹比对（不再是入库公钥逐字节比对：
+  # 公钥已出库，本就无文件可对齐）。派生结果先落临时文件再由门禁脚本读它算指纹，
+  # 这样 openssl 的失败不会被管道/命令替换吞掉——旧实现用 2>/dev/null 且外层套 `if [[ -f ]]` 守卫，
+  # 派生失败时会静默跳过整段校验。
+  local pub_tmp check_script="scripts/ci/check-apk-signing-key.sh"
+  pub_tmp="$(mktemp "${TMPDIR:-/tmp}/apk-pubkey.XXXXXX")" || {
+    fail "Failed to create a temporary file for the derived APK public key."
+    return 1
+  }
+  # 临时文件按绝对路径删除：本函数的调用方会 cd 进 immortalwrt/，相对路径会在错误的目录里 rm。
+  if ! openssl ec -in "${dest}" -pubout -out "${pub_tmp}"; then
+    rm -f -- "${pub_tmp}"
+    fail "Failed to derive the public key from ${dest}."
+    return 1
+  fi
+  # 调用路径相对【仓库根】：pipeline 的运行基准一直是仓库根（上面的 keys/private-key.pem 同理）。
+  # || rc=$? 而非裸调用 + ${?}：裸调用在调用方开了 set -e 时会直接终止进程，
+  # rm 就永远走不到，临时文件（公钥）会留在 /tmp。放进 || 列表后不再触发 set -e。
+  local rc=0
+  "${check_script}" key "${pub_tmp}" || rc=$?
+  rm -f -- "${pub_tmp}"
+  if [[ ${rc} -ne 0 ]]; then
+    fail "The signing key does not match APK_PUBLIC_KEY_SHA256; aborting."
+    return 1
   fi
 }
 

@@ -35,9 +35,11 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
+        id: checkout
         uses: actions/checkout@v7
 
       - name: Install shellcheck v${{ env.SHELLCHECK_VERSION }}
+        id: install
         run: |
           archive="$RUNNER_TEMP/shellcheck.tar.xz"
           curl -fsSL -o "$archive" \
@@ -49,6 +51,7 @@ jobs:
           shellcheck --version
 
       - name: Run shellcheck
+        id: lint
         run: |
           # 纳入两类脚本：
           #   1) scripts/ 与 files/ 下全部 *.sh；
@@ -60,20 +63,54 @@ jobs:
             find files -type f ! -name '*.sh' -exec grep -lIE '^#!.*(bash|sh)' {} +
           )
           echo "待检查脚本 ${#scripts[@]} 个"
+          echo "count=${#scripts[@]}" >>"${GITHUB_OUTPUT}"
           # 一次性整体传入，让 shellcheck 给出统一的跨文件结论；任一脚本有问题即失败。
-          shellcheck -x "${scripts[@]}"
+          # tee 是为了让收尾步骤拿得到命中明细；PIPESTATUS[0] 保住 shellcheck 自己的退出码，
+          # 否则管道末端的 tee 会把失败改写成 0。
+          rc=0
+          shellcheck -x "${scripts[@]}" 2>&1 | tee "${RUNNER_TEMP}/shellcheck-findings.txt" || rc=${PIPESTATUS[0]}
+          [[ "${rc}" -eq 0 ]]
+
+      - name: Run summary
+        if: always()
+        continue-on-error: true
+        env:
+          JOB_STATUS: ${{ job.status }}
+          STEP_SEQUENCE: |
+            checkout|Checkout
+            install|Install shellcheck
+            lint|Run shellcheck
+          STEP_checkout: ${{ steps.checkout.outcome }}
+          STEP_install: ${{ steps.install.outcome }}
+          STEP_lint: ${{ steps.lint.outcome }}
+          METRIC_SEQUENCE: |
+            count|待检查脚本数
+          METRIC_count: ${{ steps.lint.outputs.count }}
+          DETAIL_SEQUENCE: |
+            findings|shellcheck 命中
+        run: |
+          # detail 从 RUNNER_TEMP 里的文件读，而不是经 GITHUB_OUTPUT 传：
+          # 多行输出要在 workflow 里手写 heredoc 分隔符，写错就静默丢内容；
+          # 同一个 job 内直接读文件更短也更难出错。
+          if [[ -f "${RUNNER_TEMP}/shellcheck-findings.txt" ]]; then
+            DETAIL_findings="$(cat "${RUNNER_TEMP}/shellcheck-findings.txt")"
+            export DETAIL_findings
+          fi
+          bash scripts/ci/generate-summary.sh syntax-linter
 
   actionlint:
     name: actionlint
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
+        id: checkout
         uses: actions/checkout@v7
 
       # actionlint 会对每个 run 块内嵌调用 shellcheck。这里同样装固定版本：
       # 预装的 0.9.0 会报出 SC2002 这类新版本已不再报的项，若两边版本不同，
       # 同一个 run 块可能在两个 job 里得出不同结论，门禁自相矛盾。
       - name: Install shellcheck v${{ env.SHELLCHECK_VERSION }}
+        id: install_shellcheck
         run: |
           archive="$RUNNER_TEMP/shellcheck.tar.xz"
           curl -fsSL -o "$archive" \
@@ -83,6 +120,7 @@ jobs:
           sudo install -m 0755 "$RUNNER_TEMP/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
 
       - name: Install actionlint v${{ env.ACTIONLINT_VERSION }}
+        id: install
         run: |
           archive="$RUNNER_TEMP/actionlint.tar.gz"
           curl -fsSL -o "$archive" \
@@ -95,18 +133,77 @@ jobs:
           shellcheck --version | grep 'version:'
 
       - name: Run actionlint
+        id: lint
         run: |
-          actionlint -no-color .github/workflows/*.yml
+          mapfile -t workflows < <(find .github/workflows -maxdepth 1 -type f -name '*.yml' | sort)
+          echo "count=${#workflows[@]}" >>"${GITHUB_OUTPUT}"
+          rc=0
+          actionlint -no-color "${workflows[@]}" 2>&1 | tee "${RUNNER_TEMP}/actionlint-findings.txt" || rc=${PIPESTATUS[0]}
+          [[ "${rc}" -eq 0 ]]
+
+      - name: Run summary
+        if: always()
+        continue-on-error: true
+        env:
+          JOB_STATUS: ${{ job.status }}
+          STEP_SEQUENCE: |
+            checkout|Checkout
+            install_shellcheck|Install shellcheck
+            install|Install actionlint
+            lint|Run actionlint
+          STEP_checkout: ${{ steps.checkout.outcome }}
+          STEP_install_shellcheck: ${{ steps.install_shellcheck.outcome }}
+          STEP_install: ${{ steps.install.outcome }}
+          STEP_lint: ${{ steps.lint.outcome }}
+          METRIC_SEQUENCE: |
+            count|待检查 workflow 数
+          METRIC_count: ${{ steps.lint.outputs.count }}
+          DETAIL_SEQUENCE: |
+            findings|actionlint 命中
+        run: |
+          if [[ -f "${RUNNER_TEMP}/actionlint-findings.txt" ]]; then
+            DETAIL_findings="$(cat "${RUNNER_TEMP}/actionlint-findings.txt")"
+            export DETAIL_findings
+          fi
+          bash scripts/ci/generate-summary.sh syntax-linter
 
   markdownlint:
     name: markdownlint
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
+        id: checkout
         uses: actions/checkout@v7
 
       # 规则来自仓库根的 .markdownlint-cli2.yaml（cli2 会自动发现），此处不重复配置；
       # 只固定 cli2 版本，避免 @latest 在未来把新的规则默认值带进来。
       - name: Run markdownlint-cli2 v0.24.0
+        id: lint
         run: |
-          npx --yes markdownlint-cli2@0.24.0 "README.md" "README-workflow.md" "scripts/README.md"
+          docs=("README.md" "README-workflow.md" "scripts/README.md")
+          echo "count=${#docs[@]}" >>"${GITHUB_OUTPUT}"
+          rc=0
+          npx --yes markdownlint-cli2@0.24.0 "${docs[@]}" 2>&1 | tee "${RUNNER_TEMP}/markdownlint-findings.txt" || rc=${PIPESTATUS[0]}
+          [[ "${rc}" -eq 0 ]]
+
+      - name: Run summary
+        if: always()
+        continue-on-error: true
+        env:
+          JOB_STATUS: ${{ job.status }}
+          STEP_SEQUENCE: |
+            checkout|Checkout
+            lint|Run markdownlint
+          STEP_checkout: ${{ steps.checkout.outcome }}
+          STEP_lint: ${{ steps.lint.outcome }}
+          METRIC_SEQUENCE: |
+            count|待检查 Markdown 数
+          METRIC_count: ${{ steps.lint.outputs.count }}
+          DETAIL_SEQUENCE: |
+            findings|markdownlint 命中
+        run: |
+          if [[ -f "${RUNNER_TEMP}/markdownlint-findings.txt" ]]; then
+            DETAIL_findings="$(cat "${RUNNER_TEMP}/markdownlint-findings.txt")"
+            export DETAIL_findings
+          fi
+          bash scripts/ci/generate-summary.sh syntax-linter

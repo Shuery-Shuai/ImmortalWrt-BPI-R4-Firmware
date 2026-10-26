@@ -109,9 +109,10 @@ compile_firmware() {
   # 优先用 logger 导出的绝对目录：本函数可能在任何 CWD 下被调用，相对路径会散落。
   local logdir="${LOG_DIR_ABS:-${LOG_DIR:-logs}}"
   mkdir -p "${logdir}" || true
-  local log1="${logdir}/build-parallel.log"
-  local log2="${logdir}/build-single.log"
-  local log3="${logdir}/build-verbose.log"
+  # 与 logger 日志同一命名形状 build-<步骤>-<变体>.log：只读文件名就要能答"哪一步、哪种跑法"。
+  local log1="${logdir}/build-compile-parallel.log"
+  local log2="${logdir}/build-compile-single.log"
+  local log3="${logdir}/build-compile-verbose.log"
 
   log_info "Compiling firmware (jobs: ${jobs})..."
   if _make_once "${log1}" -j"${jobs}"; then

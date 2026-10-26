@@ -4,6 +4,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # 加载顺序即依赖顺序：logger 最先（唯一 log 实现），strictness 次之（调用 log_error）。
 # shellcheck source=scripts/libs/01-shell-logger.sh
 source "${SCRIPT_DIR}/../libs/01-shell-logger.sh"
+# 本脚本在 deploy job 里跑，那个 job 根本不上传 logs/；写下的日志只会留在本地树里冒充构建记录。
+LOG_TO_FILE=false
 # shellcheck source=scripts/build/common/strictness.sh
 source "${SCRIPT_DIR}/../build/common/strictness.sh"
 # shellcheck source=scripts/build/steps/install-deps.sh

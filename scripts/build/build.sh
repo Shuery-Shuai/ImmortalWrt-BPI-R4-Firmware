@@ -23,6 +23,13 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 
+# 日志文件名由【本入口】定，不能等 main() —— logger 在 source 的那一刻就把路径拼好了。
+# 库只管格式（缺省名取主脚本名，对这里就是 "build"）；build-<stage> 这套前缀是流水线的命名约定，
+# 属于调用方：六个 stage 若都用缺省名就会全挤进 build.log，事后分不出哪份是编译、哪份是装依赖。
+# 非法 stage 由 main() 的 case 拒绝，这里不做校验。
+LOG_FILE_BASENAME="build-${1:-build}"
+export LOG_FILE_BASENAME
+
 # 加载顺序即依赖顺序，不可调换：logger 最先（唯一 log 实现），strictness 次之（它调用 log_error），
 # 然后是两个阶段模块，最后是编排。
 _REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"

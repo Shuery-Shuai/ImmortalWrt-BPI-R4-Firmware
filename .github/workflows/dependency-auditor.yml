@@ -73,6 +73,7 @@ jobs:
       missing_count: ${{ steps.audit.outputs.missing_count }}
     steps:
       - name: Check out repository
+        id: checkout
         uses: actions/checkout@v7
 
       - name: Check apt package names against noble indexes
@@ -114,6 +115,28 @@ jobs:
           echo "::error::check-apt-deps.sh 异常退出（rc=${rc}，非依赖失效，通常是网络或输入问题）"
           exit 1
 
+      # 门禁路径上 report job 被 if 排除，MISSING 清单只留在本 job 日志里；
+      # 有了总结，"哪些包名失效"才不用点开日志才能看到。
+      - name: Run summary
+        if: always()
+        continue-on-error: true
+        env:
+          JOB_STATUS: ${{ job.status }}
+          STEP_SEQUENCE: |
+            checkout|Check out repository
+            audit|Check apt package names
+          STEP_checkout: ${{ steps.checkout.outcome }}
+          STEP_audit: ${{ steps.audit.outcome }}
+          METRIC_SEQUENCE: |
+            missing_count|失效包名数
+            event|事件
+          METRIC_missing_count: ${{ steps.audit.outputs.missing_count }}
+          METRIC_event: ${{ github.event_name }}
+          DETAIL_SEQUENCE: |
+            missing|失效的 apt 包名清单
+          DETAIL_missing: ${{ steps.audit.outputs.missing }}
+        run: bash scripts/ci/generate-summary.sh dependency-auditor
+
   # ---------------------------------------------------------------------------
   # job 2：手钉常量巡检（仅定时 / 手动触发）
   #   输出经 GITHUB_OUTPUT 传给报告 job（脚本原生支持，这里不需要再解析）。
@@ -141,6 +164,7 @@ jobs:
       fan2go_outdated: ${{ steps.audit.outputs.fan2go_outdated }}
     steps:
       - name: Check out repository
+        id: checkout
         uses: actions/checkout@v7
 
       - name: Query upstream versions of pinned tools
@@ -152,6 +176,46 @@ jobs:
         run: |
           set -euo pipefail
           scripts/ci/check-pinned-tools.sh
+      # 上游版本结论原本只能逐个 job 点开才看得到；这里把"哪个工具漂移了"摊平。
+      # 取值全部来自上一步 outputs，与 issue / PR 用的是同一份数据，不另算一遍。
+      - name: Run summary
+        if: always()
+        continue-on-error: true
+        env:
+          JOB_STATUS: ${{ job.status }}
+          STEP_SEQUENCE: |
+            checkout|Check out repository
+            audit|Query upstream versions
+          STEP_checkout: ${{ steps.checkout.outcome }}
+          STEP_audit: ${{ steps.audit.outcome }}
+          METRIC_SEQUENCE: |
+            upx|upx（有新 release 即开 PR）
+            padjffs2|padjffs2（钉 commit，只报告）
+            po2lmo|po2lmo（钉 commit，只报告）
+            dae|dae（有新 release 即开 PR）
+            fan2go|fan2go（有新 release 即开 PR）
+          METRIC_upx: ${{ steps.audit.outputs.upx_pinned }} -> ${{ steps.audit.outputs.upx_latest }}
+          METRIC_padjffs2: ${{ steps.audit.outputs.padjffs2_pinned }}
+          METRIC_po2lmo: ${{ steps.audit.outputs.po2lmo_pinned }}
+          METRIC_dae: ${{ steps.audit.outputs.dae_pinned }} -> ${{ steps.audit.outputs.dae_latest }}
+          METRIC_fan2go: ${{ steps.audit.outputs.fan2go_pinned }} -> ${{ steps.audit.outputs.fan2go_latest }}
+          DETAIL_SEQUENCE: |
+            drift|已漂移的工具
+        run: |
+          # 只列真的漂移了的工具；全都没漂移就不导出，摘要里不会出现空折叠块。
+          drift=""
+          add() {
+            [[ "${2}" == "true" ]] || return 0
+            if [[ -n "${drift}" ]]; then drift="${drift}"$'\n'; fi
+            drift="${drift}${1}"
+          }
+          add "upx: ${{ steps.audit.outputs.upx_pinned }} -> ${{ steps.audit.outputs.upx_latest }}" "${{ steps.audit.outputs.upx_outdated }}"
+          add "padjffs2: ${{ steps.audit.outputs.padjffs2_pinned }} -> ${{ steps.audit.outputs.padjffs2_upstream }}" "${{ steps.audit.outputs.padjffs2_outdated }}"
+          add "po2lmo: ${{ steps.audit.outputs.po2lmo_pinned }} -> ${{ steps.audit.outputs.po2lmo_upstream }}" "${{ steps.audit.outputs.po2lmo_outdated }}"
+          add "dae: ${{ steps.audit.outputs.dae_pinned }} -> ${{ steps.audit.outputs.dae_latest }}" "${{ steps.audit.outputs.dae_outdated }}"
+          add "fan2go: ${{ steps.audit.outputs.fan2go_pinned }} -> ${{ steps.audit.outputs.fan2go_latest }}" "${{ steps.audit.outputs.fan2go_outdated }}"
+          if [[ -n "${drift}" ]]; then export DETAIL_drift="${drift}"; fi
+          bash scripts/ci/generate-summary.sh dependency-auditor
 
   # ---------------------------------------------------------------------------
   # job 3：报告与副作用（仅定时 / 手动触发）——全部用 run: 里的 gh / git / sed，不起第三方 action

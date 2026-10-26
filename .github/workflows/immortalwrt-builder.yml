@@ -97,6 +97,17 @@ jobs:
         id: checkout
         uses: actions/checkout@v7
 
+      # 密钥体系门禁必须排在 checkout 之后的最前面：脚本存放在仓库里，checkout 之前拿不到；
+      # 而密钥不对（缺失或与镜像内公钥不同源）时，越早红掉越省事——后面每一步都要花掉大量
+      # runner 时间，等到打包/发布阶段才发现，等于白跑一次完整编译。
+      # REQUIRED=1 是 CI 的唯一合法值：缺 Secret/Variable 时必须硬失败，不允许静默降级成告警。
+      - name: Verify apk signing key
+        id: apk_key
+        env:
+          REQUIRED: "1"
+          APK_PUBLIC_KEY_SHA256: ${{ vars.APK_PUBLIC_KEY_SHA256 }}
+        run: bash scripts/ci/check-apk-signing-key.sh env
+
       # 只保留 CI 独占的部分：清理 runner 预装的重型运行时与第三方源、设置 runner 时区、修正工作区属主。
       # 依赖安装已收敛到 scripts/build/build.sh deps（唯一会调用 apt 的阶段）；
       # purge 里含 llvm*，脚本会重新装回 clang-18 全套，二者逻辑自洽。
@@ -141,9 +152,12 @@ jobs:
 
       # 克隆 + 私钥 + feeds + 自定义文件 + .config + DIY1/feeds update -a/DIY2/update -i/install -a + defconfig
       # 全部收敛到 prepare。CI 侧必须保留 secret 缺失即失败的语义：
-      # scripts/build/pipeline.sh 的 restore_apk_signing_key 在 REQUIRED=1 时若既无 APK_PRIVATE_KEY_B64
-      # 也无 keys/private-key.pem（CI 中该文件不存在，已 gitignore）会硬失败，
-      # 并会将派生公钥与 keys/public-key.pem 比对，不一致同样硬失败。
+      # scripts/build/pipeline.sh 的 restore_apk_signing_key（第 134 行起）在 REQUIRED=1 时若既无
+      # APK_PRIVATE_KEY_B64 也无 keys/private-key.pem（CI 中该文件不存在，已 gitignore）会硬失败。
+      # 该函数还会用私钥派生公钥，再调用 scripts/ci/check-apk-signing-key.sh key 比对指纹；
+      # 因此【凡是会跑到私钥还原的步骤都必须传入 APK_PUBLIC_KEY_SHA256】：本步骤与 'Build firmware'
+      # 都要传，漏传则门禁在严格模式下拿不到比对基准而中断，私钥还原成功反而让流水线立刻变红。
+      # 该 Variable 与 job 最前面的 apk_key 门禁共用同一个 APK_PUBLIC_KEY_SHA256，不要另设第二份基准。
       #
       # 注意：后面的 'Build firmware' 跑 bash scripts/build/build.sh compile，而 compile 阶段内含 prepare。
       # 因此 prepare 被实现了幂等（scripts/build/pipeline.sh 的 prepare_all 用输入指纹判断）：
@@ -154,6 +168,8 @@ jobs:
         env:
           REQUIRED: "1"
           APK_PRIVATE_KEY_B64: ${{ secrets.APK_PRIVATE_KEY_B64 }}
+          # 门禁脚本的比对基准；缺失时严格模式直接中断，私钥还原也就无从完成。
+          APK_PUBLIC_KEY_SHA256: ${{ vars.APK_PUBLIC_KEY_SHA256 }}
         run: bash scripts/build/build.sh prepare
 
       # 缓存依赖 immortalwrt/ 已存在，必须排在 prepare 之后、下载/编译之前。
@@ -192,6 +208,8 @@ jobs:
           # compile 阶段内部会再跑一次 prepare（含私钥还原），这里必须同样提供 secret，
           # 否则严格模式下第二次私钥还原会因找不到密钥而硬失败。
           APK_PRIVATE_KEY_B64: ${{ secrets.APK_PRIVATE_KEY_B64 }}
+          # 同理：第二次私钥还原也会走门禁脚本比对指纹，基准必须与 prepare / apk_key 保持一致。
+          APK_PUBLIC_KEY_SHA256: ${{ vars.APK_PUBLIC_KEY_SHA256 }}
         run: |
           bash scripts/build/build.sh compile
           echo "status=success" >> "$GITHUB_OUTPUT"
@@ -229,6 +247,22 @@ jobs:
           path: logs/
           if-no-files-found: warn
           retention-days: 7
+
+      # 公钥不再入库（keys/public-key.pem 已删除），改由编译期产物派生并直接落到发布树：
+      # 上游 package/Makefile 在编译时用私钥生成 immortalwrt/public-key.pem
+      # （rules.mk 的 BUILD_KEY_APK_PUB），它只留在编译目录里，不放进 bin/ 就不会被发布。
+      # 必须排在 'Upload bin directory' 之前，否则上传的 bin 包里没有公钥。
+      # 源文件缺失即硬失败：公钥是该步骤唯一目的，静默跳过会让 /keys/public-key.pem 404。
+      - name: Publish apk public key into bin
+        id: apk_pubkey
+        run: |
+          if [ ! -s immortalwrt/public-key.pem ]; then
+            echo "::error::immortalwrt/public-key.pem is missing or empty; the compile stage did not derive the apk public key from the private key (BUILD_KEY_APK_PUB in rules.mk)."
+            exit 1
+          fi
+          mkdir -p immortalwrt/bin/keys
+          cp immortalwrt/public-key.pem immortalwrt/bin/keys/public-key.pem
+          cp immortalwrt/public-key.pem immortalwrt/bin/public-key.pem
 
       - name: Upload bin directory
         id: artifact_bin
@@ -325,7 +359,6 @@ jobs:
           body_path: release.txt
           files: |
             ${{ env.FIRMWARE }}/*
-            keys/public-key.pem
 
       - name: Delete workflow runs
         id: cleanup_runs
@@ -360,6 +393,7 @@ jobs:
             disk|Optimize Disk Space
             diskdone|Free up disk space complete
             checkout|Checkout
+            apk_key|Verify apk signing key
             env_setup|Initialization environment
             deps|Install build dependencies
             prepare|Prepare build workspace
@@ -370,6 +404,7 @@ jobs:
             size|Report firmware size
             space|Check space usage
             artifact_logs|Upload build logs
+            apk_pubkey|Publish apk public key into bin
             artifact_bin|Upload bin directory
             environment|Get environment path
             zip_kernel|Compressed kernel packages
@@ -386,6 +421,7 @@ jobs:
           STEP_disk: ${{ steps.disk.outcome }}
           STEP_diskdone: ${{ steps.diskdone.outcome }}
           STEP_checkout: ${{ steps.checkout.outcome }}
+          STEP_apk_key: ${{ steps.apk_key.outcome }}
           STEP_env_setup: ${{ steps.env_setup.outcome }}
           STEP_deps: ${{ steps.deps.outcome }}
           STEP_prepare: ${{ steps.prepare.outcome }}
@@ -396,6 +432,7 @@ jobs:
           STEP_size: ${{ steps.size.outcome }}
           STEP_space: ${{ steps.space.outcome }}
           STEP_artifact_logs: ${{ steps.artifact_logs.outcome }}
+          STEP_apk_pubkey: ${{ steps.apk_pubkey.outcome }}
           STEP_artifact_bin: ${{ steps.artifact_bin.outcome }}
           STEP_environment: ${{ steps.environment.outcome }}
           STEP_zip_kernel: ${{ steps.zip_kernel.outcome }}
@@ -448,15 +485,31 @@ jobs:
           name: ImmortalWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
           path: bin
 
+      # 公钥不再入库，deploy 侧无从拷贝，只做校验：两份文件都在 build job 的 apk_pubkey 步骤里
+      # 生成并随 bin artifact 一起下载到 bin/，这里任何一份缺失或内容不一致都说明那一步没生效，
+      # 直接硬失败，避免把缺公钥的站点发布出去。
+      # 必须排在 'Generate index.html' 之前：索引按目录树静态渲染，公钥晚到就不会出现在 keys/ 条目里。
+      # 两份文件内容必须相同：/public-key.pem 是兼容副本（旧导入命令用该路径），
+      # 正式路径是 /keys/public-key.pem，同源才能保证两条链接签发同一把密钥。
+      - name: Verify apk public key in bin
+        if: env.UPLOAD_BIN_DIR == 'true' && env.DEPLOY_TO_PAGES == 'true'
+        run: |
+          for pub in bin/keys/public-key.pem bin/public-key.pem; do
+            if [ ! -s "$pub" ]; then
+              echo "::error::$pub is missing or empty; the build job's apk_pubkey step did not publish the apk public key."
+              exit 1
+            fi
+          done
+          if ! cmp -s bin/keys/public-key.pem bin/public-key.pem; then
+            echo "::error::bin/keys/public-key.pem and bin/public-key.pem differ; the build job's apk_pubkey step published mismatched copies."
+            exit 1
+          fi
+
       - name: Generate index.html
         if: env.UPLOAD_BIN_DIR == 'true' && env.DEPLOY_TO_PAGES == 'true'
         run: |
           chmod +x "$GEN_INDEX_SH"
           bash "$GEN_INDEX_SH"
-
-      - name: Publish apk public key
-        if: env.UPLOAD_BIN_DIR == 'true' && env.DEPLOY_TO_PAGES == 'true'
-        run: cp keys/public-key.pem bin/public-key.pem
 
       - name: Upload pages artifact
         if: env.UPLOAD_BIN_DIR == 'true' && env.DEPLOY_TO_PAGES == 'true'

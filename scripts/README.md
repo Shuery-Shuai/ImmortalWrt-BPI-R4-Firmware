@@ -106,10 +106,27 @@ stateDiagram-v2
 > - `prepare` 是**幂等**的：它按输入指纹（上游 commit、`.config`、DIY 脚本、`files/`、`feeds.conf`、`libs/`、`mods/`）判断，
 >   输入没变就跳过。因此 CI 里「`prepare` 步骤 + `compile` 内含的 prepare」不会重复工作，也不会删掉期间生成的 `99-release-info`。
 >   需要强制重跑时设 `FORCE_PREPARE=1`。
-> - `REQUIRED=1` 启用严格模式：缺 APK 私钥、缺依赖清单、装依赖失败都直接失败。CI 使用该模式，本地缺省为降级告警。
+> - `REQUIRED=1` 启用严格模式：缺 APK 私钥、缺签名公钥指纹（`APK_PUBLIC_KEY_SHA256`）、
+>   缺依赖清单、装依赖失败都直接失败。CI 使用该模式，本地缺省为降级告警。
 > - 早期 4 个薄转发入口（旧 `make.sh` / `prepare-workdir.sh` / `set-config.sh` / `initialize-environment.sh`）已删除，
 >   一律用 `scripts/build/build.sh <stage>` 代替：compile / prepare / prepare / deps 一一对应。
-> - **日志**：默认落仓库根 `logs/`（`build-<时间戳>-<PID>.log`），编译阶段另存 `build-parallel/single/verbose.log`。
+> - **日志**：默认落仓库根 `logs/`。**库不管命名，仓库管命名**——`libs/01-shell-logger.sh` 是通用库
+>   （还会被复制进 `immortalwrt/` 供 `diy-part*.sh`、`mods/`、`utils/` 使用），它只提供格式与默认路径
+>   （缺省文件名 = 主脚本名，如 `build.log`、`deps.log`），不认识 `build-` 前缀，也不该认识。
+>   本仓库的约定由调用方落实：入口脚本在 source 之前设 `LOG_FILE_BASENAME`。
+>
+>   | 调用方                                | 文件名                                                        |
+>   | ------------------------------------- | ------------------------------------------------------------- |
+>   | `build.sh <stage>`                    | `build-<stage>.log`（`build-compile.log`、`build-deps.log`…） |
+>   | `ci/generate-release-info.sh`         | `build-generate-release-info.log`                             |
+>   | `ci/generate-summary.sh` 等纯产物脚本 | 不写文件日志（`LOG_TO_FILE=false`）                           |
+>
+>   编译阶段的 make 原始输出另存 `build-compile-parallel/single/verbose.log`。
+>   文件名**不带时间戳也不带 PID**：带 `$$` 会让每个 bash 子进程各算一份，一次运行散成十几个
+>   `build-<秒>-<PID>.log`，事后谁也分不清哪份是哪步；而按 mtime 挑"最新"又只能挑到"最后写的"，
+>   不是"这次构建的"——摘要因此引用过一份自己刚写下的空日志。改为固定名后，同一次运行的父子 shell
+>   全部追加进同一份，失败后缀变体（`-parallel` 等）留档不覆盖。
+>   行内标记仍是**调用方源文件名**（`[07-git-utils]`、`[diy-part2]`），因为一份日志里往往有多个模块在写。
 
 ## 🌲 目录结构
 
@@ -183,14 +200,14 @@ scripts/
 `$GITHUB_STEP_SUMMARY`，运行页顶部直接能看到步骤状态、产物和关键错误行。
 
 ```sh
-bash scripts/ci/generate-summary.sh [build|update-checker]   # 缺省 build
+bash scripts/ci/generate-summary.sh [build|update-checker|dependency-auditor|syntax-linter]   # 缺省 build
 ```
 
-| 项     | 约定                                                                         |
-| ------ | ---------------------------------------------------------------------------- |
-| 输出   | 设了 `GITHUB_STEP_SUMMARY` 就追加写入该文件，否则打印到 stdout（本地预览用） |
-| 退出码 | 恒为 `0`——摘要自身绝不能让流水线变红                                         |
-| 参数   | `build` / `update-checker`，决定标题与适用章节；缺省 `build`                 |
+| 项     | 约定                                                                                                  |
+| ------ | ----------------------------------------------------------------------------------------------------- |
+| 输出   | 设了 `GITHUB_STEP_SUMMARY` 就追加写入该文件，否则打印到 stdout（本地预览用）                          |
+| 退出码 | 恒为 `0`——摘要自身绝不能让流水线变红                                                                  |
+| 参数   | `build` / `update-checker` / `dependency-auditor` / `syntax-linter`，决定标题与适用章节；缺省 `build` |
 
 **入参全是环境变量，缺哪个就跳过对应小节**，所以本地不设任何变量也能跑出可用的一段 Markdown。
 
@@ -201,24 +218,33 @@ bash scripts/ci/generate-summary.sh [build|update-checker]   # 缺省 build
 | `STEP_<KEY>`                                                          | 该步骤的 outcome（`success` / `failure` / `cancelled` / `skipped` / 空）                                                                                                |
 | `DEVICE_NAME` / `FILE_DATE` / `RELEASE_TAG`                           | 元信息：机型、文件日期、发布 tag                                                                                                                                        |
 | `ARTIFACT_BIN_NAME` / `ARTIFACT_FIRMWARE_NAME` / `ARTIFACT_LOGS_NAME` | 产物名                                                                                                                                                                  |
-| `CACHE_HIT`                                                           | ccache / 构建缓存是否命中（`true` / `false`）                                                                                                                           |
-| `LOG_DIR`                                                             | 日志目录，相对仓库根，缺省 `logs`                                                                                                                                       |
+| `CACHE_HIT`                                                           | 构建缓存是否命中（`true` / `false`，摘要渲染成「命中 / 未命中」）                                                                                                       |
+| `LOG_DIR`                                                             | 日志目录，相对仓库根，缺省 `logs`（选源只认 `LOG_NAME_CATALOG` 里的文件名）                                                                                             |
 | `COMMIT_HASH` / `BUILD_TRIGGERED`                                     | `update-checker` 专用：检出的上游 commit、是否触发了构建                                                                                                                |
+| `METRIC_SEQUENCE` / `METRIC_<KEY>`                                    | `dependency-auditor` / `syntax-linter` 专用：「本次结果」表，与 `STEP_SEQUENCE` 同写法，只差前缀                                                                        |
+| `DETAIL_SEQUENCE` / `DETAIL_<KEY>`                                    | 同上两条流水线专用：「明细」折叠块，`DETAIL_<KEY>` 为空则整块跳过                                                                                                       |
 | 标准 `GITHUB_*`                                                       | `GITHUB_REPOSITORY` / `_SERVER_URL` / `_RUN_ID` / `_RUN_ATTEMPT` / `_WORKFLOW` / `_REF_NAME` / `_EVENT_NAME` / `_ACTOR` / `_JOB`、`RUNNER_OS`：链接、run 号、触发方式等 |
 
 摘要按下面几块拼装，每一块都只在自己的输入存在时才出现：
 
-| 小节                   | 内容                                                                | 依据                                                                          |
-| ---------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| 结论 + 运行链接        | 成功 / 失败、`server/repo/actions/runs/<id>`                        | `JOB_STATUS`、`GITHUB_REPOSITORY`、`GITHUB_RUN_ID`                            |
-| 运行信息               | workflow、job、事件、分支、提交、触发人、Runner OS、run attempt     | 标准 `GITHUB_*` + `git rev-parse`                                             |
-| 上游更新               | 检出的上游 commit、是否触发构建（仅 `update-checker`）              | `COMMIT_HASH`、`BUILD_TRIGGERED`                                              |
-| 步骤状态               | 按 `STEP_SEQUENCE` 逐行列出 outcome，带结果徽标                     | `STEP_SEQUENCE` + `STEP_<KEY>`                                                |
-| 构建产物（仅 `build`） | 设备、文件日期、Release tag、缓存命中、artifact 名、固件体积        | `DEVICE_NAME` / `FILE_DATE` / `RELEASE_TAG` / `CACHE_HIT` / `ARTIFACT_*_NAME` |
-| 耗时与缓存             | 取 `LOG_DIR` 最新一份日志的首尾时间戳，算时长；有 ccache 时附命中率 | `LOG_DIR`                                                                     |
-| 失败详情               | 从最新日志末尾筛出关键错误行，折叠在 `<details>` 里                 | job 失败时的 `LOG_DIR`                                                        |
+| 小节                                               | 内容                                                             | 依据                                                                          |
+| -------------------------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| 结论 + 运行链接                                    | 成功 / 失败、`server/repo/actions/runs/<id>`                     | `JOB_STATUS`、`GITHUB_REPOSITORY`、`GITHUB_RUN_ID`                            |
+| 运行信息                                           | workflow、job、事件、分支、提交、触发人、Runner OS、run attempt  | 标准 `GITHUB_*` + `git rev-parse`                                             |
+| 上游更新                                           | 检出的上游 commit、是否触发构建（仅 `update-checker`）           | `COMMIT_HASH`、`BUILD_TRIGGERED`                                              |
+| 步骤状态                                           | 按 `STEP_SEQUENCE` 逐行列出 outcome，带结果徽标                  | `STEP_SEQUENCE` + `STEP_<KEY>`                                                |
+| 构建产物（仅 `build`）                             | 设备、文件日期、发布标签、构建缓存、产物名、固件体积             | `DEVICE_NAME` / `FILE_DATE` / `RELEASE_TAG` / `CACHE_HIT` / `ARTIFACT_*_NAME` |
+| 日志文件                                           | `LOG_DIR` 里实际产出的日志 → 它属于哪个 workflow 步骤            | `LOG_DIR` 目录内容 + `LOG_NAME_CATALOG`                                       |
+| 耗时与缓存                                         | 按候选清单选中一份带首尾时间戳的日志算时长；有 ccache 时附命中率 | `LOG_DIR` + `LOG_NAME_CATALOG`                                                |
+| 失败详情                                           | 从选中的日志末尾筛出关键错误行，折叠在 `<details>` 里            | job 失败时的 `LOG_DIR`                                                        |
+| 本次结果（`dependency-auditor` / `syntax-linter`） | 按 `METRIC_SEQUENCE` 逐行列出指标，带显示名                      | `METRIC_SEQUENCE` + `METRIC_<KEY>`                                            |
+| 明细（`dependency-auditor` / `syntax-linter`）     | 按 `DETAIL_SEQUENCE` 把长正文折叠进 `<details>`                  | `DETAIL_SEQUENCE` + `DETAIL_<KEY>`                                            |
 
-失败摘录是「诊断辅助」而非「原因判定」：它扫描的是最新一份日志的末尾若干行并按关键字过滤，
+选源不靠 mtime：日志文件名是**规则命名**（`build-<stage>.log` 这类固定名），选哪一份由 `LOG_NAME_CATALOG` 这份
+可 review 的清单决定，mtime 只用来排目录列表的顺序。原因见 [本地构建](#-本地构建) 的日志说明：mtime 只能答「谁最后写」，
+答不出「哪份属于这次构建」——按 mtime 挑，恰好会挑到摘要步骤自己刚写的那份空日志。
+
+失败摘录是「诊断辅助」而非「原因判定」：它扫描的是选中日志的末尾若干行并按关键字过滤，
 真正的原因仍以该日志为准，摘要只负责把人带到那一行。
 
 两种模式各有取舍：`update-checker` 那个 job 拿不到固件，所以不渲染产物与体积小节（渲染了只会骗人）；
@@ -226,8 +252,16 @@ bash scripts/ci/generate-summary.sh [build|update-checker]   # 缺省 build
 
 > [!IMPORTANT]
 >
-> 两个 workflow 都以 `if: always()` + `continue-on-error: true` 调它：摘要是「事后报告」，编译失败或被取消时它更要跑到，
-> 而它自己挂掉也绝不能给已经失败的 job 再补一刀。脚本内置的「恒 0」是第二道保险，两道都在。
+> 四条流水线（builder / update-checker / dependency-auditor / syntax-linter）都以 `if: always()` + `continue-on-error: true` 调它：
+> 摘要是「事后报告」，编译失败或被取消时它更要跑到，而它自己挂掉也绝不能给已经失败的 job 再补一刀。
+> 脚本内置的「恒 0」是第二道保险，两道都在。
+
+<!-- 与上方 IMPORTANT 分开，避免两个 alert 被视为同一引用块 -->
+
+> [!NOTE]
+>
+> 失败摘录和耗时只对 `build` / `update-checker` 生效：这两个 mode 才真的产出 `logs/`。
+> 其余流水线在没有日志的 runner 上扫描，只会把「没找到日志」写成一条假故障，所以按 mode 收口。
 
 <!-- 本地预览：与上方 IMPORTANT 分开，避免两个 alert 被视为同一引用块 -->
 
