@@ -49,7 +49,7 @@ if [[ -z "${_ORCH_DEPS_SH_LOADED:-}" ]]; then
   readonly _ORCH_DEPS_SH_LOADED=1
   readonly EXTRAS_UPX_VERSION="5.2.1"
   readonly EXTRAS_PADJFFS2_COMMIT="d06b68fe83ebb969baa64335779045d80bc41f89"
-  readonly EXTRAS_PO2LMO_COMMIT="aa3d48836e90ae0706c8d8f9b46b8371e45cfe1f"
+  readonly EXTRAS_PO2LMO_COMMIT="6ebcfe66eca2f9b6c5ef41c8992fa190f499436d"
 fi
 
 # 版本号必须真的对得上，否则按未安装处理并重装。
