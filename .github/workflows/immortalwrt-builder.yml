@@ -439,7 +439,7 @@ jobs:
     steps:
       - name: Checkout
         if: env.UPLOAD_BIN_DIR == 'true' && env.DEPLOY_TO_PAGES == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Download artifact
         if: env.UPLOAD_BIN_DIR == 'true' && env.DEPLOY_TO_PAGES == 'true'
