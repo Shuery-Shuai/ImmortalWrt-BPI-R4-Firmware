@@ -364,15 +364,16 @@ REPO_BRANCH: master
 固件在升级时会记录已安装的用户软件包，重启后自动恢复：
 
 ```mermaid
-flowchart LR
-    A[系统 → 备份/升级] -->|勾选『备份已安装软件包』| B[生成包列表]
-    B --> C[写入 /etc/sysupgrade.conf]
+flowchart TD
+    A["系统 → 备份/升级<br/>勾选『备份已安装软件包』(= sysupgrade -k)"] --> B["生成包列表<br/>/etc/backup/installed_packages.txt"]
+    B --> C["打包进配置备份<br/>/tmp/sysupgrade.tgz"]
     C --> D[sysupgrade 刷写新固件]
-    D --> E[重启]
-    E --> F{hotplug 检测到备份}
-    F -->|是| G[apk 自动重装软件包]
-    F -->|否| H[跳过]
-    G --> I[替换 apk 源为本地签名仓库]
+    D --> E["首次启动解包配置备份<br/>preinit 80_mount_root"]
+    E --> F["WAN 上线触发 hotplug<br/>99-restore-package"]
+    F --> G{"包列表存在?"}
+    G -->|是| H["apk update 后重装 overlay 包<br/>restore-packages.sh"]
+    G -->|否| I["视为已恢复，跳过"]
+    H --> J["成功后删除包列表并重启"]
 ```
 
 > [!WARNING]
