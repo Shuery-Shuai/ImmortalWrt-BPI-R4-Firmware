@@ -336,7 +336,7 @@ jobs:
 
       - name: Remove old Releases
         id: cleanup_releases
-        uses: dev-drprasad/delete-older-releases@v0.1.0
+        uses: dev-drprasad/delete-older-releases@v0.3.4
         if: env.UPLOAD_RELEASE == 'true' && !cancelled()
         with:
           keep_latest: 7
