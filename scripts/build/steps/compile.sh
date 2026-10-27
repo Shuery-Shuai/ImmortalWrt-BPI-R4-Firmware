@@ -105,14 +105,35 @@ compilation_failure_is_workspace_related() {
   grep -qiE 'No rule to make target|No such file or directory.*(staging_dir|build_dir)|cannot find the directory|File exists.*staging|corrupted|was interrupted' "${logfile}"
 }
 
-# 带日志编译一次：失败时把输出落到文件，便于判断失败类型。
+# 带日志编译一次：输出同时进「本变体日志」与「统一采集层（终端 + 主日志）」。
+#
+# 旧实现是 `( ... ) >"${logfile}" 2>&1`：make 的全量输出被独占进变体日志，
+# 终端与主日志【都】拿不到。于是编译两分半，build-all.log 里只有 4 行进度日志，
+# 终端则整段静默——这正是"终端和日志文件不同步"的第二个来源。
+# 现在改为 `| tee -a`：tee 的 stdout 接到采集层（logger 已把 fd 1/2 双写到终端与文件），
+# 变体日志仍照旧保留，供失败分析与摘要引用。
+#
+# 退出码必须取 PIPESTATUS[0]：管道末端的 tee 会把 make 的失败改写成 0。
+# 变体日志先清空再追加，与旧实现的 `>` 语义一致；失败时仍回放最后 40 行（现在这两行
+# 也会进主日志，因为 >&2 走的正是采集层）。
 _make_once() {
   local logfile="${1}"; shift
-  if ( cd immortalwrt && make "${@}" ) >"${logfile}" 2>&1; then
-    return 0
+  : >"${logfile}" 2>/dev/null || true
+  ( cd immortalwrt && make "${@}" ) 2>&1 | tee -a "${logfile}"
+  local -a pipe_status=("${PIPESTATUS[@]}")
+  local rc="${pipe_status[0]}"
+  local tee_rc="${pipe_status[1]:-0}"
+
+  if ((tee_rc != 0)); then
+    # tee 失败 = 变体日志没写成，但构建本身可能成功。必须说出来，否则失败分析与摘要
+    # 会引用一份不完整的日志而毫无提示。
+    log_warning "无法完整写入 ${logfile}（tee 退出码 ${tee_rc}）"
   fi
-  tail -n 40 "${logfile}" >&2
-  return 1
+  if ((rc != 0)); then
+    tail -n 40 "${logfile}" 2>/dev/null >&2
+    return 1
+  fi
+  return 0
 }
 
 # Compiles the firmware (aligns with workflow "Compile the firmware").
