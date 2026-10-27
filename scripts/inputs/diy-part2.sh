@@ -40,6 +40,27 @@ source "${_DIY_LIBS_DIR}/load.sh"
 # shellcheck source=scripts/inputs/mods/load.sh
 source "${SCRIPT_DIR}/mods/load.sh"
 
+# 切到 immortalwrt/ 根再干活（理由同 diy-part1.sh 的对应注释）：
+# 本脚本现在 immortalwrt/diy/ 下，而 create_symlinks 'custom-packages'、
+# ensure_exec_permission 'files/...'、feeds/packages/... 全部以**上一级**为基准。
+_diy_repo_base() {
+  if [[ "$(basename -- "$(dirname -- "${SCRIPT_DIR}")")" == "immortalwrt" ]]; then
+    dirname -- "${SCRIPT_DIR}"
+    return 0
+  fi
+  local repo_root
+  repo_root="$(cd "${SCRIPT_DIR}/../.." && pwd)" || return 1
+  printf '%s\n' "${repo_root}"
+}
+_DIY_BASE="$(_diy_repo_base)" || {
+  printf 'ERROR: 无法定位 immortalwrt 根目录（SCRIPT_DIR=%s）\n' "${SCRIPT_DIR}" >&2
+  exit 1
+}
+cd "${_DIY_BASE}" || {
+  printf 'ERROR: 无法进入 %s\n' "${_DIY_BASE}" >&2
+  exit 1
+}
+
 # ===== 执行第二阶段修改 =====
 
 # 先重命名以避免冲突

@@ -37,6 +37,32 @@ source "${_DIY_LIBS_DIR}/load.sh"
 # shellcheck source=scripts/inputs/mods/load.sh
 source "${SCRIPT_DIR}/mods/load.sh"
 
+# 切到 immortalwrt/ 根再干活。
+# 本脚本现位于 immortalwrt/diy/（由 copy_custom_files 放进去），而它操作的一切都在**上一级**：
+# custom-packages/、files/、feeds/、package/ 全部以 immortalwrt/ 为基准。
+# 不切的话 clone_repo 会试图在 immortalwrt/diy/ 下建 custom-packages，路径全部错位。
+# 原始位置（scripts/inputs/）下同样成立：那里位于仓库内，LOCAL_BASE 会解析到仓库根，
+# 而 scripts/inputs/ 的上一级是 scripts/，不是仓库根——所以用"找 immortalwrt 或仓库根"来定位。
+_diy_repo_base() {
+  # 复制后的布局：${SCRIPT_DIR} = <...>/immortalwrt/diy，上一级即 immortalwrt 根。
+  if [[ "$(basename -- "$(dirname -- "${SCRIPT_DIR}")")" == "immortalwrt" ]]; then
+    dirname -- "${SCRIPT_DIR}"
+    return 0
+  fi
+  # 仓库内原始布局：${SCRIPT_DIR} = <repo>/scripts/inputs，上两级是仓库根。
+  local repo_root
+  repo_root="$(cd "${SCRIPT_DIR}/../.." && pwd)" || return 1
+  printf '%s\n' "${repo_root}"
+}
+_DIY_BASE="$(_diy_repo_base)" || {
+  printf 'ERROR: 无法定位 immortalwrt 根目录（SCRIPT_DIR=%s）\n' "${SCRIPT_DIR}" >&2
+  exit 1
+}
+cd "${_DIY_BASE}" || {
+  printf 'ERROR: 无法进入 %s\n' "${_DIY_BASE}" >&2
+  exit 1
+}
+
 # ===== 执行第一阶段修改 =====
 
 # modify_bpi_r4_partition 50

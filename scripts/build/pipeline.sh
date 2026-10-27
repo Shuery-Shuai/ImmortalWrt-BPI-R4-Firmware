@@ -189,10 +189,18 @@ clean_feeds() {
 
 # Copies custom files to the immortalwrt directory.
 # 对齐 workflow: Load custom configuration（cp -r files immortalwrt/）。
-# 额外复制 diy-part*.sh / libs/ / mods/：diy 脚本以 SCRIPT_DIR 定位同级 libs/ 与 mods/，
-# 只有把它们放进 immortalwrt/，source "${SCRIPT_DIR}/libs/load.sh" 才能解析成功。
-# 这几项的**仓库内**位置是 scripts/inputs/（2025 迁移），复制**目标**仍是 immortalwrt/ 根：
-# 迁移只改源路径，改不了"复制后必须同层"这条契约。
+#
+# 布局：diy 脚本体与它们的依赖（libs/ mods/ utils/）统一放进 immortalwrt/diy/，
+# 不再散落在 immortalwrt/ 根。好处是上游树根只多出一个 diy/ 目录，一眼能看出
+# "这些是本仓库注入的东西"，而不是与上游文件混在一起。
+#
+# 硬契约（改动前务必读完）：
+#   1) diy-part*.sh 与 libs/ mods/ utils/ 必须在**同一层**——脚本以 SCRIPT_DIR 定位
+#      ${SCRIPT_DIR}/libs/load.sh，拆开放就 source 不到（历史上正是这条被破坏，
+#      导致 clone_repo / set_dae_version 全部 command not found）。
+#   2) 脚本的**路径基准**仍是 immortalwrt/ 根，不是 diy/：custom-packages/、files/、
+#      feeds/ 都在根下。两个 diy 脚本因此都会先 cd 到上一级再干活（见各自文末）。
+#   3) 执行入口是 immortalwrt/diy/diy-part*.sh，不再从 immortalwrt/ 根调（见 run_diypart*）。
 copy_custom_files() {
   log_info "Copying custom files to immortalwrt directory..."
   # 全程在子 shell 中 cd：调用者的工作目录保持不变。
@@ -213,24 +221,29 @@ copy_custom_files() {
       exit 1
     fi
     # 输入源在仓库的 scripts/inputs/（已 cd 进 immortalwrt/，故相对路径是 ../scripts/inputs）。
-    # 显式列出两个文件名而不沿用 ../diy-part*：通配在新布局下匹配不到任何东西，
-    # 而 cp 的失败又会因 set -e 之外的语义被静默吞掉，留下"复制成功但没有 diy 脚本"的假象。
-    if ! cp ../scripts/inputs/diy-part1.sh ../scripts/inputs/diy-part2.sh ./; then
-      log_error "Failed to copy diy-part1.sh / diy-part2.sh into immortalwrt."
+    # 显式列出两个文件名而不沿用通配：通配匹配不到任何东西时，cp 的失败会被外层语义吞掉，
+    # 留下"复制成功但没有 diy 脚本"的假象。
+    # diy 脚本体与依赖统一落在 immortalwrt/diy/，维持"同层"契约。
+    # 先整体重建该目录：残留的旧文件（例如上一版散落在 immortalwrt/ 根的副本）
+    # 会让 source 解析到旧代码，比不复制更难排查。
+    rm -rf diy
+    if ! mkdir -p diy; then
+      log_error "Failed to create immortalwrt/diy."
       exit 1
     fi
-    # diy 脚本的依赖目录，缺任一个都会让 diy-part1/2 在 source 阶段失败。
-    # 与 diy 脚本一并落在 immortalwrt/ 根，维持同级兄弟关系。
+    if ! cp ../scripts/inputs/diy-part1.sh ../scripts/inputs/diy-part2.sh diy/; then
+      log_error "Failed to copy diy-part1.sh / diy-part2.sh into immortalwrt/diy."
+      exit 1
+    fi
     # libs 是所有脚本共用的库（src: scripts/libs），utils 与 mods 仅 DIY 脚本调用（src: scripts/inputs）。
-    if ! { rm -rf libs && cp -r ../scripts/libs ./; }; then
-      log_error "Failed to copy scripts/libs into immortalwrt."
+    if ! cp -r ../scripts/libs diy/; then
+      log_error "Failed to copy scripts/libs into immortalwrt/diy."
       exit 1
     fi
     for dir in utils mods; do
       [[ -d "../scripts/inputs/${dir}" ]] || continue
-      rm -rf "${dir}"
-      if ! cp -r "../scripts/inputs/${dir}" ./; then
-        log_error "Failed to copy scripts/inputs/${dir} into immortalwrt."
+      if ! cp -r "../scripts/inputs/${dir}" diy/; then
+        log_error "Failed to copy scripts/inputs/${dir} into immortalwrt/diy."
         exit 1
       fi
     done
@@ -238,11 +251,14 @@ copy_custom_files() {
 }
 
 # Runs diy-part1.sh.
-# diy 脚本内含相对路径（如 package/base-files/...），必须在 immortalwrt/ 内执行。
+# 入口在 immortalwrt/diy/ 下，但 cwd 必须是 immortalwrt/ 根：
+# diy 脚本里的相对路径（custom-packages/、files/、feeds/）都以根为基准。
+# 脚本自身也会再 cd 一次（见其文末），这里显式对齐是为了让"从哪执行"这件事只在一处定义。
 run_diypart1() {
   log_info "Running DIY PART1 script..."
-  if [[ -f "immortalwrt/diy-part1.sh" ]]; then
-    ( cd immortalwrt && bash ./diy-part1.sh ) || {
+  local script="immortalwrt/diy/diy-part1.sh"
+  if [[ -f "${script}" ]]; then
+    ( cd immortalwrt && bash ./diy/diy-part1.sh ) || {
       fail "DIY PART1 script failed."
       return 1
     }
@@ -261,12 +277,12 @@ install_feeds() {
   ./scripts/feeds install -a -f
 }
 
-# Runs diy-part2.sh.
-# diy 脚本内含相对路径，必须在 immortalwrt/ 内执行。
+# Runs diy-part2.sh. 入口与 cwd 约定同 run_diypart1。
 run_diypart2() {
   log_info "Running DIY PART2 script..."
-  if [[ -f "immortalwrt/diy-part2.sh" ]]; then
-    ( cd immortalwrt && bash ./diy-part2.sh ) || {
+  local script="immortalwrt/diy/diy-part2.sh"
+  if [[ -f "${script}" ]]; then
+    ( cd immortalwrt && bash ./diy/diy-part2.sh ) || {
       fail "DIY PART2 script failed."
       return 1
     }

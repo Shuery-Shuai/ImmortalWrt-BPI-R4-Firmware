@@ -44,7 +44,7 @@ flowchart TB
         G3[generate-index.sh]
         G4[check-apt-deps.sh / check-pinned-tools.sh]
     end
-    subgraph inputs[构建输入 scripts/inputs/ · 复制进 immortalwrt/]
+    subgraph inputs[构建输入 scripts/inputs/ · 复制进 immortalwrt/diy/]
         I1[diy-part1.sh · diy-part2.sh]
         I2[mods/ · 14 个修改]
         I3[utils/ · 纯工具函数]
@@ -154,13 +154,28 @@ scripts/
 │   ├── check-apt-deps.sh          依赖清单的包名是否仍存在于 noble 索引
 │   ├── check-pinned-tools.sh      手钉常量（upx / padjffs2 / po2lmo / dae / fan2go）与上游的差距
 │   └── generate-index.sh    生成 Pages 索引页
-└── inputs/                  构建输入：被复制进 immortalwrt/ 后在上游源码树内执行
+└── inputs/                  构建输入：被复制进 immortalwrt/diy/ 后在上游源码树内执行
     ├── diy-part1.sh
     ├── diy-part2.sh
     ├── utils/               工具函数库：仅 DIY 脚本调用（无状态纯函数）
     └── mods/                针对上游源码的具体修改
 ```
 
+> [!NOTE]
+>
+> 复制**目标**是 `immortalwrt/diy/`（不是 `immortalwrt/` 根）：脚本本体与它的依赖
+> `libs/`、`mods/`、`utils/` 一起落进去，上游树根只多出一个 `diy/` 目录，
+> 一眼能看出"这些是本仓库注入的"。
+>
+> 两条契约改动时不可破坏：
+>
+> 1. **同层**：`diy-part*.sh` 与 `libs/`、`mods/`、`utils/` 必须都在 `diy/` 下——
+>    脚本以 `SCRIPT_DIR` 定位 `${SCRIPT_DIR}/libs/load.sh`，拆开放就 source 不到。
+> 2. **路径基准仍是 `immortalwrt/` 根**：`custom-packages/`、`files/`、`feeds/` 都在根下，
+>    因此两个 DIY 脚本会先 `cd` 到上一级再干活（见各自文末的 `_diy_repo_base`）。
+>    执行入口由 `run_diypart1/2` 定为 `immortalwrt/diy/diy-part*.sh`，cwd 仍是根。
+
+<!-- 与上方 NOTE 分开，避免两个相邻 alert 被当成同一引用块 -->
 > [!NOTE]
 >
 > 目录按**消费方**划分而非按文件类型：`build/` 是本地与 CI 共用的构建逻辑，`ci/` 只放「CI 专属且本地无意义」的产物生成脚本，
