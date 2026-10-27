@@ -1,0 +1,19 @@
+{
+  "name": "ImmortalWrt BPI-R4 Builder",
+  "dockerComposeFile": "../docker-compose.yml",
+  "service": "builder",
+  "runServices": ["builder"],
+  "workspaceFolder": "/home/builder/workdir",
+  "remoteUser": "builder",
+  "updateRemoteUserUID": true,
+  "shutdownAction": "stopCompose",
+  "customizations": {
+    "vscode": {
+      "extensions": ["timonwong.shellcheck", "ms-vscode.makefile-tools"],
+      "settings": {
+        "shellcheck.enable": true,
+        "files.eol": "\n"
+      }
+    }
+  }
+}

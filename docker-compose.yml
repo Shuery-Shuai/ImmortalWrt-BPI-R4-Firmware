@@ -1,0 +1,64 @@
+# 编译环境容器（Docker Compose 直连上游镜像，不构建任何新镜像）。
+#
+# 基线是 shuery/rtfw-builder：Debian Bookworm + GCC 12 + Clang 18 + Python 3 + Node.js + Go +
+# upx/padjffs2/po2lmo，容器内用户 builder、工作目录 /home/builder/workdir。
+# 固件构建逻辑全部在 scripts/ 下（入口 scripts/build/build.sh），容器只是给这套脚本提供一个
+# 满足依赖的主机——本地、CI、容器三者执行同一份脚本。
+#
+# 为什么没有 Dockerfile：容器内不需要定制任何东西。基线镜像已装好依赖清单里的全部工具，
+# 而容器内刻意不跑 deps 阶段（见下），没有一层可加——自建镜像只会是「FROM 上游 + 一段注释」，
+# 白白多出一份要维护和重新拉取的镜像。compose 直接引用上游镜像，拉取即用，上游发版无需改本仓库。
+#
+# 为什么没有环境自检脚本：上游对**每次**镜像构建都跑 ci/smoke-test.sh，断言 gcc>=10、
+# g++/python3 版本、clang 18、llvm-18、GNU tar/find/bash/xargs/patch/diff、rsync 可执行、
+# cc/gcc 软链一致等；且发布流程明确要求「任何路径（含发布）都必须先验证再推送」，
+# 冒烟失败镜像根本发布不出去。因此工具链前提由上游门禁保证，本仓库无需重复断言。
+#
+# 用法（两种，按习惯选一种）：
+#   # 一次性容器：必须显式给出 bash，否则会执行下方的保活命令 sleep infinity 而挂住
+#   docker compose run --rm builder bash
+#   docker compose run --rm builder bash -lc 'scripts/build/build.sh compile'
+#
+#   # 常驻容器
+#   docker compose up -d builder
+#   docker compose exec builder bash
+#
+# 进去之后**跳过 deps 阶段**，从 prepare/compile 开始（理由见 README「容器构建」）。
+#
+# 基线镜像的固定策略（对应上游 tag 语义，按需选择）：
+#   bookworm             浮动 tag，跟随上游最新发布     —— 默认
+#   bookworm-2026.10.25  不可变快照，同 tag 永不重写    —— 需要可复现时推荐
+#   @sha256:…            digest，完全可复现             —— 最严格
+# 覆盖方式（三种等价写法）：改下面的默认值 / 设环境变量 / 用 .env 文件：
+#   RTFW_BUILDER_IMAGE=shuery/rtfw-builder:bookworm-2026.10.25 docker compose run --rm builder bash
+#
+# 仅提供 linux/amd64：上游构建脚本对非 x86_64 宿主有硬检查，arm64 不可用（见上游 README）。
+
+services:
+  builder:
+    image: ${RTFW_BUILDER_IMAGE:-shuery/rtfw-builder:bookworm}
+    platform: linux/amd64
+
+    # 容器必须常驻：docker compose run 是前台一次性执行，up -d 需要一个不会退出的主进程。
+    # 不覆盖上游默认 entrypoint，这里给一个无害的保活命令，
+    # 使 up -d 与 run 两种用法都能工作，进入容器用 exec。
+    command: ["sleep", "infinity"]
+    tty: true
+    stdin_open: true
+
+    # tini 作为 PID 1：编译过程会 fork 大量子进程（make -j），缺少 init 时僵尸进程会堆积。
+    # 这是 compose 的跨平台写法，等价于 docker run --init。
+    init: true
+
+    working_dir: /home/builder/workdir
+    volumes:
+      # 整个仓库挂进去：构建脚本以仓库根为基准（build.sh 会 cd 到仓库根），产物落在
+      # immortalwrt/ 下，必须可写。
+      # 当前仓库未启用 ccache（immortalwrt/.config 里是 "CONFIG_CCACHE is not set"），
+      # 故刻意不挂缓存卷——挂一个不产生缓存效果的卷只是无效配置。将来若开启
+      # CONFIG_CCACHE，再加 `- ccache:/home/builder/.ccache` 与对应具名卷。
+      - .:/home/builder/workdir
+
+    environment:
+      # 日志时间戳带 %z 才可比对（scripts/libs/01-shell-logger.sh），CI 侧固定同一时区。
+      TZ: Asia/Shanghai

@@ -115,6 +115,42 @@ scripts/build/build.sh check     # 只统计产物体积，不改动工作区
 >
 > 完整的目录结构、stage 语义、目录划分判据见 **[scripts/README.md](scripts/README.md)**。
 
+### 容器构建
+
+不想在宿主上装几十个编译依赖时，用仓库根的 `docker-compose.yml` 把环境关进容器。
+它**直接引用** [`shuery/rtfw-builder`](https://github.com/Shuery-Shuai/rtfw-builder) 镜像，
+不构建本地镜像：Debian Bookworm + GCC 12 + Clang 18 + Python 3 + Node.js + Go +
+`upx`/`padjffs2`/`po2lmo`，容器内用户 `builder`、工作目录 `/home/builder/workdir`。
+
+```shell
+# 常驻容器
+docker compose up -d builder
+docker compose exec builder bash
+
+# 或一次性容器（必须显式给 bash，否则会执行保活命令 sleep infinity 而挂住）
+docker compose run --rm builder bash -lc 'scripts/build/build.sh compile'
+```
+
+VS Code / Dev Containers 用户可以直接「Reopen in Container」：`.devcontainer/devcontainer.json`
+用 `dockerComposeFile` 指向同一份 compose 文件，复用同一个服务定义。
+
+> [!IMPORTANT]
+>
+> - **容器内跳过 `deps` 阶段**。`scripts/build/dependencies.txt` 是按 Ubuntu noble 写的 apt 清单，
+>   基线镜像是 Debian Bookworm 且已装好全部工具；照着清单再装一遍会让 Debian 源里的 `clang`/`llvm`
+>   （14 版）和镜像软链到 `/usr/bin` 的 18 版抢同一批路径，直接破坏 BPF 头文件编译。
+>   容器内从 `prepare`（或直接 `compile`）开始即可。
+> - **工具链由上游门禁保证，本仓库不再重复断言**。`rtfw-builder` 对每次镜像构建都跑
+>   `ci/smoke-test.sh`（`gcc >= 10`、`python3 >= 3.8`、Clang 18、GNU 工具链、`upx`/`po2lmo` 等），
+>   且发布流程要求「任何路径（含发布）都必须先验证再推送」，冒烟失败的镜像不会发布。
+>   因此这里直接引用镜像即可，不需要在 compose 里加一层 healthcheck。
+> - 需要完全可复现时改用不可变引用，三种写法等价（改默认值 / 环境变量 / `.env`）：
+>
+>   ```shell
+>   RTFW_BUILDER_IMAGE=shuery/rtfw-builder:bookworm-2026.10.25 docker compose up -d builder
+>   RTFW_BUILDER_IMAGE=ghcr.io/shuery-shuai/rtfw-builder@sha256:<digest> docker compose up -d builder
+>   ```
+
 ## 🔐 软件包签名密钥
 
 固件内置的软件包仓库使用固定的 **EC P-256** 密钥签名，保证设备升级固件后仍信任新构建的仓库，
