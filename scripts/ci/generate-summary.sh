@@ -237,19 +237,25 @@ render_logs() {
   [[ -d "${dir}" ]] || return 0
   # artifact 是整包上传的 logs/，所以这里按目录实际内容列，而不是照抄候选全集：
   # 读者要的是"这次运行真的产出了哪几个文件"，不是"理论上能有哪几个"。
-  local base tick listed=0 unexpected=""
+  local base tick listed=0
   # 反引号用 \x60 生成：直接写会被 shellcheck 当成命令替换（SC2006）。
   tick="$(printf '\x60')"
   local -a rows=()
+  # 用数组收集再一次性 join，不要 loop 里写 "x+=\"${base} \""：
+  # 那样每个文件名都带一个尾随空格，最后一个的会留在行尾——
+  # 写进 Markdown 就是一个真实的 MD009（尾随空格），下游 markdownlint 会直接报错。
+  local -a unexpected_names=()
   while IFS= read -r base; do
     [[ -n "${base}" ]] || continue
     if is_catalog_log "${base}"; then
       rows+=("| ${tick}${base}${tick} | $(md_cell "$(log_step_source "${base}" | sed 's/^Workflow 步骤 //')") |")
       listed=1
     else
-      unexpected+="${base} "
+      unexpected_names+=("${base}")
     fi
   done < <(find "${dir}" -maxdepth 1 -type f -name '*.log' -printf '%f\n' 2>/dev/null | sort)
+  local unexpected=""
+  ((${#unexpected_names[@]} > 0)) && unexpected="${unexpected_names[*]}"
   [[ "${listed}" == "1" || -n "${unexpected}" ]] || return 0
   printf '### 日志文件\n\n'
   if [[ "${listed}" == "1" ]]; then
