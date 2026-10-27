@@ -74,13 +74,17 @@ flowchart TB
 CI 与本地走同一套脚本，唯一入口是 `scripts/build/build.sh`。CI 只是把下面几个 stage 拆成几个步骤。
 
 ```shell
-scripts/build/build.sh <stage>
+scripts/build/build.sh <stage> [--no-ccache]
 ```
+
+| 选项          | 作用                                                                                    |
+| :------------ | :-------------------------------------------------------------------------------------- |
+| `--no-ccache` | 关闭编译缓存 ccache（**默认启用**）。ccache 由 `prepare` 阶段写入 `CONFIG_CCACHE=y` 并 `make oldconfig` 规范化 |
 
 | stage      | 做什么                                                                                            |
 | :--------- | :------------------------------------------------------------------------------------------------ |
 | `deps`     | 按 `scripts/build/dependencies.txt` 安装主机依赖（目标 ubuntu-24.04），再补装 upx/padjffs2/po2lmo |
-| `prepare`  | 克隆 immortalwrt → 还原 APK 私钥 → feeds → 放置 `.config` → DIY → `make defconfig`                |
+| `prepare`  | 克隆 immortalwrt → 还原 APK 私钥 → feeds → 放置 `.config` → DIY → `make defconfig` → 启用 ccache |
 | `download` | `prepare` + `make download`                                                                       |
 | `compile`  | `download` + 编译（并行 → 单线程 → 单线程 V=s，失败后按需清理重试）                               |
 | `check`    | 只统计 `bin/targets` 产物体积，**不改动工作区**                                                   |

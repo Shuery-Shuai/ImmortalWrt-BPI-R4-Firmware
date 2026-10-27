@@ -450,8 +450,55 @@ place_custom_config() {
 
 # make defconfig 归一化配置（对齐 workflow "Download package" 的第一步）。必须是准备阶段最后一步：
 # 它依赖 feeds install 之后才存在的包符号，提前跑会把未知符号全部丢弃。
+# 启用编译缓存 ccache（由脚本统一开启，不要求用户写进 .config）。
+#
+# 为什么放在脚本里而不是 .config：.config 是本仓库跟踪的输入文件，把 CONFIG_CCACHE=y
+# 写死会强制所有人的固件配置都带它；由脚本按「环境里有没有 ccache」决定，本地容器
+# （rtfw-builder 已内置）与 CI（dependencies.txt 已列 ccache）都能自动生效，
+# 换一台没有 ccache 的机器则只告警跳过、不阻断构建。
+#
+# 为什么此前缓存命中极低：workflow 的 cachewrtbuild 传了 ccache: "true"，但 .config 里
+# 一直是 `# CONFIG_CCACHE is not set`，于是被缓存的 .ccache 目录始终为空——
+# 传了参数却没有内容可缓存。这一点已在 RouterFirmware 仓库踩过并修正，此处沿用同一方案。
+#
+# 幂等：已启用则直接返回；未启用才追加并 oldconfig 规范化。
+# oldconfig 用 </dev/null 而非 yes 管道：pipefail 下 `yes |` 的 SIGPIPE(141) 会被当成失败。
+enable_ccache() {
+  # 开关由入口 build.sh 决定（--no-ccache / CCACHE_ENABLED=0），默认启用。
+  # 默认值写在这里而不是只靠入口：本函数也可能被别处调用，缺省应是"启用"而非"关闭"。
+  if [[ "${CCACHE_ENABLED:-1}" != "1" ]]; then
+    log_info "ccache 已被显式关闭（--no-ccache / CCACHE_ENABLED=0），跳过。"
+    # 已存在的旧启用值要撤回，否则"关掉开关"只影响本次判断、配置里仍留着 y。
+    if grep -q '^CONFIG_CCACHE=y$' immortalwrt/.config 2>/dev/null; then
+      ( cd immortalwrt && sed -i '/^CONFIG_CCACHE=/d' .config &&
+        printf 'CONFIG_CCACHE=n\n' >>.config &&
+        make oldconfig </dev/null >/dev/null 2>&1 ) ||
+        log_warning "撤回 CONFIG_CCACHE 失败，配置可能仍为启用。"
+    fi
+    return 0
+  fi
+
+  ( cd immortalwrt || exit 1
+    if ! command -v ccache >/dev/null 2>&1; then
+      log_warning "未检测到 ccache 命令，跳过编译缓存启用（装上 ccache 后自动生效）"
+      exit 0
+    fi
+    if grep -q '^CONFIG_CCACHE=y$' .config 2>/dev/null; then
+      log_info "ccache 已在配置中启用，跳过。"
+      exit 0
+    fi
+    # 先删掉可能存在的旧行（CONFIG_CCACHE=n 或空值），再追加，避免同一符号出现两次。
+    sed -i '/^CONFIG_CCACHE=/d' .config
+    printf 'CONFIG_CCACHE=y\n' >>.config
+    log_info "已启用编译缓存 ccache（CONFIG_CCACHE=y，由脚本统一开启）。"
+    make oldconfig </dev/null >/dev/null 2>&1 ||
+      log_warning "make oldconfig 返回非零，ccache 配置可能未生效。"
+  )
+}
+
 configure_defconfig() {
   ( cd immortalwrt && make defconfig ) || fail "make defconfig failed."
+  enable_ccache
 }
 
 # 兼容既有调用方：放置 .config 再归一化。
