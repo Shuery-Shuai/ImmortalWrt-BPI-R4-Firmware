@@ -14,9 +14,25 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 
-# 加载通用函数库
+# 加载通用函数库。
+#
+# libs/ 的位置在两种布局下**不同**，必须探测而不能写死（此前写死 ../libs，复制后必然失败）：
+#   · 仓库内原始位置 scripts/inputs/diy-part1.sh：libs 在 scripts/libs  -> ../libs
+#   · copy_custom_files 复制到 immortalwrt/ 根后：libs 被一并复制成 immortalwrt/libs -> ./libs
+# 写死 ../libs 时，复制后的 ${SCRIPT_DIR}/.. 是仓库根，那里没有 libs，source 静默失败，
+# 后果是 clone_repo 等所有函数都不存在（报 "clone_repo: command not found"），
+# 而脚本没有 set -e，于是 DIY 阶段「跑完了但什么也没做」，缺陷一路拖到编译 dae 时才炸。
+if [[ -f "${SCRIPT_DIR}/libs/load.sh" ]]; then
+  _DIY_LIBS_DIR="${SCRIPT_DIR}/libs"
+elif [[ -f "${SCRIPT_DIR}/../libs/load.sh" ]]; then
+  _DIY_LIBS_DIR="${SCRIPT_DIR}/../libs"
+else
+  printf 'ERROR: 无法定位 libs/load.sh（已尝试 %s 与 %s）\n' \
+    "${SCRIPT_DIR}/libs" "${SCRIPT_DIR}/../libs" >&2
+  exit 1
+fi
 # shellcheck source=scripts/libs/load.sh
-source "${SCRIPT_DIR}/../libs/load.sh"
+source "${_DIY_LIBS_DIR}/load.sh"
 # 加载通用修改索引
 # shellcheck source=scripts/inputs/mods/load.sh
 source "${SCRIPT_DIR}/mods/load.sh"

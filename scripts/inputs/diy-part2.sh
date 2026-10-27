@@ -21,8 +21,22 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 
+# libs/ 的位置在两种布局下不同，必须探测（理由同 diy-part1.sh 的对应注释）：
+#   · 仓库内原始位置 scripts/inputs/diy-part2.sh：libs 在 scripts/libs -> ../libs
+#   · 复制到 immortalwrt/ 根后：libs 被复制成 immortalwrt/libs -> ./libs
+# 写死 ../libs 时 source 静默失败，set_dae_version / create_symlinks 等全部不存在，
+# 而本脚本没有 set -e，DIY 阶段「跑完但没做任何事」，缺陷拖到编译 dae 时才暴露。
+if [[ -f "${SCRIPT_DIR}/libs/load.sh" ]]; then
+  _DIY_LIBS_DIR="${SCRIPT_DIR}/libs"
+elif [[ -f "${SCRIPT_DIR}/../libs/load.sh" ]]; then
+  _DIY_LIBS_DIR="${SCRIPT_DIR}/../libs"
+else
+  printf 'ERROR: 无法定位 libs/load.sh（已尝试 %s 与 %s）\n' \
+    "${SCRIPT_DIR}/libs" "${SCRIPT_DIR}/../libs" >&2
+  exit 1
+fi
 # shellcheck source=scripts/libs/load.sh
-source "${SCRIPT_DIR}/../libs/load.sh"
+source "${_DIY_LIBS_DIR}/load.sh"
 # shellcheck source=scripts/inputs/mods/load.sh
 source "${SCRIPT_DIR}/mods/load.sh"
 
