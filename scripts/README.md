@@ -77,14 +77,14 @@ CI 与本地走同一套脚本，唯一入口是 `scripts/build/build.sh`。CI �
 scripts/build/build.sh <stage> [--no-ccache]
 ```
 
-| 选项          | 作用                                                                                    |
-| :------------ | :-------------------------------------------------------------------------------------- |
+| 选项          | 作用                                                                                                           |
+| ------------- | -------------------------------------------------------------------------------------------------------------- |
 | `--no-ccache` | 关闭编译缓存 ccache（**默认启用**）。ccache 由 `prepare` 阶段写入 `CONFIG_CCACHE=y` 并 `make oldconfig` 规范化 |
 
 | stage      | 做什么                                                                                            |
-| :--------- | :------------------------------------------------------------------------------------------------ |
+| ---------- | ------------------------------------------------------------------------------------------------- |
 | `deps`     | 按 `scripts/build/dependencies.txt` 安装主机依赖（目标 ubuntu-24.04），再补装 upx/padjffs2/po2lmo |
-| `prepare`  | 克隆 immortalwrt → 还原 APK 私钥 → feeds → 放置 `.config` → DIY → `make defconfig` → 启用 ccache |
+| `prepare`  | 克隆 immortalwrt → 还原 APK 私钥 → feeds → 放置 `.config` → DIY → `make defconfig` → 启用 ccache  |
 | `download` | `prepare` + `make download`                                                                       |
 | `compile`  | `download` + 编译（并行 → 单线程 → 单线程 V=s，失败后按需清理重试）                               |
 | `check`    | 只统计 `bin/targets` 产物体积，**不改动工作区**                                                   |
@@ -359,10 +359,11 @@ fan2go 的 hash 参数是字面量 `auto`（构建时现算），所以 PR 只�
 两点必须说清楚：
 
 - **Dependabot 没有 apt/deb 生态。** 官方支持的 `package-ecosystem` 里没有 apt，所以 `dependencies.txt` 不存在"被机器人自动升版本"这回事——那份清单本身也全是裸包名、零版本号。
-- **action 引用只在有 tag 时才可能被钉住。** `klever1988/cachewrtbuild` 从未打过 tag（tags 为 0 条），
-  只能继续跟 `main`，也不在 Dependabot 管理范围内；
-  其余 7 处飘分支引用已钉到 tag，理由与构建 job 固定 `ubuntu-24.04` 而非 `ubuntu-latest` 相同：
-  不让上游一次推送在不相关的提交上把构建搞红。
+- **action 引用只在有 tag 时才可能被钉住。** 理由与构建 job 固定 `ubuntu-24.04` 而非
+  `ubuntu-latest` 相同：不让上游一次推送在不相关的提交上把构建搞红。
+  原先的 `klever1988/cachewrtbuild` 从未打过 tag（tags 为 0 条），只能跟 `main`、也不在
+  Dependabot 管理范围内——现已弃用，改用有正式 tag 的 `actions/cache/{restore,save}@v6`，
+  由 Dependabot 正常接管版本更新。
 
 **退出码约定**（两个检测脚本一致）：`E_SUCCESS(0)` 正常跑完（有漂移也是 0，脚本只报告不改文件）、
 `E_DATAERR(65)` 确有包名查不到、`E_UNAVAILABLE(69)` 网络或索引下载失败、

@@ -172,16 +172,57 @@ jobs:
           APK_PUBLIC_KEY_SHA256: ${{ vars.APK_PUBLIC_KEY_SHA256 }}
         run: bash scripts/build/build.sh prepare
 
-      # 缓存依赖 immortalwrt/ 已存在，必须排在 prepare 之后、下载/编译之前。
-      # klever1988/cachewrtbuild 没有发布过任何 tag（gh api repos/klever1988/cachewrtbuild/tags 返回 0 条），
-      # 无法钉版本，也不受 Dependabot 管理，只能继续跟 main。
-      - name: cache
-        id: cache
+      # 编译缓存：ccache 与 staging_dir 分开缓存。
+      #
+      # 为什么弃用 klever1988/cachewrtbuild（原实现）：
+      #   它的 key 形如 cache-openwrt-<tools/toolchain 的 commit hash>-<时间戳>，
+      #   恢复时只用「不含时间戳但含 hash」的前缀做 restoreKeys。上游 tools/ 目录
+      #   近期连续多日有提交（10-24/25/26 均有），hash 一变前缀就不匹配，
+      #   上一份缓存整体恢复不到。实测 #40488625820 的 cache 步骤 0 秒完成——
+      #   它只是「找了一圈没找到」。该 action 也没有任何 tag，无法钉版本。
+      #
+      # 为什么分成两份：
+      #   .ccache 与 staging_dir 的变化频率完全不同。ccache 是**内容寻址**的，
+      #   源文件没变就能命中，与 key 是否精确匹配无关，因此用 restore-keys 前缀
+      #   回退是安全的；staging_dir 里的工具链与库则与源码版本强相关，跨版本复用
+      #   会产出难查的编译错误，所以它的 key 故意带上源码相关指纹，宁可不命中。
+      #
+      # 为什么 ccache 用 restore 而不复用同一份 key：
+      #   GitHub Actions 的缓存不可变，同一 key 一旦写入就不再覆盖。ccache 是持续
+      #   增长的，必须每次用新 key（含 run 序号）保存，靠 restore-keys 前缀回退
+      #   取最近一份，才能让缓存随构建不断累积。
+      #
+      # 位置要求：必须在 prepare 之后（.ccache 与 staging_dir 在 prepare 时才成型）、
+      # 下载与编译之前。
+      - name: Restore ccache
+        id: ccache_restore
         if: github.event.inputs.cache != 'false'
-        uses: klever1988/cachewrtbuild@main
+        uses: actions/cache/restore@v6
         with:
-          ccache: "true"
-          prefix: ${{ github.workspace }}/immortalwrt
+          path: ${{ github.workspace }}/immortalwrt/.ccache
+          # run_id 让每次都是新 key；前缀回退保证总能拿到最近一份。
+          key: ccache-bpi-r4-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ccache-bpi-r4-
+
+      - name: Restore staging dir
+        id: staging_restore
+        if: github.event.inputs.cache != 'false'
+        uses: actions/cache/restore@v6
+        with:
+          # 只缓存可复用的构建中间态。刻意排除 root-mediatek（912M，是安装到固件根的
+          # 暂存区，可由 staging 里的包重建），避免缓存体积无谓膨胀。
+          path: |
+            ${{ github.workspace }}/immortalwrt/staging_dir/host
+            ${{ github.workspace }}/immortalwrt/staging_dir/hostpkg
+            ${{ github.workspace }}/immortalwrt/staging_dir/toolchain-*
+            ${{ github.workspace }}/immortalwrt/staging_dir/target-*/usr
+            ${{ github.workspace }}/immortalwrt/staging_dir/target-*/stamp
+          # 这份 key 带源码相关指纹：staging 跨版本复用不安全，变化时宁可重建。
+          # 用 .config 与 dependencies.txt 的哈希，二者直接决定工具链与包的选型。
+          key: staging-bpi-r4-${{ hashFiles('immortalwrt/.config', 'scripts/build/dependencies.txt') }}
+          restore-keys: |
+            staging-bpi-r4-
 
       # 生成 immortalwrt/files/etc/uci-defaults/99-release-info，并把 RELEASE_TAG 写入 $GITHUB_ENV。
       # 与旧内联块一样依赖 runner 预置的 GITHUB_REPOSITORY / GITHUB_ACTOR。
@@ -377,6 +418,57 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # 保存缓存：放在收尾步骤里，编译成功与否都执行（if: always()）。
+      #
+      # 为什么用 always() 而不是 success()：
+      #   ccache 的价值恰恰在失败时更大——失败重试若从空缓存开始，等于每次都全量重编。
+      #   失败时已编译成功的部分同样值得留下。
+      # 为什么不用 actions/cache@v6 的自动保存（post 钩子）：
+      #   自动保存只在 job success 时触发，且一个 job 里多个 restore 会让自动保存无法
+      #   区分该存哪一份。显式 save 让「存什么、什么时候存」都写在明面上。
+      # 为什么 key 与 restore 用同一个含 run_id 的值：
+      #   GitHub Actions 缓存不可变（同名不覆盖），每次运行必须换新 key 才能让 ccache
+      #   持续累积；restore-keys 前缀回退负责取最近一份。
+      # 目录存在才保存：prepare 之前就失败时 .ccache 还没生成，
+      # 强行 save 只会得到一条「Path Validation Error / no files」的噪音告警。
+      # output 名刻意用简单键（ccache / staging），不用路径本身：
+      # 含 / 与 . 的名字在 steps.<id>.outputs[...] 里引用时行为不明确，容易踩坑。
+      - name: Check cache paths
+        id: cache_paths
+        if: always()
+        run: |
+          if [ -d immortalwrt/.ccache ]; then
+            echo "ccache=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "ccache=no" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -d immortalwrt/staging_dir ]; then
+            echo "staging=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "staging=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Save ccache
+        id: ccache_save
+        if: always() && github.event.inputs.cache != 'false' && steps.cache_paths.outputs.ccache == 'yes'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ github.workspace }}/immortalwrt/.ccache
+          key: ccache-bpi-r4-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Save staging dir
+        id: staging_save
+        if: always() && github.event.inputs.cache != 'false' && steps.cache_paths.outputs.staging == 'yes'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ${{ github.workspace }}/immortalwrt/staging_dir/host
+            ${{ github.workspace }}/immortalwrt/staging_dir/hostpkg
+            ${{ github.workspace }}/immortalwrt/staging_dir/toolchain-*
+            ${{ github.workspace }}/immortalwrt/staging_dir/target-*/usr
+            ${{ github.workspace }}/immortalwrt/staging_dir/target-*/stamp
+          key: staging-bpi-r4-${{ hashFiles('immortalwrt/.config', 'scripts/build/dependencies.txt') }}
+
       # 运行总结：把各步骤 outcome 汇总成一段 Markdown 写进 job summary。
       # if: always() —— 失败/取消时同样要出总结，这正是排障最需要的时刻。
       # continue-on-error + 脚本恒 0 退出码双保险：摘要绝不能让已经红了或被取消的流水线变得更糟。
@@ -397,7 +489,8 @@ jobs:
             env_setup|Initialization environment
             deps|Install build dependencies
             prepare|Prepare build workspace
-            cache|cache
+            ccache_restore|Restore ccache
+            staging_restore|Restore staging dir
             release_info|ImmortalWrt AutoUpdate
             ssh|SSH connection to Actions
             compile|Build firmware
@@ -425,7 +518,8 @@ jobs:
           STEP_env_setup: ${{ steps.env_setup.outcome }}
           STEP_deps: ${{ steps.deps.outcome }}
           STEP_prepare: ${{ steps.prepare.outcome }}
-          STEP_cache: ${{ steps.cache.outcome }}
+          STEP_ccache_restore: ${{ steps.ccache_restore.outcome }}
+          STEP_staging_restore: ${{ steps.staging_restore.outcome }}
           STEP_release_info: ${{ steps.release_info.outcome }}
           STEP_ssh: ${{ steps.ssh.outcome }}
           STEP_compile: ${{ steps.compile.outcome }}
@@ -454,7 +548,10 @@ jobs:
           ARTIFACT_FIRMWARE_NAME: ImmortalWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
           ARTIFACT_LOGS_NAME: ImmortalWrt_logs${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
           # 空字符串也是合法值，脚本按"缺失即跳过"处理。
-          CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+          # restore 动作的 cache-hit 只在**精确**命中时为 true；前缀回退（restore-keys）
+          # 命中时它是 false 但 cache-matched-key 有值。这里两种都算命中——
+          # 我们的 key 特意带 run_id 让它永不精确命中，只看精确值会永远显示"未命中"。
+          CACHE_HIT: ${{ (steps.ccache_restore.outputs.cache-hit == 'true' || steps.ccache_restore.outputs.cache-matched-key != '') && (steps.staging_restore.outputs.cache-hit == 'true' || steps.staging_restore.outputs.cache-matched-key != '') && 'true' || 'false' }}
           LOG_DIR: logs
         run: bash scripts/ci/generate-summary.sh build
 
