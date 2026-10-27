@@ -291,6 +291,393 @@ firmware_size_line() {
   printf '固件体积：%s 个文件，共 %s' "${count}" "$(human_bytes "${total}")"
 }
 
+# 软件包清单：回答「这次到底编了哪些包、装进固件的又是哪些」。
+#
+# 两个数据源刻意分开，语义不同，混成一个清单会误导读者：
+#   · immortalwrt/bin/targets/<board>/<sub>/<device>.manifest
+#       装进**固件镜像内**的包（运行时就有的）。格式是 `包名 - 版本`，每行一条。
+#   · immortalwrt/bin/packages/<arch>/*/index.json 与
+#     immortalwrt/bin/targets/<board>/<sub>/packages/index.json
+#       **本次编译产出**的 .apk 包（=m 的包在这里但不在 manifest 里，需按需安装）。
+#       两处都要收：前者是 target 无关的 feed（base / packages / luci / routing…），
+#       后者是 target 专属包（kmod-*、target 特化的内核模块与库）。只扫前者会漏掉
+#       上百个 kmod 并误报「未编译」——实测本机 225 vs 155。
+#       格式是 {"packages": {包名: 版本}}，比解析 `包名-版本-rN.apk` 文件名可靠——
+#       包名本身含连字符、版本含 ~ 与 -rN，靠正则拆分必然出错（如 dae-geosite-2.0.0-r1）。
+#
+# 全部只读 bin/ 下已有的元数据，不需要 apk/opkg 命令，因此本地与 CI 行为一致。
+readonly MANIFEST_GLOB_PATTERN="immortalwrt/bin/targets/*/*/*.manifest"
+readonly PACKAGE_INDEX_GLOB_PATTERN="immortalwrt/bin/packages/*/*/index.json"
+readonly TARGET_PACKAGE_INDEX_GLOB_PATTERN="immortalwrt/bin/targets/*/*/packages/index.json"
+# 编译前的包选择：.config 里 CONFIG_PACKAGE_<名>=y|m 的才算「本应编译」。
+readonly CONFIG_FILE="immortalwrt/.config"
+
+# 从 manifest 取「装进固件」的包名（只取名字，版本不参与去重）。
+manifest_packages() {
+  local -a files=()
+  local file
+  # shellcheck disable=SC2207  # manifest 路径由只读 glob 展开，含空格的可能性不成立
+  files=($(compgen -G "${MANIFEST_GLOB_PATTERN}" 2>/dev/null || true))
+  [[ ${#files[@]} -gt 0 ]] || return 0
+  for file in "${files[@]}"; do
+    # 行格式 `包名 - 版本`：取第一个字段即包名；空行与不含 " - " 的异常行跳过。
+    awk 'NF >= 3 && $2 == "-" { print $1 }' "${file}" 2>/dev/null
+  done | sort -u
+}
+
+# 从各 feed 的 index.json 取「本次编译产出」的包名。
+# 用 python3 解析 JSON 而不是正则：index.json 是机器格式，正则会在转义与嵌套上出错。
+# python3 是上游构建的硬依赖（prereq-build.mk 要求 >= 3.8），构建机上必然存在。
+package_index_available() {
+  command -v python3 >/dev/null 2>&1
+}
+
+built_packages() {
+  package_index_available || return 0
+  local -a files=()
+  local file
+  # 两处索引都要收：feed（target 无关）与 targets/*/*/packages（target 专属 kmod）。
+  # shellcheck disable=SC2207  # 路径由只读 glob 展开，含空格的可能性不成立
+  files=($(compgen -G "${PACKAGE_INDEX_GLOB_PATTERN}" 2>/dev/null || true)
+         $(compgen -G "${TARGET_PACKAGE_INDEX_GLOB_PATTERN}" 2>/dev/null || true))
+  [[ ${#files[@]} -gt 0 ]] || return 0
+  python3 - "${files[@]}" <<'PY' 2>/dev/null
+import json
+import sys
+
+names = set()
+for path in sys.argv[1:]:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        # 单个 feed 的索引坏了不该让整张小节消失：其余 feed 照常统计。
+        continue
+    pkgs = data.get("packages")
+    if isinstance(pkgs, dict):
+        names.update(pkgs)
+    elif isinstance(pkgs, list):
+        # 兼容旧格式：[{"name": ...}, ...]
+        for item in pkgs:
+            if isinstance(item, dict) and item.get("name"):
+                names.add(item["name"])
+for name in sorted(names):
+    print(name)
+PY
+}
+
+# 编译验证的核心：把「本应编译的包」与「真的产出 .apk 的包」做集合差。
+#
+# 三条关键判定（每一条都有实测依据，改之前先看注释）：
+#
+# 1) 只有 CONFIG_PACKAGE_<名>=y|m 才算「本应编译」的软件包。.config 里同一个前缀下还混着
+#    两类**非独立包**的选择项，把它们算进去会让「未编译」永远不为 0：
+#      · 变体开关 *_INCLUDE_*（luci-app-passwall_INCLUDE_Xray）——决定主包编不编某个功能；
+#      · 全大写符号（MAC80211_MESH / TAR_GZIP / dnsmasq_full_dnssec）——kconfig 的 bool 子选项，
+#        产物并进主包（dnsmasq_full_* 全部并入 dnsmasq-full）。
+#
+# 2) 「编译产出」必须同时收 feed 索引与 target 索引。只收 feed 会把上百个 kmod 误判成未编译
+#    （实测本机 feed 225、target 155，kmod-ipt-core 只在 targets/.../packages 下）。
+#
+# 3) u-boot / trusted-firmware 的产物是 .bin/.fip 而非 .apk，但它们确实是编译产物。
+#    判据改成「该名出现在 targets 目录的文件名里」即可，不强行套 .apk 口径。
+#
+# 只统计不判定成败：本脚本的职责是「报告」，未编译的包可能是有意精简配置的结果，
+# 让摘要红掉等于把配置决策当成构建故障。真正的构建成败由上一步的 make 决定。
+selection_packages() {
+  [[ -f "${CONFIG_FILE}" ]] || return 0
+  # 行格式 CONFIG_PACKAGE_<名>=y|m；只取 =y/=m，排除 "is not set" 与 =n。
+  sed -n 's/^CONFIG_PACKAGE_\([A-Za-z0-9_.+-]*\)=[ym]$/\1/p' "${CONFIG_FILE}" | sort -u
+}
+
+# 孤立变体开关：形如 <基包>_<开关>，但**基包本身没被选中**的项。
+#
+# 这是配置层面的问题，不是编译问题，所以单独报而不是混进「未产出」：
+# 典型例子 knot-resolver_dnstap=y —— 它只是 knot-resolver 的编译开关
+# （feeds/packages/net/knot-resolver/Makefile 里 CONFIG_PACKAGE_knot-resolver_dnstap），
+# 但 .config 里**连基包一行都没有**（连 "is not set" 都没留下），基包根本没参与构建。
+# 只留下开关却丢了宿主，通常是从别处抄配置片段、或 feeds 变动后没有重新 defconfig 的残留。
+#
+# 判定必须收敛，否则误报一大片（实测全量扫会捞出 25 条，其中真正有问题的只有 1 条）：
+#   · 纯大写符号（TAR_GZIP / MAC80211_MESH）——kconfig bool 子选项，产物并进主包，不是变体开关；
+#   · *_INCLUDE_*（luci-app-passwall_INCLUDE_Xray）——包内功能开关，基包另有其名；
+#   · u-boot-* / trusted-firmware-a-*——名字里的下划线是板名分隔符，不是「基包_开关」结构。
+# 只用「基包确实在 package 树里有定义、而它自己没被选中」这一条来收口。
+# 基包在 package 树里是否有 `define Package/<名>`。
+# 用一个「首次调用时建」的缓存文件，避免对上千个 Makefile 反复 grep：
+#   每个候选都 grep 一遍全树的话，孤立检测会从毫秒级变成几十秒。
+_PKG_DEF_CACHE=""
+_pkg_defined() {
+  local name="${1:-}"
+  [[ -n "${name}" ]] || return 1
+  if [[ -z "${_PKG_DEF_CACHE}" || ! -f "${_PKG_DEF_CACHE}" ]]; then
+    _PKG_DEF_CACHE="$(mktemp 2>/dev/null)" || { _PKG_DEF_CACHE=""; return 1; }
+    # 一次扫全树，把所有 define Package/<名> 的名字摊进缓存。
+    # 目录不存在时留空文件，后续查询一律判否，不会重复扫。
+    grep -rhoE 'define[[:space:]]+Package/[A-Za-z0-9_.+-]+' \
+      immortalwrt/package immortalwrt/feeds 2>/dev/null |
+      sed 's|.*Package/||' | sort -u >"${_PKG_DEF_CACHE}"
+  fi
+  grep -qxF -- "${name}" "${_PKG_DEF_CACHE}" 2>/dev/null
+}
+
+orphan_variants() {
+  [[ -f "${CONFIG_FILE}" ]] || return 0
+  local sel
+  sel="$(selection_packages)"
+  [[ -n "${sel}" ]] || return 0
+  printf '%s\n' "${sel}" | while IFS= read -r name; do
+    case "${name}" in
+      u-boot-* | trusted-firmware-a-* | *_INCLUDE_*) continue ;;
+    esac
+    [[ "${name}" == *_* ]] || continue
+    # 纯大写符号（TAR_GZIP / MAC80211_MESH）是 kconfig bool 子选项，产物并进主包，
+    # 不是「基包_开关」结构。与 planned_packages 的排除规则保持一致。
+    [[ "${name}" == *[a-z]* ]] || continue
+    # 基包候选：去掉最后一段，并把剩余下划线换成连字符（与变体归一化同规则）。
+    local base="${name%_*}"
+    local base_dash="${base//_/-}"
+    # 基包未被选中才算孤立；已被选中的变体会在计划集合里归一化掉，这里不重复报。
+    grep -qxF -- "${base}" <<<"${sel}" && continue
+    grep -qxF -- "${base_dash}" <<<"${sel}" && continue
+    # 基包必须在 package 树里确有 `define Package/<基包>`，否则只是个恰好带下划线的
+    # 普通包名（如 foo_bar），不该被当成「变体开关丢了宿主」。
+    # 用缓存文件避免对上千个 Makefile 反复 grep；没有匹配就不报。
+    _pkg_defined "${base}" || _pkg_defined "${base_dash}" || continue
+    printf '%s\n' "${name}"
+  done | sort -u
+}
+
+# 计划编译的「独立软件包」= 选中项 - 变体开关 - 纯大写子选项。
+# 变体开关（dnsmasq_full_auth / luci-lib-nixio_openssl）归一化到主包名后再参与比对：
+# 去掉最后一个下划线段，并把剩下的下划线换回连字符——这是 OpenWrt 的
+# PKG_CONFIG_DEPENDS 变体命名约定（实测 dnsmasq_full_auth -> dnsmasq-full、
+# luci-lib-nixio_openssl -> luci-lib-nixio 均能对上产物）。
+planned_packages() {
+  local sel
+  sel="$(selection_packages)"
+  [[ -n "${sel}" ]] || return 0
+  printf '%s\n' "${sel}" | grep -vE '_INCLUDE_|^[A-Z0-9_]+$' |
+    while IFS= read -r name; do
+      # 引导固件名里天然含下划线（u-boot-mt7988_bananapi_bpi-r4-emmc），
+      # 它们**不是**变体开关，必须原样保留，否则会被误砍成 u-boot-mt7988-bananapi。
+      case "${name}" in
+        u-boot-* | trusted-firmware-a-*)
+          printf '%s\n' "${name}"
+          continue
+          ;;
+      esac
+      # 其余含下划线的是变体开关（dnsmasq_full_auth / luci-lib-nixio_openssl）：
+      # 只保留归一化后的主包名。不能把变体原名也留下——那样每个变体都会变成
+      # 一条「未产出」的假报。
+      if [[ "${name}" == *_* ]]; then
+        printf '%s\n' "${name%_*}" | sed 's/_/-/g'
+      else
+        printf '%s\n' "${name}"
+      fi
+    done | sort -u
+}
+
+# 引导固件（u-boot-* / trusted-firmware-a-*）的产物不是 .apk，而是 .bin/.fip/.img。
+#
+# **两处目录都要扫**，这是本函数存在的唯一理由（实测漏掉会报 7 条假故障）：
+#   · bin/targets/<board>/<sub>/       最终打包进镜像的那份（<device>-bl31-uboot.fip 等）
+#   · staging_dir/*/image/             包自己 install 到 STAGING_DIR_IMAGE 的那份
+# 看 arm-trusted-firmware-mediatek/Makefile 的 Package/trusted-firmware-a/install：
+#     $(INSTALL_DATA) .../bl2.img  $(STAGING_DIR_IMAGE)/$(BUILD_VARIANT)-bl2.img
+#     $(INSTALL_DATA) .../bl31.bin $(STAGING_DIR_IMAGE)/$(BUILD_VARIANT)-bl31.bin
+# 也就是说 emmc-comb / sdmmc-comb / spim-nand-ubi-comb 这些变体的产物**只**落在 staging，
+# 不进 bin/targets（那是最终镜像才有资格进的地方）。只扫 bin/ 会把它们全判成未编译。
+boot_artifact_names() {
+  local -a roots=()
+  local d
+  [[ -d "immortalwrt/bin/targets" ]] && roots+=("immortalwrt/bin/targets")
+  # staging_dir 的目录名带 target 前缀（target-<arch>_<libc>），用 glob 取，不写死名字。
+  # shellcheck disable=SC2207  # 只读 glob 展开，含空格的可能性不成立
+  roots+=($(compgen -G "immortalwrt/staging_dir/*/image" 2>/dev/null || true))
+
+  [[ ${#roots[@]} -gt 0 ]] || return 0
+  for d in "${roots[@]}"; do
+    find "${d}" -maxdepth 3 -type f \
+      \( -name '*.bin' -o -name '*.fip' -o -name '*.itb' -o -name '*-bl2.img' \) \
+      -printf '%f\n' 2>/dev/null
+  done | sort -u
+}
+
+# 引导固件的配置名 -> 产物名里可匹配的词干。两类的命名习惯不同，不能共用一条规则：
+#
+#   trusted-firmware-a-mt7988-ram-comb  -> mt7988-ram-comb
+#     产物 mt7988-ram-comb-bl2.bin：剥掉类目前缀即可，SoC 型号要留着。
+#
+#   u-boot-mt7988_bananapi_bpi-r4-emmc   -> bananapi_bpi-r4-emmc
+#     产物 ...-bananapi_bpi-r4-emmc-bl31-uboot.fip：**不含 SoC**，只有板名。
+#     配置名形如 <类目>-<SoC>_<板名>，SoC 段以第一个下划线结束，板名保留下划线写法。
+#
+# 分隔符一律不做替换：产物里下划线与连字符是并存且各有用意的（bananapi_bpi-r4）。
+boot_stem() {
+  local name="${1}"
+  case "${name}" in
+    trusted-firmware-a-*)
+      name="${name#trusted-firmware-a-}"
+      ;;
+    u-boot-*)
+      name="${name#u-boot-}"
+      # 去掉开头的 SoC 段（到第一个下划线为止），保留板名。
+      name="${name#*_}"
+      ;;
+  esac
+  printf '%s\n' "${name}"
+}
+
+# 长清单折叠进 <details>：几百个包铺开会把摘要正文淹掉，默认收起、按需展开。
+render_package_section() {
+  local installed built planned
+  installed="$(manifest_packages)"
+  built="$(built_packages)"
+  planned="$(planned_packages)"
+
+  # 三者都空说明这次没跑编译（或产物已清理），不是故障，静默跳过。
+  if [[ -z "${installed}" && -z "${built}" && -z "${planned}" ]]; then
+    return 0
+  fi
+
+  local installed_count=0 built_count=0 planned_count=0
+  [[ -n "${installed}" ]] && installed_count="$(printf '%s\n' "${installed}" | grep -c .)"
+  [[ -n "${built}" ]] && built_count="$(printf '%s\n' "${built}" | grep -c .)"
+  [[ -n "${planned}" ]] && planned_count="$(printf '%s\n' "${planned}" | grep -c .)"
+
+  # 孤立变体开关（只有开关、基包没选）：配置问题，与「未产出」分开报。
+  local orphans orphan_count=0
+  orphans="$(orphan_variants)"
+  [[ -n "${orphans}" ]] && orphan_count="$(printf '%s\n' "${orphans}" | grep -c .)"
+
+  printf '### 软件包\n\n'
+  # 表格后必须空一行，否则紧跟的段落会被 Markdown 当成表格续行。
+  printf '| 类别 | 数量 | 说明 |\n| --- | --- | --- |\n'
+  printf '| 装进固件 | %s | 镜像内自带，开机即有 |\n' "${installed_count}"
+  printf '| 编译产出 | %s | 构建出的 .apk（feed + target 专属） |\n' "${built_count}"
+  if [[ ${orphan_count} -gt 0 ]]; then
+    printf '| 孤立变体开关 | %s | 只有子选项、基包未选，基包未参与构建（配置问题） |\n' "${orphan_count}"
+  fi
+
+  # 验证行：只有真的读到 .config 时才谈得上「应编多少」，否则不臆造分母。
+  #
+  # 比对分两路，因为两类产物的形态根本不同：
+  #   · 普通包 -> 产出 .apk，与 built（两处 index.json 的并集）比集合差；
+  #   · 引导固件（u-boot-* / trusted-firmware-a-*）-> 产出 .bin/.fip，与产物文件名比词干。
+  # 把引导固件硬塞进 .apk 口径会永远报「未产出」——实测 16 条假报全部来自这里。
+  local verdict
+  if [[ ${planned_count} -gt 0 ]]; then
+    local missing_text="" missing_count=0 boot_text="" boot_count=0
+    local -a boot_arts=()
+    local boot_ok_text=""
+    # shellcheck disable=SC2207
+    boot_arts=($(boot_artifact_names))
+
+    local -a pkg_planned=() boot_planned=()
+    local name
+    while IFS= read -r name; do
+      [[ -n "${name}" ]] || continue
+      case "${name}" in
+        u-boot-* | trusted-firmware-a-*) boot_planned+=("${name}") ;;
+        *) pkg_planned+=("${name}") ;;
+      esac
+    done <<<"${planned}"
+
+    # 普通包：计划集合 - 已产出集合。
+    # 孤立变体的基包要先剔掉：它已经在「孤立变体开关」那一行单独报过，
+    # 若这里再报一次，同一件事会在摘要里出现两遍（归一化后的基包名 + 原始开关名），
+    # 读者会误以为有两个问题。
+    if [[ ${#pkg_planned[@]} -gt 0 ]]; then
+      local -a orphan_bases=()
+      local ov
+      while IFS= read -r ov; do
+        [[ -n "${ov}" ]] || continue
+        orphan_bases+=("${ov%_*}")
+        orphan_bases+=("$(printf '%s' "${ov%_*}" | sed 's/_/-/g')")
+      done <<<"${orphans}"
+      if [[ ${#orphan_bases[@]} -gt 0 ]]; then
+        # comm 的两侧必须是**已排序的集合流**。这里把「已产出」与「孤立基包」并成一个
+        # 排除集合，再一次性做差——注意不能写成 sort -u "${built}" file：built 是字符串
+        # 不是文件名，sort 会把它当路径读并失败，结果整列被当成「未产出」（实测 380 条假报）。
+        missing_text="$(comm -23 <(printf '%s\n' "${pkg_planned[@]}" | sort -u) \
+                                  <(printf '%s\n' "${built}" "${orphan_bases[@]}" | sort -u) 2>/dev/null)"
+      else
+        missing_text="$(comm -23 <(printf '%s\n' "${pkg_planned[@]}" | sort -u) \
+                                  <(printf '%s\n' "${built}" | sort -u) 2>/dev/null)"
+      fi
+      [[ -n "${missing_text}" ]] && missing_count="$(printf '%s\n' "${missing_text}" | grep -c .)"
+    fi
+
+    # 引导固件：产物文件名里是否含该配置名的词干
+    local boot
+    for boot in "${boot_planned[@]}"; do
+      local stem
+      stem="$(boot_stem "${boot}")"
+      local hit=0 art
+      for art in "${boot_arts[@]}"; do
+        if [[ "${art}" == *"${stem}"* ]]; then
+          hit=1
+          break
+        fi
+      done
+      if [[ "${hit}" == "0" ]]; then
+        boot_text+="${boot}"$'\n'
+        boot_count=$((boot_count + 1))
+      fi
+    done
+
+    local checked=$((planned_count - missing_count - boot_count))
+    local total=${planned_count}
+    if [[ $((missing_count + boot_count)) -eq 0 ]]; then
+      verdict="✅ 全部成功（${total} 个均产出产物）"
+    else
+      verdict="⚠️ $((missing_count + boot_count)) 个未产出（详见下方折叠块）"
+    fi
+    printf '| 编译验证 | %s / %s | %s |\n' "${checked}" "${total}" "${verdict}"
+
+    # 两类未产出合成一份清单，供下方折叠块使用；引导固件标注出来以免与包混淆。
+    if [[ -n "${boot_text}" ]]; then
+      boot_ok_text="$(printf '%s' "${boot_text}" | sed '/^$/d; s/$/（引导固件，产物为 .bin\/.fip）/')"
+      if [[ -n "${missing_text}" ]]; then
+        missing_text="${missing_text}"$'\n'"${boot_ok_text}"
+      else
+        missing_text="${boot_ok_text}"
+      fi
+      missing_count=$((missing_count + boot_count))
+    fi
+  fi
+  printf '\n'
+
+  local fence
+  # 反引号用 \x60 生成，避免围栏字面量在 shell 里被当成命令替换。
+  fence="$(printf '\x60\x60\x60')"
+
+  if [[ ${installed_count} -gt 0 ]]; then
+    printf '<details><summary>装进固件的包（%s 个）</summary>\n\n%stext\n%s\n%s\n\n</details>\n\n' \
+      "${installed_count}" "${fence}" "${installed}" "${fence}"
+  fi
+  if [[ ${built_count} -gt 0 ]]; then
+    printf '<details><summary>编译产出的包（%s 个）</summary>\n\n%stext\n%s\n%s\n\n</details>\n\n' \
+      "${built_count}" "${fence}" "${built}" "${fence}"
+  fi
+  if [[ -n "${missing_text:-}" ]]; then
+    printf '<details><summary>选中但未产出产物的项（%s 个）</summary>\n\n%stext\n%s\n%s\n\n</details>\n\n' \
+      "${missing_count}" "${fence}" "${missing_text}" "${fence}"
+  fi
+  if [[ ${orphan_count} -gt 0 ]]; then
+    printf '<details><summary>孤立变体开关（%s 个）</summary>\n\n%stext\n%s\n%s\n\n</details>\n\n' \
+      "${orphan_count}" "${fence}" "${orphans}" "${fence}"
+    # 这类项不是编译失败，给出可执行的动作：重新 defconfig 让它与 feeds 对齐。
+    # 反引号用 \x60 生成：字面反引号在单引号串里会被 shellcheck 判成笔误（SC2016），
+    # 与仓库其他位置的处理一致。这里它是 Markdown 行内代码，不是命令替换。
+    local tick
+    tick="$(printf '\x60')"
+    printf '%s\n' "以上项的基包未被选中，只留下开关，通常是抄配置片段或 feeds 变动后未重新 ${tick}make defconfig${tick} 的残留。"
+    printf '%s\n\n' "重新生成 ${tick}.config${tick} 后重启构建即可消失。"
+  fi
+}
+
 # artifact 表格是接线的核心价值：读的人要先知道去哪个 artifact 取固件，
 # 所以即使 DEVICE_NAME 之类的元信息全空，只要有 artifact 名就要渲染。
 artifact_rows() {
@@ -692,7 +1079,32 @@ render_details() {
   done <<<"${DETAIL_SEQUENCE}"
 }
 
+# 本地落盘位置：logs/ 之外单独一个文件，不放 logs/ 里。
+#
+# 为什么不放 logs/：logs/ 是「构建日志」的目录，摘要正是按 LOG_NAME_CATALOG 从那里
+# 挑「哪份日志属于本次构建」的读者。摘要自己的产物混进去会变成候选，而它是 .md 不是 .log，
+# 虽然当前的 *.log 过滤能挡住，但把两类东西放进同一目录本身就是在给下次改动埋雷。
+readonly SUMMARY_MD_FILE="summary.md"
+
+# 本地模式写一份 Markdown 文件，供人留存/分享；CI 模式由 GITHUB_STEP_SUMMARY 承担，不写。
+# 写失败只告警不中断：摘要是「汇报」环节，终端那份必须照常打出来。
+write_local_summary_file() {
+  local text="${1}"
+  local target="${SUMMARY_MD_FILE}"
+  # 覆盖写而非追加：每次运行生成的是「这一次」的完整快照，
+  # 追加会让人分不清哪几行属于本次（与 GITHUB_STEP_SUMMARY 的追加语义刻意不同）。
+  # 重定向顺序有意为之：2>/dev/null 必须写在 >"${target}" 之前。bash 从左到右处理重定向，
+  # 若先写 >，目标不可写时 bash 会先把自己的诊断打到原 stderr，那条 2>/dev/null 根本来不及接管。
+  if printf '%s\n' "${text}" 2>/dev/null >"${target}"; then
+    log_info "本地摘要已写入 ${PWD}/${target}"
+    return 0
+  fi
+  log_warning "无法写入 ${target}，仅保留终端输出"
+  return 0
+}
+
 # 写入 GITHUB_STEP_SUMMARY；路径不可写时退回 stdout，信息不丢。
+# 本地（没有 GITHUB_STEP_SUMMARY）额外落一份 summary.md，免得终端一关就没了。
 emit_summary() {
   local text="${1}"
   local target="${GITHUB_STEP_SUMMARY:-}"
@@ -703,6 +1115,11 @@ emit_summary() {
     log_warning "写入 ${target} 失败，改为输出到 stdout"
   fi
   printf '%s\n' "${text}"
+  # 只有本地（未设 GITHUB_STEP_SUMMARY）才落盘：CI 里运行页已有摘要，
+  # 再往工作区写一份既无用、又会被 artifact 打包带走。
+  if [[ -z "${target}" ]]; then
+    write_local_summary_file "${text}"
+  fi
   return 0
 }
 
@@ -745,6 +1162,11 @@ main() {
     render_steps
     render_details "${mode}"
     render_build_info "${mode}"
+    # 软件包清单只在真的编译过时才有意义：读的是 bin/ 下的产物元数据，
+    # 其余流水线（lint / 依赖巡检）既没有这些文件，也不该等一个空小节。
+    if [[ "${mode}" == "build" ]]; then
+      render_package_section
+    fi
     render_logs "${mode}"
     render_duration "${mode}"
     # 失败摘录读的是 logs/，只有会产出构建日志的流水线才谈得上"从这里找原行"。

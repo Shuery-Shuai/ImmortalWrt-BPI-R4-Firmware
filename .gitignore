@@ -9,3 +9,5 @@ keys/public-key.pem
 /public-key.pem
 logs/
 .tmp-*
+# 本地运行 scripts/ci/generate-summary.sh 时落盘的摘要快照（每次运行覆盖生成）。
+summary.md

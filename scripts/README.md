@@ -203,11 +203,11 @@ scripts/
 bash scripts/ci/generate-summary.sh [build|update-checker|dependency-auditor|syntax-linter]   # 缺省 build
 ```
 
-| 项     | 约定                                                                                                  |
-| ------ | ----------------------------------------------------------------------------------------------------- |
-| 输出   | 设了 `GITHUB_STEP_SUMMARY` 就追加写入该文件，否则打印到 stdout（本地预览用）                          |
-| 退出码 | 恒为 `0`——摘要自身绝不能让流水线变红                                                                  |
-| 参数   | `build` / `update-checker` / `dependency-auditor` / `syntax-linter`，决定标题与适用章节；缺省 `build` |
+| 项     | 约定                                                                                                   |
+| ------ | ------------------------------------------------------------------------------------------------------ |
+| 输出   | 设了 `GITHUB_STEP_SUMMARY` 就追加写入该文件；否则打印到 stdout **并落一份 `summary.md`**（本地预览用） |
+| 退出码 | 恒为 `0`——摘要自身绝不能让流水线变红                                                                   |
+| 参数   | `build` / `update-checker` / `dependency-auditor` / `syntax-linter`，决定标题与适用章节；缺省 `build`  |
 
 **入参全是环境变量，缺哪个就跳过对应小节**，所以本地不设任何变量也能跑出可用的一段 Markdown。
 
@@ -227,18 +227,19 @@ bash scripts/ci/generate-summary.sh [build|update-checker|dependency-auditor|syn
 
 摘要按下面几块拼装，每一块都只在自己的输入存在时才出现：
 
-| 小节                                               | 内容                                                             | 依据                                                                          |
-| -------------------------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| 结论 + 运行链接                                    | 成功 / 失败、`server/repo/actions/runs/<id>`                     | `JOB_STATUS`、`GITHUB_REPOSITORY`、`GITHUB_RUN_ID`                            |
-| 运行信息                                           | workflow、job、事件、分支、提交、触发人、Runner OS、run attempt  | 标准 `GITHUB_*` + `git rev-parse`                                             |
-| 上游更新                                           | 检出的上游 commit、是否触发构建（仅 `update-checker`）           | `COMMIT_HASH`、`BUILD_TRIGGERED`                                              |
-| 步骤状态                                           | 按 `STEP_SEQUENCE` 逐行列出 outcome，带结果徽标                  | `STEP_SEQUENCE` + `STEP_<KEY>`                                                |
-| 构建产物（仅 `build`）                             | 设备、文件日期、发布标签、构建缓存、产物名、固件体积             | `DEVICE_NAME` / `FILE_DATE` / `RELEASE_TAG` / `CACHE_HIT` / `ARTIFACT_*_NAME` |
-| 日志文件                                           | `LOG_DIR` 里实际产出的日志 → 它属于哪个 workflow 步骤            | `LOG_DIR` 目录内容 + `LOG_NAME_CATALOG`                                       |
-| 耗时与缓存                                         | 按候选清单选中一份带首尾时间戳的日志算时长；有 ccache 时附命中率 | `LOG_DIR` + `LOG_NAME_CATALOG`                                                |
-| 失败详情                                           | 从选中的日志末尾筛出关键错误行，折叠在 `<details>` 里            | job 失败时的 `LOG_DIR`                                                        |
-| 本次结果（`dependency-auditor` / `syntax-linter`） | 按 `METRIC_SEQUENCE` 逐行列出指标，带显示名                      | `METRIC_SEQUENCE` + `METRIC_<KEY>`                                            |
-| 明细（`dependency-auditor` / `syntax-linter`）     | 按 `DETAIL_SEQUENCE` 把长正文折叠进 `<details>`                  | `DETAIL_SEQUENCE` + `DETAIL_<KEY>`                                            |
+| 小节                                               | 内容                                                              | 依据                                                                          |
+| -------------------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| 结论 + 运行链接                                    | 成功 / 失败、`server/repo/actions/runs/<id>`                      | `JOB_STATUS`、`GITHUB_REPOSITORY`、`GITHUB_RUN_ID`                            |
+| 运行信息                                           | workflow、job、事件、分支、提交、触发人、Runner OS、run attempt   | 标准 `GITHUB_*` + `git rev-parse`                                             |
+| 上游更新                                           | 检出的上游 commit、是否触发构建（仅 `update-checker`）            | `COMMIT_HASH`、`BUILD_TRIGGERED`                                              |
+| 步骤状态                                           | 按 `STEP_SEQUENCE` 逐行列出 outcome，带结果徽标                   | `STEP_SEQUENCE` + `STEP_<KEY>`                                                |
+| 构建产物（仅 `build`）                             | 设备、文件日期、发布标签、构建缓存、产物名、固件体积              | `DEVICE_NAME` / `FILE_DATE` / `RELEASE_TAG` / `CACHE_HIT` / `ARTIFACT_*_NAME` |
+| 软件包（仅 `build`）                               | 「装进固件」「编译产出」数量 + 编译验证（计划 vs 实际），清单折叠 | `bin/targets/*/*/*.manifest`、`bin/**/index.json`、`immortalwrt/.config`      |
+| 日志文件                                           | `LOG_DIR` 里实际产出的日志 → 它属于哪个 workflow 步骤             | `LOG_DIR` 目录内容 + `LOG_NAME_CATALOG`                                       |
+| 耗时与缓存                                         | 按候选清单选中一份带首尾时间戳的日志算时长；有 ccache 时附命中率  | `LOG_DIR` + `LOG_NAME_CATALOG`                                                |
+| 失败详情                                           | 从选中的日志末尾筛出关键错误行，折叠在 `<details>` 里             | job 失败时的 `LOG_DIR`                                                        |
+| 本次结果（`dependency-auditor` / `syntax-linter`） | 按 `METRIC_SEQUENCE` 逐行列出指标，带显示名                       | `METRIC_SEQUENCE` + `METRIC_<KEY>`                                            |
+| 明细（`dependency-auditor` / `syntax-linter`）     | 按 `DETAIL_SEQUENCE` 把长正文折叠进 `<details>`                   | `DETAIL_SEQUENCE` + `DETAIL_<KEY>`                                            |
 
 选源不靠 mtime：日志文件名是**规则命名**（`build-<stage>.log` 这类固定名），选哪一份由 `LOG_NAME_CATALOG` 这份
 可 review 的清单决定，mtime 只用来排目录列表的顺序。原因见 [本地构建](#-本地构建) 的日志说明：mtime 只能答「谁最后写」，
@@ -246,6 +247,36 @@ bash scripts/ci/generate-summary.sh [build|update-checker|dependency-auditor|syn
 
 失败摘录是「诊断辅助」而非「原因判定」：它扫描的是选中日志的末尾若干行并按关键字过滤，
 真正的原因仍以该日志为准，摘要只负责把人带到那一行。
+
+「软件包」小节刻意把几个数字分开，因为语义不同、混成一个清单会误导人：
+
+- **装进固件**（`bin/targets/*/*/*.manifest`）：镜像内自带，开机即有。`.config` 里 `=y` 的包在这里。
+- **编译产出**（`bin/packages/*/*/index.json` + `bin/targets/*/*/packages/index.json`）：构建出的 `.apk`。
+  **两处都要收**：前者是 target 无关的 feed，后者是 target 专属包（kmod-*）。只收前者会把上百个 kmod
+  误判成未编译（实测本机 225 vs 155）。
+- **编译验证**：`.config` 里 `=y|=m` 的项减去实际产出，报出「计划 / 实际」。全部成功时显示 `✅`，
+  否则 `⚠️` 并折叠列出未产出项。**只统计不判失败**——未编进固件可能是配置有意精简，
+  真故障由 `make` 自己红，不该让摘要越权定性。
+- **孤立变体开关**：形如 `<基包>_<开关>` 但基包本身未被选中的项（如 `knot-resolver_dnstap=y`
+  却没有 `knot-resolver`）。这是**配置问题**，与「未产出」分开报——只留下开关却丢了宿主，
+  通常是从别处抄配置片段、或 feeds 变动后没重新 `make defconfig` 的残留。
+  这类项的基包会从「未产出」里剔掉，避免同一件事报两遍。
+
+验证口径有四个坑，都已按实测处理：
+
+1. `.config` 里 `CONFIG_PACKAGE_*` 混着**非独立包**的选择项：变体开关（`*_INCLUDE_*`、`dnsmasq_full_dhcp`）
+   与纯大写子选项（`TAR_GZIP`、`MAC80211_MESH`）。它们不产出独立包，必须先归一化或排除，
+   否则「未编译」永远不为 0。
+2. 引导固件（`u-boot-*` / `trusted-firmware-a-*`）产物是 `.bin`/`.fip`/`.img` 而非 `.apk`，判据改成比文件名词干。
+   两类命名习惯还不一样：`trusted-firmware-a-mt7988-ram-comb` 保留 SoC，
+   而 `u-boot-mt7988_bananapi_bpi-r4-emmc` 的产物**只有板名**（不含 SoC）。
+3. 引导固件产物**只扫 `bin/targets` 会漏一大半**。`arm-trusted-firmware-mediatek` 的
+   `Package/trusted-firmware-a/install` 把变体装到 `STAGING_DIR_IMAGE`（`<变体>-bl2.img` /
+   `<变体>-bl31.bin`），emmc-comb / sdmmc-comb / spim-nand-ubi-comb 这些**只**落在
+   `staging_dir/*/image/`，不进 `bin/targets`。两处都要扫，否则会把 7 个已编成功的变体
+   报成未产出（实测踩过）。
+4. 包名从 `index.json` 的 JSON 取而不是拆 `包名-版本-rN.apk` 文件名：包名自身含连字符、版本含 `~` 与 `-rN`，
+   按正则拆分必然出错（如 `dae-geosite-2.0.0-r1`）。索引损坏时该 feed 静默跳过，不影响其余 feed 与整份摘要。
 
 两种模式各有取舍：`update-checker` 那个 job 拿不到固件，所以不渲染产物与体积小节（渲染了只会骗人）；
 反过来「上游更新」小节只在 `update-checker` 出现。
@@ -268,7 +299,12 @@ bash scripts/ci/generate-summary.sh [build|update-checker|dependency-auditor|syn
 > [!NOTE]
 >
 > `STEP_SEQUENCE` 给顺序和显示名，`STEP_<KEY>` 给状态值，是同一份数据的两种视图——新增步骤时两处都要登记。
-> 本地预览：`bash scripts/ci/generate-summary.sh`（不设 `GITHUB_STEP_SUMMARY` 即打印到终端）。
+> 本地预览：`bash scripts/ci/generate-summary.sh`（不设 `GITHUB_STEP_SUMMARY` 即打印到终端，
+> 同时在仓库根落一份 `summary.md`，已 gitignore）。两份内容完全一致，文件用**覆盖**写——
+> 每次运行留的是"这一次"的快照，而非在旧快照上追加。
+>
+> 落盘位置刻意不在 `logs/`：那里是构建日志目录，摘要是靠文件名从 `logs/` 挑源的读者，
+> 自己的产物混进去等于给下次改动埋雷。写失败只告警、不影响终端输出。
 
 ### 依赖自动更新与巡检
 
