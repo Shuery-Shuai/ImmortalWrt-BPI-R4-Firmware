@@ -67,17 +67,31 @@ clean_immortalwrt_changes() {
 }
 
 # Downloads all package sources (aligns with workflow "Download package").
+#
+# 这里**刻意不做任何"清理小文件"的收尾动作**（历史上曾有一条
+# `find dl -size -1024c -exec rm -f {} \;`，已移除）。理由：
+#
+#   1) 它要解决的问题不存在。OpenWrt 的 scripts/download.pl 是**原子写**：
+#      先落到 $filename.dl，校验通过才 move 成正式文件名，失败走 cleanup 删掉
+#      （download.pl 的 cleanup 子程序 unlink 的就是 .dl 与 .hash）。配合
+#      include/download.mk 的 check_hash（哈希不符即 cleanup 并失败），
+#      dl/ 里不会留下"404 生成的极小占位"这种东西。
+#   2) 判据不成立。"小于 1 KiB 即占位"与真实数据相反：本机 dl/ 顶层 210 个下载包
+#      **最小也有 5061 字节**，一个都不命中；而 <1024c 的 2332 个文件**全部**位于
+#      dl/go-mod-cache 内——那是 Go 模块解包后的源码树。
+#   3) 代价极大。误删模块源码后，报错完全不指向这里：
+#        no required module provides package .../utls/internal/helper
+#        build constraints exclude all Go files in .../go-isatty
+#      极易被误判成缓存损坏 / go 版本不匹配 / 代理问题，排查代价远超收益。
+#
+# 网络失败的正确处理是让 make download 自己失败（见下方 || fail），而不是事后补救。
 download_packages() {
   local jobs="${DOWNLOAD_JOBS:-$(nproc)}"
   log_info "Downloading package sources (jobs: ${jobs})..."
-  # fail 只报错，返回码不会自动终止函数；后面还有两条 find，不显式 return 会以 0 结束。
   ( cd immortalwrt && make download -j"${jobs}" ) || {
     fail "Package download failed."
     return 1
   }
-  # 对齐 workflow：清理下不到内容的小文件（多为 404 占位），避免它们污染后续编译。
-  ( cd immortalwrt && find dl -size -1024c -exec ls -l {} \; ) 2>/dev/null || true
-  ( cd immortalwrt && find dl -size -1024c -exec rm -f {} \; ) 2>/dev/null || true
 }
 
 # 判定一次编译失败是否属于"工作区被污染 / 有未完成产物"这类可由清理修复的情形。
