@@ -332,14 +332,22 @@ package_index_available() {
   command -v python3 >/dev/null 2>&1
 }
 
+# 按来源统计编译产出。
+#   无参数  -> feed + target 并集，即"这次到底编出了多少 .apk"（编译验证用的分母）
+#   带参数  -> 只统计指定 glob 的来源，供表格分开展示
 built_packages() {
   package_index_available || return 0
   local -a files=()
   local file
-  # 两处索引都要收：feed（target 无关）与 targets/*/*/packages（target 专属 kmod）。
-  # shellcheck disable=SC2207  # 路径由只读 glob 展开，含空格的可能性不成立
-  files=($(compgen -G "${PACKAGE_INDEX_GLOB_PATTERN}" 2>/dev/null || true)
-         $(compgen -G "${TARGET_PACKAGE_INDEX_GLOB_PATTERN}" 2>/dev/null || true))
+  if [[ $# -gt 0 ]]; then
+    # shellcheck disable=SC2207  # 路径由只读 glob 展开，含空格的可能性不成立
+    files=($(compgen -G "${1}" 2>/dev/null || true))
+  else
+    # 两处索引都要收：feed（target 无关）与 targets/*/*/packages（target 专属 kmod）。
+    # shellcheck disable=SC2207
+    files=($(compgen -G "${PACKAGE_INDEX_GLOB_PATTERN}" 2>/dev/null || true)
+           $(compgen -G "${TARGET_PACKAGE_INDEX_GLOB_PATTERN}" 2>/dev/null || true))
+  fi
   [[ ${#files[@]} -gt 0 ]] || return 0
   python3 - "${files[@]}" <<'PY' 2>/dev/null
 import json
@@ -390,13 +398,18 @@ selection_packages() {
   sed -n 's/^CONFIG_PACKAGE_\([A-Za-z0-9_.+-]*\)=[ym]$/\1/p' "${CONFIG_FILE}" | sort -u
 }
 
-# 孤立变体开关：形如 <基包>_<开关>，但**基包本身没被选中**的项。
+# 未生效的变体开关：形如 <基包>_<开关>，但**宿主包本身没被选中**的项。
 #
-# 这是配置层面的问题，不是编译问题，所以单独报而不是混进「未产出」：
-# 典型例子 knot-resolver_dnstap=y —— 它只是 knot-resolver 的编译开关
-# （feeds/packages/net/knot-resolver/Makefile 里 CONFIG_PACKAGE_knot-resolver_dnstap），
-# 但 .config 里**连基包一行都没有**（连 "is not set" 都没留下），基包根本没参与构建。
-# 只留下开关却丢了宿主，通常是从别处抄配置片段、或 feeds 变动后没有重新 defconfig 的残留。
+# 这是配置层面的现象，不是编译问题，所以单独报而不是混进「未产出」：
+# 典型例子 knot-resolver_dnstap=y —— 它是 knot-resolver 的编译开关
+# （feeds/packages/net/knot-resolver/Config.in 里 config PACKAGE_knot-resolver_dnstap），
+# 而 .config 里**连宿主包一行都没有**（连 "is not set" 都没留下），宿主没参与构建，
+# 开关即便为 y 也不会产生任何效果。
+#
+# 成因已实测确认，**不要写成"配置残留"**：
+# 该 Config.in 写的是 `default y` 且无 depends 约束，因此从干净的根 .config 跑
+# `make defconfig` 就会自动生成这一行（实测复现）；手工置为 n 后 defconfig 也保持 n，
+# 说明它并非"被反复拉回 y"。结论：它不是残留，defconfig 也清不掉，无需建议用户清理。
 #
 # 判定必须收敛，否则误报一大片（实测全量扫会捞出 25 条，其中真正有问题的只有 1 条）：
 #   · 纯大写符号（TAR_GZIP / MAC80211_MESH）——kconfig bool 子选项，产物并进主包，不是变体开关；
@@ -488,19 +501,36 @@ planned_packages() {
 #     $(INSTALL_DATA) .../bl31.bin $(STAGING_DIR_IMAGE)/$(BUILD_VARIANT)-bl31.bin
 # 也就是说 emmc-comb / sdmmc-comb / spim-nand-ubi-comb 这些变体的产物**只**落在 staging，
 # 不进 bin/targets（那是最终镜像才有资格进的地方）。只扫 bin/ 会把它们全判成未编译。
-boot_artifact_names() {
-  local -a roots=()
-  local d
-  [[ -d "immortalwrt/bin/targets" ]] && roots+=("immortalwrt/bin/targets")
-  # staging_dir 的目录名带 target 前缀（target-<arch>_<libc>），用 glob 取，不写死名字。
-  # shellcheck disable=SC2207  # 只读 glob 展开，含空格的可能性不成立
-  roots+=($(compgen -G "immortalwrt/staging_dir/*/image" 2>/dev/null || true))
+# 引导固件产物按**来源目录**分别收集，不合并成一个集合。
+#
+# 两处的语义不同，合并后读者看不出产物落在哪：
+#   · bin/targets/<board>/<sub>/ —— 最终打包进镜像目录的那份，会随 artifact 发布
+#   · staging_dir/.../image/    —— 包 install 到 STAGING_DIR_IMAGE 的暂存中间态
+# 实测本机两处各 17 个且**交集为 0**：bin 下是 <device>-bl31-uboot.fip 这类成品，
+# staging 下是 <变体>-bl2.img / <变体>-bl31.bin 这类中间件。合并会让"编译验证"
+# 无法回答"这个产物最终进了发布目录没有"。
+boot_artifact_names_from() {
+  local root="${1:-}"
+  [[ -n "${root}" && -d "${root}" ]] || return 0
+  find "${root}" -maxdepth 3 -type f \
+    \( -name '*.bin' -o -name '*.fip' -o -name '*.itb' -o -name '*-bl2.img' \) \
+    -printf '%f\n' 2>/dev/null | sort -u
+}
 
+# 发布目录（bin/targets）里的引导固件产物。
+boot_artifacts_in_bin() {
+  boot_artifact_names_from "immortalwrt/bin/targets"
+}
+
+# 暂存目录（staging_dir/*/image）里的引导固件产物。
+boot_artifacts_in_staging() {
+  local -a roots=()
+  # shellcheck disable=SC2207  # 只读 glob 展开，含空格的可能性不成立
+  roots=($(compgen -G "immortalwrt/staging_dir/*/image" 2>/dev/null || true))
   [[ ${#roots[@]} -gt 0 ]] || return 0
+  local d
   for d in "${roots[@]}"; do
-    find "${d}" -maxdepth 3 -type f \
-      \( -name '*.bin' -o -name '*.fip' -o -name '*.itb' -o -name '*-bl2.img' \) \
-      -printf '%f\n' 2>/dev/null
+    boot_artifact_names_from "${d}"
   done | sort -u
 }
 
@@ -546,7 +576,26 @@ render_package_section() {
   [[ -n "${built}" ]] && built_count="$(printf '%s\n' "${built}" | grep -c .)"
   [[ -n "${planned}" ]] && planned_count="$(printf '%s\n' "${planned}" | grep -c .)"
 
-  # 孤立变体开关（只有开关、基包没选）：配置问题，与「未产出」分开报。
+  # 编译产出按落盘位置分列，不合并成一个数字。
+  # 两处的语义不同，合并后读者无法回答"最终发布目录里到底有什么"：
+  #   bin/...            最终产物，会随 artifact 发布
+  #   staging_dir/...    构建暂存中间态，不进发布包
+  # 实测本机 feed 227 + target 154 = bin 并集 381，而 staging 也是 381 但内容不同源。
+  local feed_count=0 target_count=0 staging_count=0
+  local feed_pkgs target_pkgs
+  feed_pkgs="$(built_packages "${PACKAGE_INDEX_GLOB_PATTERN}")"
+  target_pkgs="$(built_packages "${TARGET_PACKAGE_INDEX_GLOB_PATTERN}")"
+  [[ -n "${feed_pkgs}" ]] && feed_count="$(printf '%s\n' "${feed_pkgs}" | grep -c .)"
+  [[ -n "${target_pkgs}" ]] && target_count="$(printf '%s\n' "${target_pkgs}" | grep -c .)"
+  # staging 是构建中间态，没有 index.json，按 .apk 文件数统计。
+  # 暂存目录里的 *.apk **全是符号链接**，指向 bin/ 下的真实文件（实测 381 个链接：
+  # 227 -> bin/packages/<arch>/<feed>/，154 -> bin/targets/<board>/<sub>/packages/）。
+  # 因此这里必须用 -type l 统计，用 -type f 会得到 0——
+  # 而这恰好也说明 staging 不是"独立产物"，它只是 bin 的镜像视图，
+  # 表格里据此标注，避免读者把 381 重复算成另一份产出。
+  staging_count="$(find immortalwrt/staging_dir/packages -maxdepth 2 -name '*.apk' -type l 2>/dev/null | wc -l)"
+
+  # 未生效的变体开关（只有开关、宿主包没选）：配置现象，与「未产出」分开报。
   local orphans orphan_count=0
   orphans="$(orphan_variants)"
   [[ -n "${orphans}" ]] && orphan_count="$(printf '%s\n' "${orphans}" | grep -c .)"
@@ -555,9 +604,22 @@ render_package_section() {
   # 表格后必须空一行，否则紧跟的段落会被 Markdown 当成表格续行。
   printf '| 类别 | 数量 | 说明 |\n| --- | --- | --- |\n'
   printf '| 装进固件 | %s | 镜像内自带，开机即有 |\n' "${installed_count}"
-  printf '| 编译产出 | %s | 构建出的 .apk（feed + target 专属） |\n' "${built_count}"
+  # 编译产出按目录分列：三行各自独立，不做加减关系，读者一眼看出产物落在哪。
+  # 尖括号占位符会被 shellcheck 判成重定向（SC2016/SC2086），改用 [-]- 风格。
+  printf '| 编译产出 · bin feed | %s | bin/packages/ 下按架构与 feed 分组，最终发布产物 |\n' "${feed_count}"
+  printf '| 编译产出 · bin target | %s | bin/targets/ 下 target 专属包（kmod 等），同为发布产物 |\n' "${target_count}"
+  printf '| 暂存 · staging_dir | %s | 均为指向 bin/ 的符号链接，不是独立产物 |\n' "${staging_count}"
+  # 引导固件单独成行：它不走 .apk 口径，且两处目录里的内容**并不相同**
+  # （实测本机各 17 个、交集为 0），合并显示会让人误以为是同一批被数了两遍。
+  local boot_bin_count=0 boot_staging_count=0
+  boot_bin_count="$(boot_artifacts_in_bin | grep -c . || true)"
+  boot_staging_count="$(boot_artifacts_in_staging | grep -c . || true)"
+  if [[ ${boot_bin_count} -gt 0 || ${boot_staging_count} -gt 0 ]]; then
+    printf '| 引导固件 · bin | %s | 已进发布目录的 .bin/.fip（成品） |\n' "${boot_bin_count}"
+    printf '| 引导固件 · staging | %s | 暂存目录里的 .bin/.fip（中间件，与上者内容不同） |\n' "${boot_staging_count}"
+  fi
   if [[ ${orphan_count} -gt 0 ]]; then
-    printf '| 孤立变体开关 | %s | 只有子选项、基包未选，基包未参与构建（配置问题） |\n' "${orphan_count}"
+    printf '| 未生效的变体开关 | %s | 开关自身有值，但宿主包未被选中，合入固件后不会生效 |\n' "${orphan_count}"
   fi
 
   # 验证行：只有真的读到 .config 时才谈得上「应编多少」，否则不臆造分母。
@@ -569,10 +631,13 @@ render_package_section() {
   local verdict
   if [[ ${planned_count} -gt 0 ]]; then
     local missing_text="" missing_count=0 boot_text="" boot_count=0
-    local -a boot_arts=()
+    local -a boot_arts_bin=() boot_arts_staging=()
     local boot_ok_text=""
+    # 两处产物分别收集：引导固件可能只落在其中一处，位置本身就是信息。
     # shellcheck disable=SC2207
-    boot_arts=($(boot_artifact_names))
+    boot_arts_bin=($(boot_artifacts_in_bin))
+    # shellcheck disable=SC2207
+    boot_arts_staging=($(boot_artifacts_in_staging))
 
     local -a pkg_planned=() boot_planned=()
     local name
@@ -585,7 +650,7 @@ render_package_section() {
     done <<<"${planned}"
 
     # 普通包：计划集合 - 已产出集合。
-    # 孤立变体的基包要先剔掉：它已经在「孤立变体开关」那一行单独报过，
+    # 未生效开关的宿主包要先剔掉：它已经在「未生效的变体开关」那一行单独报过，
     # 若这里再报一次，同一件事会在摘要里出现两遍（归一化后的基包名 + 原始开关名），
     # 读者会误以为有两个问题。
     if [[ ${#pkg_planned[@]} -gt 0 ]]; then
@@ -609,22 +674,37 @@ render_package_section() {
       [[ -n "${missing_text}" ]] && missing_count="$(printf '%s\n' "${missing_text}" | grep -c .)"
     fi
 
-    # 引导固件：产物文件名里是否含该配置名的词干
+    # 引导固件：产物文件名里是否含该配置名的词干。
+    # 分别判定落入 bin（发布目录）与 staging（暂存目录），不合并——
+    # 只落在 staging 的产物说明它还没进发布目录，这是读者需要知道的事实。
     local boot
+    local boot_in_bin=0 boot_in_staging=0 boot_in_none=0
     for boot in "${boot_planned[@]}"; do
       local stem
       stem="$(boot_stem "${boot}")"
-      local hit=0 art
-      for art in "${boot_arts[@]}"; do
+      local hit_bin=0 hit_staging=0 art
+      for art in "${boot_arts_bin[@]}"; do
         if [[ "${art}" == *"${stem}"* ]]; then
-          hit=1
+          hit_bin=1
           break
         fi
       done
-      if [[ "${hit}" == "0" ]]; then
-        boot_text+="${boot}"$'\n'
-        boot_count=$((boot_count + 1))
-      fi
+      for art in "${boot_arts_staging[@]}"; do
+        if [[ "${art}" == *"${stem}"* ]]; then
+          hit_staging=1
+          break
+        fi
+      done
+      case "${hit_bin}${hit_staging}" in
+        11) boot_in_bin=$((boot_in_bin + 1)); boot_in_staging=$((boot_in_staging + 1)) ;;
+        10) boot_in_bin=$((boot_in_bin + 1)) ;;
+        01) boot_in_staging=$((boot_in_staging + 1)) ;;
+        *)
+          boot_text+="${boot}"$'\n'
+          boot_count=$((boot_count + 1))
+          boot_in_none=$((boot_in_none + 1))
+          ;;
+      esac
     done
 
     local checked=$((planned_count - missing_count - boot_count))
@@ -666,15 +746,18 @@ render_package_section() {
       "${missing_count}" "${fence}" "${missing_text}" "${fence}"
   fi
   if [[ ${orphan_count} -gt 0 ]]; then
-    printf '<details><summary>孤立变体开关（%s 个）</summary>\n\n%stext\n%s\n%s\n\n</details>\n\n' \
+    printf '<details><summary>未生效的变体开关（%s 个）</summary>\n\n%stext\n%s\n%s\n\n</details>\n\n' \
       "${orphan_count}" "${fence}" "${orphans}" "${fence}"
-    # 这类项不是编译失败，给出可执行的动作：重新 defconfig 让它与 feeds 对齐。
+    # 这类项不是编译失败，也不是"配置残留"——实测从干净的根 .config 跑 make defconfig
+    # 就会**自动生成**它们，因为对应的 Config.in 写了 default y（且无 depends 约束）。
+    # 因此不能给"重新 defconfig 即可消失"这种错误建议：defconfig 只会把它再生成一遍。
     # 反引号用 \x60 生成：字面反引号在单引号串里会被 shellcheck 判成笔误（SC2016），
     # 与仓库其他位置的处理一致。这里它是 Markdown 行内代码，不是命令替换。
     local tick
     tick="$(printf '\x60')"
-    printf '%s\n' "以上项的基包未被选中，只留下开关，通常是抄配置片段或 feeds 变动后未重新 ${tick}make defconfig${tick} 的残留。"
-    printf '%s\n\n' "重新生成 ${tick}.config${tick} 后重启构建即可消失。"
+    printf '%s\n' "以上开关的宿主包未被选中，因此开关虽然为 y，合入固件后并不生效。"
+    printf '%s\n' "它们由对应的 ${tick}Config.in${tick} 里 ${tick}default y${tick} 自动生成，${tick}make defconfig${tick} 会再次产生，不是残留、无需清理。"
+    printf '%s\n\n' "若确实要启用，选中宿主包即可；若要彻底消除该行，只能在 ${tick}Config.in${tick} 里去掉默认值。"
   fi
 }
 
@@ -1079,18 +1162,25 @@ render_details() {
   done <<<"${DETAIL_SEQUENCE}"
 }
 
-# 本地落盘位置：logs/ 之外单独一个文件，不放 logs/ 里。
+# 本地落盘位置：与构建日志同目录，文件名固定。
 #
-# 为什么不放 logs/：logs/ 是「构建日志」的目录，摘要正是按 LOG_NAME_CATALOG 从那里
-# 挑「哪份日志属于本次构建」的读者。摘要自己的产物混进去会变成候选，而它是 .md 不是 .log，
-# 虽然当前的 *.log 过滤能挡住，但把两类东西放进同一目录本身就是在给下次改动埋雷。
-readonly SUMMARY_MD_FILE="summary.md"
+# 放进 logs/ 是刻意的——摘要本就是这个目录里那批产物的「读后总结」，
+# 归在一起比散落在仓库根更符合语义，也不必为它单列一条 gitignore 规则。
+#
+# 关于「摘要会不会把自己的产物当成源日志」：不会，有两道保险——
+#   1) 选源扫描只取 `-name '*.log'`（见 render_logs / newest_log_file），.md 进不了候选；
+#   2) 候选还受 LOG_NAME_CATALOG 白名单收口，清单外的文件名一律不引用。
+# 因此同目录存放不会重蹈上一轮「按 mtime 挑到自己的空日志」的覆辙。
+readonly SUMMARY_MD_FILE="logs/summary.md"
 
 # 本地模式写一份 Markdown 文件，供人留存/分享；CI 模式由 GITHUB_STEP_SUMMARY 承担，不写。
 # 写失败只告警不中断：摘要是「汇报」环节，终端那份必须照常打出来。
 write_local_summary_file() {
   local text="${1}"
   local target="${SUMMARY_MD_FILE}"
+  # logs/ 可能还不存在（本次没跑过任何写日志的阶段，例如只跑纯产物脚本）。
+  # 先建目录再写，否则会因父目录缺失而失败——那时只落一条 WARN，用户就看不到文件了。
+  mkdir -p -- "$(dirname -- "${target}")" 2>/dev/null || true
   # 覆盖写而非追加：每次运行生成的是「这一次」的完整快照，
   # 追加会让人分不清哪几行属于本次（与 GITHUB_STEP_SUMMARY 的追加语义刻意不同）。
   # 重定向顺序有意为之：2>/dev/null 必须写在 >"${target}" 之前。bash 从左到右处理重定向，
