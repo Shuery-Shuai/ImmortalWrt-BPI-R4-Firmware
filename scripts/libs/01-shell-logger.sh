@@ -459,28 +459,143 @@ _log_style() {
 #   log WARN "网络" "连接超时，正在重试..."
 #   log ERROR "数据库" "连接失败" true
 #######################################
-log() {
-    local level="$1"
-    local category=""
-    local message=""
-    local to_file="${LOG_TO_FILE}"
+#######################################
+# 把 log 的 2/3/4 参数形态归一成四个输出变量（内部函数）
+#
+# 参数：
+#   $@ - log 收到的全部参数
+#
+# 全局输出：
+#   _LOG_ARG_LEVEL / _LOG_ARG_CATEGORY / _LOG_ARG_MESSAGE / _LOG_ARG_TO_FILE
+#
+# 返回：
+#   0 - 参数形态合法
+#   1 - 参数个数不对（已往 stderr 打用法）
+#
+# 说明：结果走全局而不是 stdout —— 本文件是热路径，命令替换 $(...) 每行要 fork
+#       一个子 shell（实测 500 行 4.3s → 内建后接近 0），因此内部函数一律用全局回传。
+#######################################
+_LOG_ARG_LEVEL=""
+_LOG_ARG_CATEGORY=""
+_LOG_ARG_MESSAGE=""
+_LOG_ARG_TO_FILE=""
+
+_log_parse_args() {
+    # 故意写成不带 :- 的 "$1"：调用 log 时一个参数都不给，旧实现会在 set -u 下
+    # 以「$1: 未绑定的变量」中止（整个调用方 shell 一起退出）。这是既有行为，
+    # 重构不得顺手"修"成一条更友好的用法提示——那会改变调用方的退出码与日志。
+    _LOG_ARG_LEVEL="$1"
+    _LOG_ARG_CATEGORY=""
+    _LOG_ARG_MESSAGE=""
+    _LOG_ARG_TO_FILE="${LOG_TO_FILE}"
 
     case $# in
-    2) message="$2" ;;
+    2) _LOG_ARG_MESSAGE="$2" ;;
     3)
-        category="$2"
-        message="$3"
+        _LOG_ARG_CATEGORY="$2"
+        _LOG_ARG_MESSAGE="$3"
         ;;
     4)
-        category="$2"
-        message="$3"
-        to_file="$4"
+        _LOG_ARG_CATEGORY="$2"
+        _LOG_ARG_MESSAGE="$3"
+        _LOG_ARG_TO_FILE="$4"
         ;;
     *)
         printf 'Usage: log LEVEL [CATEGORY] MESSAGE [TO_FILE]\n' >&2
         return 1
         ;;
     esac
+    return 0
+}
+
+#######################################
+# 确定行内标记用的脚本名（内部函数）
+#
+# 参数：
+#   $@ - 调用栈的 BASH_SOURCE 快照（调用方传 "${BASH_SOURCE[@]:1}"，即跳过本文件自身）
+#
+# 全局输出：
+#   _LOG_SCRIPT_NAME - 脚本名（去 .sh 后缀）；找不到时为 unknown
+#
+# 说明：行内标记取【调用方源文件名】（不是文件名主干）：一份日志里往往有多个模块在写，
+#       标记只有落到具体模块才有辨识度（mods/07-git-utils.sh 与 diy-part2.sh 要分得开）。
+#       不能简单取 BASH_SOURCE[1]：每多一层薄包装（log_info → log）层级就偏移一格，
+#       会取到 'bash'，因此从前往后找第一个【非本文件、非 bash 自身】的层级。
+#       basename 也换成内建截取：路径里没有斜杠时直接用原值，有则取最后一段。
+#       结果走全局，理由同 _log_parse_args（不做命令替换）。
+#######################################
+_LOG_SCRIPT_NAME=""
+
+_log_resolve_script_name() {
+    local src base
+
+    _LOG_SCRIPT_NAME="unknown"
+    for src in "$@"; do
+        [[ -z "${src}" ]] && continue
+        base="${src##*/}"
+        [[ "${base}" == "01-shell-logger.sh" ]] && continue
+        [[ "${base}" == "bash" ]] && continue
+        _LOG_SCRIPT_NAME="${base%.sh}"
+        return 0
+    done
+    return 0
+}
+
+#######################################
+# 构建分类标签（内部函数）
+#
+# 参数：
+#   $1 - 分类名（可为空）
+#
+# 全局输出：
+#   _LOG_CAT_TAG       - stderr 形态（带色带 emoji）
+#   _LOG_CAT_TAG_PLAIN - 落文件形态（纯文本）
+#
+# 说明：stderr 保留带色带 emoji 的形态（与 scripts/build 长期使用的
+#       "[✅ SUCCESS]" 子标签一致），落文件仍是去掉颜色代码的纯文本。
+#######################################
+_LOG_CAT_TAG=""
+_LOG_CAT_TAG_PLAIN=""
+
+_log_build_category_tag() {
+    local category="$1"
+    local color emoji
+
+    _LOG_CAT_TAG=""
+    _LOG_CAT_TAG_PLAIN=""
+    [[ -n "${category}" ]] || return 0
+
+    _log_style "${category}"
+    color="${_LOG_STYLE_COLOR}"
+    emoji="${_LOG_STYLE_EMOJI}"
+    _LOG_CAT_TAG=" ${color}[${emoji} ${category}]${COLOR_RESET}"
+    _LOG_CAT_TAG_PLAIN=" [${emoji} ${category}]"
+    return 0
+}
+
+#######################################
+# 打印一条日志（唯一实现）
+#
+# 参数：
+#   $1 - 级别（DEBUG/INFO/WARN/ERROR 等，由 LOG_LEVEL_* 映射）
+#   $2 - 消息；或 $2 分类 / $3 消息；或 $2 分类 / $3 消息 / $4 TO_FILE
+#
+# 返回：
+#   0 - 已输出，或该级别被过滤
+#   1 - 参数错误（已往 stderr 打用法）
+#
+# 示例：
+#   log INFO "服务已启动"
+#   log WARN "网络" "连接超时，正在重试..."
+#   log ERROR "数据库" "连接失败" true
+#######################################
+log() {
+    _log_parse_args "$@" || return 1
+
+    local level="${_LOG_ARG_LEVEL}"
+    local category="${_LOG_ARG_CATEGORY}"
+    local message="${_LOG_ARG_MESSAGE}"
+    local to_file="${_LOG_ARG_TO_FILE}"
 
     # 级别过滤：如果当前消息级别低于设定级别，直接返回。
     # 用内建映射而不是命令替换：$(...) 每行 fork 一个子 shell，一个 log 行旧实现要 fork 4 次
@@ -498,35 +613,14 @@ log() {
     color="${_LOG_STYLE_COLOR}"
     emoji="${_LOG_STYLE_EMOJI}"
 
-    # 行内标记取【调用方源文件名】（不是文件名主干）：一份日志里往往有多个模块在写，
-    # 标记只有落到具体模块才有辨识度（mods/07-git-utils.sh 与 diy-part2.sh 要分得开）。
-    # 不能简单取 BASH_SOURCE[1]：每多一层薄包装（log_info → log）层级就偏移一格，会取到 'bash'，
-    # 因此从 1 起向下找第一个【非本文件、非 bash 自身】的层级。
-    # basename 也换成内建截取：路径里没有斜杠时直接用原值，有则取最后一段。
-    local script_name="unknown"
-    local _i _src _base
-    for ((_i = 1; _i < ${#BASH_SOURCE[@]}; _i++)); do
-        _src="${BASH_SOURCE[_i]}"
-        [[ -z "${_src}" ]] && continue
-        _base="${_src##*/}"
-        [[ "${_base}" == "01-shell-logger.sh" ]] && continue
-        [[ "${_base}" == "bash" ]] && continue
-        script_name="${_base%.sh}"
-        break
-    done
-    unset _i _src _base
+    # 行内标记取【调用方源文件名】，规则见 _log_resolve_script_name。
+    _log_resolve_script_name "${BASH_SOURCE[@]:1}"
+    local script_name="${_LOG_SCRIPT_NAME}"
 
-    # 构建分类标签：stderr 保留带色带 emoji 的形态（与 scripts/build 长期使用的
-    # "[✅ SUCCESS]" 子标签一致），落文件仍是去掉颜色代码的纯文本。
-    local cat_tag="" cat_tag_plain=""
-    if [[ -n "${category}" ]]; then
-        local cat_color cat_emoji
-        _log_style "${category}"
-        cat_color="${_LOG_STYLE_COLOR}"
-        cat_emoji="${_LOG_STYLE_EMOJI}"
-        cat_tag=" ${cat_color}[${cat_emoji} ${category}]${COLOR_RESET}"
-        cat_tag_plain=" [${cat_emoji} ${category}]"
-    fi
+    # 构建分类标签：见 _log_build_category_tag。
+    _log_build_category_tag "${category}"
+    local cat_tag="${_LOG_CAT_TAG}"
+    local cat_tag_plain="${_LOG_CAT_TAG_PLAIN}"
 
     # 输出到 stderr（带颜色）
     local timestamp

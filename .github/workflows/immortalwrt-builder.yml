@@ -294,6 +294,9 @@ jobs:
       # （rules.mk 的 BUILD_KEY_APK_PUB），它只留在编译目录里，不放进 bin/ 就不会被发布。
       # 必须排在 'Upload bin directory' 之前，否则上传的 bin 包里没有公钥。
       # 源文件缺失即硬失败：公钥是该步骤唯一目的，静默跳过会让 /keys/public-key.pem 404。
+      # 只发 /keys/public-key.pem 一处：历史上还在站点根目录放过一份同名副本供"旧导入链接"使用，
+      # 但旧的导入命令一直指向 pkgs.lssa.fun 的另一个路径，从未指向本站根目录，那份副本没有
+      # 真实调用方，已删除——页面上不再出现两个同名文件，也不再需要维护两份同源的信任锚。
       - name: Publish apk public key into bin
         id: apk_pubkey
         run: |
@@ -303,7 +306,6 @@ jobs:
           fi
           mkdir -p immortalwrt/bin/keys
           cp immortalwrt/public-key.pem immortalwrt/bin/keys/public-key.pem
-          cp immortalwrt/public-key.pem immortalwrt/bin/public-key.pem
 
       - name: Upload bin directory
         id: artifact_bin
@@ -343,11 +345,21 @@ jobs:
           directory: ${{ env.WORKSPACE_DIR }}/
           filename: ${{ env.UPLOAD_PATH }}/ImmortalWrt_firmware_packages${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}.tar.gz
 
+      # 删除 packages/ 只为了不把已解包的 .apk 目录塞进 firmware artifact 与 release
+      # （两个 .tar.gz 已在上面两条 zip 步骤里打包过，内容不缺）。
+      # 但这目录里的 index.json 是「target 专属包已产出」的唯一证据，而 Run summary 排在本步骤之后
+      # —— 先删后统计，会让 154 个 kmod / target 包全部被判成「未产出」（实测 153 条误报）。
+      # 因此删除前把这份索引快照到 $RUNNER_TEMP，由 TARGET_PACKAGE_INDEX_FILE 传给摘要脚本。
+      # 快照与删除同条件：目录只在 UPLOAD_FIRMWARE=true 时会被删，此时才需要这份副本。
       - name: Organize files
         id: organize
         if: env.UPLOAD_FIRMWARE == 'true' && steps.compile.outputs.status == 'success' && !cancelled()
         run: |
           cd immortalwrt/bin/targets/*/*
+          if [ -f packages/index.json ]; then
+            cp packages/index.json "$RUNNER_TEMP/target-packages-index.json"
+            echo "TARGET_PACKAGE_INDEX_FILE=$RUNNER_TEMP/target-packages-index.json" >> "$GITHUB_ENV"
+          fi
           rm -rf packages
           echo "FIRMWARE=$PWD" >> "$GITHUB_ENV"
           echo "status=success" >> "$GITHUB_OUTPUT"
@@ -553,6 +565,10 @@ jobs:
           # 我们的 key 特意带 run_id 让它永不精确命中，只看精确值会永远显示"未命中"。
           CACHE_HIT: ${{ (steps.ccache_restore.outputs.cache-hit == 'true' || steps.ccache_restore.outputs.cache-matched-key != '') && (steps.staging_restore.outputs.cache-hit == 'true' || steps.staging_restore.outputs.cache-matched-key != '') && 'true' || 'false' }}
           LOG_DIR: logs
+          # target 专属包的索引由 organize 步骤在 rm -rf packages 之前快照到 RUNNER_TEMP，
+          # 这里把路径递给脚本当补充数据源：目录本身已不在，光靠 glob 读不到它。
+          # 该步骤被跳过（UPLOAD_FIRMWARE=false）时这里是空串——那时目录仍在，脚本回退到 glob。
+          TARGET_PACKAGE_INDEX_FILE: ${{ env.TARGET_PACKAGE_INDEX_FILE }}
         run: bash scripts/ci/generate-summary.sh build
 
   deploy:
@@ -582,23 +598,16 @@ jobs:
           name: ImmortalWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
           path: bin
 
-      # 公钥不再入库，deploy 侧无从拷贝，只做校验：两份文件都在 build job 的 apk_pubkey 步骤里
-      # 生成并随 bin artifact 一起下载到 bin/，这里任何一份缺失或内容不一致都说明那一步没生效，
-      # 直接硬失败，避免把缺公钥的站点发布出去。
+      # 公钥不再入库，deploy 侧无从拷贝，只做校验：文件由 build job 的 apk_pubkey 步骤生成
+      # 并随 bin artifact 一起下载到 bin/，缺失或为空说明那一步没生效，直接硬失败，
+      # 避免把缺公钥的站点发布出去。
       # 必须排在 'Generate index.html' 之前：索引按目录树静态渲染，公钥晚到就不会出现在 keys/ 条目里。
-      # 两份文件内容必须相同：/public-key.pem 是兼容副本（旧导入命令用该路径），
-      # 正式路径是 /keys/public-key.pem，同源才能保证两条链接签发同一把密钥。
+      # 只校验正式路径 /keys/public-key.pem；站点根目录的同名副本已删除（见 build job 的 apk_pubkey 注释）。
       - name: Verify apk public key in bin
         if: env.UPLOAD_BIN_DIR == 'true' && env.DEPLOY_TO_PAGES == 'true'
         run: |
-          for pub in bin/keys/public-key.pem bin/public-key.pem; do
-            if [ ! -s "$pub" ]; then
-              echo "::error::$pub is missing or empty; the build job's apk_pubkey step did not publish the apk public key."
-              exit 1
-            fi
-          done
-          if ! cmp -s bin/keys/public-key.pem bin/public-key.pem; then
-            echo "::error::bin/keys/public-key.pem and bin/public-key.pem differ; the build job's apk_pubkey step published mismatched copies."
+          if [ ! -s bin/keys/public-key.pem ]; then
+            echo "::error::bin/keys/public-key.pem is missing or empty; the build job's apk_pubkey step did not publish the apk public key."
             exit 1
           fi
 

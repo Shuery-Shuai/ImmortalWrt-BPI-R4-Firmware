@@ -177,14 +177,30 @@ jobs:
 
       # 规则来自仓库根的 .markdownlint-cli2.yaml（cli2 会自动发现），此处不重复配置；
       # 只固定 cli2 版本，避免 @latest 在未来把新的规则默认值带进来。
+      # docs 纳入 CONTRIBUTING.md 与 PR 模板：它们是贡献者最先读的文件，却长期在门禁之外，是最容易腐烂的地方。
       - name: Run markdownlint-cli2 v0.24.0
         id: lint
         run: |
-          docs=("README.md" "README-workflow.md" "scripts/README.md")
+          docs=("README.md" "README-workflow.md" "scripts/README.md" "CONTRIBUTING.md" ".github/pull_request_template.md")
           echo "count=${#docs[@]}" >>"${GITHUB_OUTPUT}"
           rc=0
           npx --yes markdownlint-cli2@0.24.0 "${docs[@]}" 2>&1 | tee "${RUNNER_TEMP}/markdownlint-findings.txt" || rc=${PIPESTATUS[0]}
           [[ "${rc}" -eq 0 ]]
+
+      # 为什么还需要 prettier：markdownlint 只管规则（标题层级、列表符号、行宽…），
+      # 不管格式归一——表格列对齐与行尾符（CRLF/LF）没有门禁就会随每次编辑持续漂移，
+      # 最终 diff 里全是与内容无关的空白噪声。两者分工不重叠：规则归 cli2，格式归 prettier。
+      # 版本同样固定 3.4.2 不用 @latest（理由同上一条 cli2）：格式化输出会随版本变化，
+      # 版本漂移会让同一份文档在不同时间点得出不同结论。
+      # 注意 MD060 必须在 .markdownlint-cli2.yaml 里关闭：prettier 按显示宽度重排 CJK 表格，
+      # 与 MD060 的 aligned 风格互斥，两者同开则 CI 永久红；本仓库以 prettier 的输出为准。
+      # 文件清单必须与上面 docs 数组完全一致（同五个路径、同样顺序），否则两个门禁的覆盖范围会悄悄分叉。
+      - name: Run prettier --check
+        id: prettier
+        run: |
+          npx --yes prettier@3.4.2 --check \
+            "README.md" "README-workflow.md" "scripts/README.md" \
+            "CONTRIBUTING.md" ".github/pull_request_template.md"
 
       - name: Run summary
         if: always()
@@ -194,8 +210,10 @@ jobs:
           STEP_SEQUENCE: |
             checkout|Checkout
             lint|Run markdownlint
+            prettier|Run prettier
           STEP_checkout: ${{ steps.checkout.outcome }}
           STEP_lint: ${{ steps.lint.outcome }}
+          STEP_prettier: ${{ steps.prettier.outcome }}
           METRIC_SEQUENCE: |
             count|待检查 Markdown 数
           METRIC_count: ${{ steps.lint.outputs.count }}

@@ -114,6 +114,8 @@ stage:
 
 阶段累进：download 含 prepare；compile 含 download；all 含 compile。
 deps 不会被任何阶段自动触发，需要时显式执行。
+all 收尾时会自动执行 scripts/ci/generate-summary.sh build，把本次构建写进 logs/summary.md，
+不需要任何手工步骤；生成摘要失败只告警、不影响构建结论。
 环境变量 REQUIRED=1 启用严格模式：缺 APK 私钥、缺依赖清单、装依赖失败都硬失败。
 EOF
 }
@@ -121,6 +123,26 @@ EOF
 # 只统计体积：工具函数自身不改动工作区。
 run_size_check() {
   check_firmware_size
+}
+
+# all 收尾：自动生成 logs/summary.md（体积、日志、软件包清单汇成一份可读摘要）。
+#
+# 为什么只有 all 触发、check 不触发：check 的语义是"只统计体积"，它刻意不产出任何新文件；
+# 而摘要会往 logs/ 里写一份 summary.md，混进 check 就破坏了那个语义的纯净，
+# 也会让"复核一次体积"变成"顺手改了工作区"。
+#
+# 为什么不阻断：摘要属于汇报环节，构建结论已由前面的阶段给出；
+# 因为一句日志没生成成功就把成功的编译判成失败，是把"汇报"错当成了"门禁"。
+auto_generate_summary() {
+  local summary_script="${SCRIPT_DIR}/../ci/generate-summary.sh"
+  if [[ ! -f "${summary_script}" ]]; then
+    log_warning "未找到 ${summary_script}，跳过自动生成摘要"
+    return 0
+  fi
+  # 摘要脚本自身退出码恒为 0；这里的 || 兜住"脚本都没能启动"这类意外，
+  # 兜住之后仍返回 0，语义与"摘要失败不阻断构建"保持一致。
+  bash "${summary_script}" build || log_warning "自动生成摘要失败（不阻断构建）"
+  return 0
 }
 
 run_stage() {
@@ -131,7 +153,17 @@ run_stage() {
     download) prepare_all && download_packages ;;
     compile) prepare_all && download_packages && compile_firmware ;;
     check) run_size_check ;;
-    all) prepare_all && download_packages && compile_firmware && run_size_check ;;
+    # 摘要接在体积统计之后：先拿到本轮的真实产物体积，写进摘要的才是这次的数据。
+    all)
+      prepare_all && download_packages && compile_firmware && run_size_check
+      local rc=$?
+      # 前序任一步失败时不再生成摘要：此时体积与产物都不完整，
+      # 生成的只会是一份"看起来跑完了"的假摘要。
+      if ((rc == 0)); then
+        auto_generate_summary
+      fi
+      return "${rc}"
+      ;;
   esac
 }
 

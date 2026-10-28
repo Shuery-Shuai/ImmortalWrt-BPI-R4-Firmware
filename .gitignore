@@ -7,5 +7,9 @@ keys/private-key.pem
 keys/public-key.pem
 /private-key.pem
 /public-key.pem
+# 构建日志整目录忽略，logs/summary.md 同样不入库：
+# PR 门禁要求的是【PR 描述】里的构建摘要（由贡献者从本地生成的 logs/summary.md 粘贴过去），
+# 而不是把这份文件提交进仓库。摘要留在本地 logs/ 里作为可复制的源文本，
+# 证明「由本 PR 产出」靠的是摘要里的提交 SHA 与变更文件指纹，与文件是否入库无关。
 logs/
 .tmp-*

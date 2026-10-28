@@ -1,0 +1,62 @@
+# PR 合规门禁（pr-compliance）
+#
+# 每个 pull_request 都跑一次，结论（RESULT PASS）作为分支保护的必需检查项引用。
+# 必需检查项的上下文由 job id 决定，因此 job id 与 name 都固定写成 pr-compliance：
+# 两者不一致时分支保护里看到的上下文名会随 name 变化而漂移。
+#
+# 为什么 pull_request 不加 paths 过滤（与 syntax-linter.yml 同理）：
+#   Dependabot 的 PR 只改 .github/workflows/*.yml，dependency-auditor 自动开的 PR 只改
+#   scripts/inputs/diy-part2.sh —— 一旦按 paths 过滤，恰恰是“自动改 workflow/脚本”这类
+#   最需要校验的 PR 会绕过门禁。门禁必须对全部 PR 无条件生效。
+#
+# 权限只给读取：本门禁只做判定并写 step summary，不评论、不推送、不打标签。
+name: PR Compliance Gate
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  # 同一个 PR 反复推送时取消旧运行：门禁结论只对最新一次提交有意义，
+  # 旧运行还会和新运行抢同一个必需检查项状态。
+  group: pr-compliance-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-compliance:
+    name: pr-compliance
+    runs-on: ubuntu-24.04
+    steps:
+      # fetch-depth: 0 是硬要求：摘要溯源要与 merge-base..HEAD 的真实差异对账，
+      # 浅克隆里 git merge-base 会让 P7/P8/C4/C5/C6 全部降级为 SKIP（等于门禁失效）。
+      # ref 取 head.sha 而不是 github.sha：pull_request 事件的 github.sha 是合并提交，
+      # 而摘要记录的是头分支上的提交，拿合并提交当 HEAD 会让 P9 的提交距离失去意义。
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      # env 全部来自契约 C：脚本只读这些变量，不直接解析 github 上下文，
+      # 这样本地用同一组变量就能复现 CI 结论。
+      #
+      # PR_BODY 必须经 env 传入，绝不能把描述原文用表达式内插进 run: 脚本：
+      # PR 描述是任意用户文本（含引号、换行、$(...)、反引号），内插会破坏脚本本身，
+      # 更是一个命令注入面。env 传参期间它只是一段普通字符串。
+      - name: Run pr-compliance
+        id: compliance
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_REPO_FULL_NAME: ${{ github.repository }}
+          PR_HEAD_REPO_FULL_NAME: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+          PR_AUTHOR_ASSOC: ${{ github.event.pull_request.author_association }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: bash scripts/ci/pr-compliance.sh

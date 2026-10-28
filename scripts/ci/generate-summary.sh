@@ -22,6 +22,19 @@ source "${SCRIPT_DIR}/../libs/01-shell-logger.sh"
 # 而它正是挑"哪份日志属于本次构建"的那个读者——自己制造候选、再去匹配自己，是上一轮的 bug 根源。
 LOG_TO_FILE=false
 
+# 溯源块的唯一实现在 scripts/ci/summary-provenance.sh：同一份数据还要被校验脚本读取，
+# 在这里再算一遍就必然出现"块里 3 个文件、校验脚本算出 4 个"的分歧——分歧的后果是
+# 校验误报而不是功能故障，最难排查，所以计算与渲染都只放在那一处。
+# source 失败只降级：摘要照常输出，只是少了溯源小节；本脚本"退出码恒为 0"的契约优先。
+SUMMARY_PROVENANCE_SH="${SCRIPT_DIR}/summary-provenance.sh"
+PROVENANCE_AVAILABLE=false
+# shellcheck source=scripts/ci/summary-provenance.sh
+if source "${SUMMARY_PROVENANCE_SH}" 2>/dev/null; then
+  PROVENANCE_AVAILABLE=true
+else
+  log_warning "无法加载 ${SUMMARY_PROVENANCE_SH}，本次摘要不含溯源块"
+fi
+
 # 摘要要按仓库根找 logs/ 与 immortalwrt/bin/targets，因此先记住调用者 cwd，
 # 退出时还原，免得把“改了 cwd”这个副作用留给调用它的 shell。
 ORIGINAL_DIR="$(pwd)"
@@ -185,7 +198,19 @@ render_meta() {
 }
 
 render_steps() {
-  [[ -n "${STEP_SEQUENCE:-}" ]] || return 0
+  # 本地跑（build.sh all -> 自动生成摘要）没有 CI 注入的 STEP_SEQUENCE，但"步骤状态"是
+  # 正文必备小节（校验脚本 P11 靠它判断摘要是否完整）。整节不输出，就等于本地产出的摘要
+  # 永远过不了 CI 门禁，所以这里改成【诚实的占位】：标题与表头照出，正文只留一行"未执行"。
+  #
+  # 为什么不写成"成功"或干脆省略整行：摘要的用途是给判断提供依据，占位行必须让读者
+  # 一眼看出"这台机器上没有 CI 步骤可报"，而不是"这些步骤都跑过了"。
+  # 结果列复用 step_badge 的空值映射（⚪ 未执行），语义与"因前序失败而没跑"的步骤同一套，
+  # 不再另造一个词，读者不必学第二套记号。
+  if [[ -z "${STEP_SEQUENCE:-}" ]]; then
+    printf '### 步骤状态\n\n| 步骤 | 结果 |\n| --- | --- |\n'
+    printf '| %s | %s |\n\n' '（本地运行，无 CI 步骤信息）' "$(step_badge "")"
+    return 0
+  fi
   printf '### 步骤状态\n\n| 步骤 | 结果 |\n| --- | --- |\n'
   local line key name value
   while IFS= read -r line; do
@@ -315,6 +340,12 @@ firmware_size_line() {
 readonly MANIFEST_GLOB_PATTERN="immortalwrt/bin/targets/*/*/*.manifest"
 readonly PACKAGE_INDEX_GLOB_PATTERN="immortalwrt/bin/packages/*/*/index.json"
 readonly TARGET_PACKAGE_INDEX_GLOB_PATTERN="immortalwrt/bin/targets/*/*/packages/index.json"
+# target 专属包的索引在 CI 里会**先被删掉再被统计**：Organize files 为缩小 firmware artifact
+# 执行 rm -rf packages，而 Run summary 排在它之后。那个目录里的 index.json 是「154 个
+# kmod / target 包确实产出过」的唯一证据，删掉即等同一律判成未产出（实测 153 条假报）。
+# 因此 workflow 的 organize 步骤在删除前把它快照到 $RUNNER_TEMP，用这个变量把路径传进来。
+# 本地跑没有该变量、目录也还在，此时照旧走 glob —— 两种情形都只有一份真相来源。
+TARGET_PACKAGE_INDEX_FILE="${TARGET_PACKAGE_INDEX_FILE:-}"
 # 编译前的包选择：.config 里 CONFIG_PACKAGE_<名>=y|m 的才算「本应编译」。
 readonly CONFIG_FILE="immortalwrt/.config"
 
@@ -338,6 +369,25 @@ package_index_available() {
   command -v python3 >/dev/null 2>&1
 }
 
+# 把一个索引 glob 解析成实际文件列表，并补上 target 索引的快照文件。
+#
+# 为什么单独一层：target 专属索引有两份可能的存在形态——
+#   · 目录还在       -> glob 命中 immortalwrt/bin/targets/*/*/packages/index.json
+#   · 目录已被删除   -> 只剩 workflow 提前快照的 $TARGET_PACKAGE_INDEX_FILE（CI 的常态）
+# 二者对「编译产出」是同一份事实，谁在就用谁；CI 里 glob 必然落空，只有快照可用。
+#
+# 只在模式等于 target glob 时并入快照：否则 feed 那一列也会把 target 的包算进来，
+# 表格里「bin feed / bin target」分列展示就失去意义（两列会变成同一个并集）。
+index_files_for() {
+  local pattern="${1:-}"
+  [[ -n "${pattern}" ]] || return 0
+  compgen -G "${pattern}" 2>/dev/null || true
+  if [[ "${pattern}" == "${TARGET_PACKAGE_INDEX_GLOB_PATTERN}" && -n "${TARGET_PACKAGE_INDEX_FILE}" ]]; then
+    [[ -f "${TARGET_PACKAGE_INDEX_FILE}" ]] && printf '%s\n' "${TARGET_PACKAGE_INDEX_FILE}"
+  fi
+  return 0
+}
+
 # 按来源统计编译产出。
 #   无参数  -> feed + target 并集，即"这次到底编出了多少 .apk"（编译验证用的分母）
 #   带参数  -> 只统计指定 glob 的来源，供表格分开展示
@@ -347,12 +397,12 @@ built_packages() {
   local file
   if [[ $# -gt 0 ]]; then
     # shellcheck disable=SC2207  # 路径由只读 glob 展开，含空格的可能性不成立
-    files=($(compgen -G "${1}" 2>/dev/null || true))
+    files=($(index_files_for "${1}"))
   else
     # 两处索引都要收：feed（target 无关）与 targets/*/*/packages（target 专属 kmod）。
     # shellcheck disable=SC2207
-    files=($(compgen -G "${PACKAGE_INDEX_GLOB_PATTERN}" 2>/dev/null || true)
-           $(compgen -G "${TARGET_PACKAGE_INDEX_GLOB_PATTERN}" 2>/dev/null || true))
+    files=($(index_files_for "${PACKAGE_INDEX_GLOB_PATTERN}")
+           $(index_files_for "${TARGET_PACKAGE_INDEX_GLOB_PATTERN}"))
   fi
   [[ ${#files[@]} -gt 0 ]] || return 0
   python3 - "${files[@]}" <<'PY' 2>/dev/null
@@ -566,205 +616,322 @@ boot_stem() {
 }
 
 # 长清单折叠进 <details>：几百个包铺开会把摘要正文淹掉，默认收起、按需展开。
-render_package_section() {
-  local installed built planned
-  installed="$(manifest_packages)"
-  built="$(built_packages)"
-  planned="$(planned_packages)"
+# 反引号用 \x60 生成，避免围栏字面量在 shell 里被当成命令替换。
+# 三连与单个分开两个函数，是因为调用点的字面量形式不同，而返回值必须是纯数据。
+_fence_triple() {
+  printf '\x60\x60\x60'
+}
 
-  # 三者都空说明这次没跑编译（或产物已清理），不是故障，静默跳过。
-  if [[ -z "${installed}" && -z "${built}" && -z "${planned}" ]]; then
+_fence_single() {
+  printf '\x60'
+}
+
+# 统计一段以换行分隔的清单有多少个非空行。
+_count_lines() {
+  local text="${1}"
+  [[ -n "${text}" ]] || {
+    printf '0'
     return 0
-  fi
+  }
+  printf '%s\n' "${text}" | grep -c .
+}
 
-  local installed_count=0 built_count=0 planned_count=0
-  [[ -n "${installed}" ]] && installed_count="$(printf '%s\n' "${installed}" | grep -c .)"
-  [[ -n "${built}" ]] && built_count="$(printf '%s\n' "${built}" | grep -c .)"
-  [[ -n "${planned}" ]] && planned_count="$(printf '%s\n' "${planned}" | grep -c .)"
+# 渲染一个 <details> 折叠块（Markdown 围栏内含一段纯文本清单）。
+# 只输出有内容的那一块：契约里所有输入都是可选的，缺失即整块跳过。
+_render_details_block() {
+  local summary="${1}"
+  local count="${2}"
+  local body="${3}"
+  local fence
+  fence="$(_fence_triple)"
+  [[ -n "${body}" ]] || return 0
+  printf '<details><summary>%s（%s 个）</summary>\n\n%stext\n%s\n%s\n\n</details>\n\n' \
+    "${summary}" "${count}" "${fence}" "${body}" "${fence}"
+}
 
-  # 编译产出按落盘位置分列，不合并成一个数字。
-  # 两处的语义不同，合并后读者无法回答"最终发布目录里到底有什么"：
-  #   bin/...            最终产物，会随 artifact 发布
-  #   staging_dir/...    构建暂存中间态，不进发布包
-  # 实测本机 feed 227 + target 154 = bin 并集 381，而 staging 也是 381 但内容不同源。
-  local feed_count=0 target_count=0 staging_count=0
+# 统计各来源的产物数量。
+# 编译产出按落盘位置分列，不合并成一个数字：两处的语义不同，合并后读者无法回答
+# "最终发布目录里到底有什么"——
+#   bin/...            最终产物，会随 artifact 发布
+#   staging_dir/...    构建暂存中间态，不进发布包
+# 实测本机 feed 227 + target 154 = bin 并集 381，而 staging 也是 381 但内容不同源。
+#
+# 暂存目录里的 *.apk **全是符号链接**，指向 bin/ 下的真实文件（实测 381 个链接：
+# 227 -> bin/packages/<arch>/<feed>/，154 -> bin/targets/<board>/<sub>/packages/）。
+# 因此 staging 必须用 -type l 统计，用 -type f 会得到 0——
+# 而这恰好也说明 staging 不是"独立产物"，它只是 bin 的镜像视图。
+#
+# 结果写入全局（调用方在命令替换里渲染，global 才能跨过子 shell 边界）：
+#   _PKG_INSTALLED_COUNT _PKG_BUILT_COUNT _PKG_PLANNED_COUNT
+#   _PKG_FEED_COUNT _PKG_TARGET_COUNT _PKG_STAGING_COUNT
+#   _PKG_ORPHAN_COUNT _PKG_BOOT_BIN_COUNT _PKG_BOOT_STAGING_COUNT
+#   _PKG_INSTALLED _PKG_BUILT _PKG_PLANNED _PKG_ORPHANS
+_PKG_INSTALLED=""
+_PKG_BUILT=""
+_PKG_PLANNED=""
+_PKG_ORPHANS=""
+_PKG_INSTALLED_COUNT=0
+_PKG_BUILT_COUNT=0
+_PKG_PLANNED_COUNT=0
+_PKG_FEED_COUNT=0
+_PKG_TARGET_COUNT=0
+_PKG_STAGING_COUNT=0
+_PKG_ORPHAN_COUNT=0
+_PKG_BOOT_BIN_COUNT=0
+_PKG_BOOT_STAGING_COUNT=0
+
+# 收集各来源的清单与数量，供表格与折叠块共用（只算一次）。
+_collect_package_counts() {
   local feed_pkgs target_pkgs
+
+  _PKG_INSTALLED="$(manifest_packages)"
+  _PKG_BUILT="$(built_packages)"
+  _PKG_PLANNED="$(planned_packages)"
+  _PKG_ORPHANS="$(orphan_variants)"
+
+  _PKG_INSTALLED_COUNT="$(_count_lines "${_PKG_INSTALLED}")"
+  _PKG_BUILT_COUNT="$(_count_lines "${_PKG_BUILT}")"
+  _PKG_PLANNED_COUNT="$(_count_lines "${_PKG_PLANNED}")"
+  _PKG_ORPHAN_COUNT="$(_count_lines "${_PKG_ORPHANS}")"
+
   feed_pkgs="$(built_packages "${PACKAGE_INDEX_GLOB_PATTERN}")"
   target_pkgs="$(built_packages "${TARGET_PACKAGE_INDEX_GLOB_PATTERN}")"
-  [[ -n "${feed_pkgs}" ]] && feed_count="$(printf '%s\n' "${feed_pkgs}" | grep -c .)"
-  [[ -n "${target_pkgs}" ]] && target_count="$(printf '%s\n' "${target_pkgs}" | grep -c .)"
-  # staging 是构建中间态，没有 index.json，按 .apk 文件数统计。
-  # 暂存目录里的 *.apk **全是符号链接**，指向 bin/ 下的真实文件（实测 381 个链接：
-  # 227 -> bin/packages/<arch>/<feed>/，154 -> bin/targets/<board>/<sub>/packages/）。
-  # 因此这里必须用 -type l 统计，用 -type f 会得到 0——
-  # 而这恰好也说明 staging 不是"独立产物"，它只是 bin 的镜像视图，
-  # 表格里据此标注，避免读者把 381 重复算成另一份产出。
-  staging_count="$(find immortalwrt/staging_dir/packages -maxdepth 2 -name '*.apk' -type l 2>/dev/null | wc -l)"
+  _PKG_FEED_COUNT="$(_count_lines "${feed_pkgs}")"
+  _PKG_TARGET_COUNT="$(_count_lines "${target_pkgs}")"
 
-  # 未生效的变体开关（只有开关、宿主包没选）：配置现象，与「未产出」分开报。
-  local orphans orphan_count=0
-  orphans="$(orphan_variants)"
-  [[ -n "${orphans}" ]] && orphan_count="$(printf '%s\n' "${orphans}" | grep -c .)"
+  # staging 是构建中间态，没有 index.json，按 .apk 文件数统计（见上方 -type l 说明）。
+  _PKG_STAGING_COUNT="$(find immortalwrt/staging_dir/packages -maxdepth 2 -name '*.apk' -type l 2>/dev/null | wc -l)"
 
+  # 引导固件单独成行：它不走 .apk 口径，且两处目录里的内容**并不相同**
+  # （实测本机各 17 个、交集为 0），合并显示会让人误以为是同一批被数了两遍。
+  _PKG_BOOT_BIN_COUNT="$(boot_artifacts_in_bin | grep -c . || true)"
+  _PKG_BOOT_STAGING_COUNT="$(boot_artifacts_in_staging | grep -c . || true)"
+}
+
+# 渲染「软件包」小节的表格部分。
+_render_package_table() {
   printf '### 软件包\n\n'
   # 表格后必须空一行，否则紧跟的段落会被 Markdown 当成表格续行。
   printf '| 类别 | 数量 | 说明 |\n| --- | --- | --- |\n'
-  printf '| 装进固件 | %s | 镜像内自带，开机即有 |\n' "${installed_count}"
+  printf '| 装进固件 | %s | 镜像内自带，开机即有 |\n' "${_PKG_INSTALLED_COUNT}"
   # 编译产出按目录分列：三行各自独立，不做加减关系，读者一眼看出产物落在哪。
   # 尖括号占位符会被 shellcheck 判成重定向（SC2016/SC2086），改用 [-]- 风格。
-  printf '| 编译产出 · bin feed | %s | bin/packages/ 下按架构与 feed 分组，最终发布产物 |\n' "${feed_count}"
-  printf '| 编译产出 · bin target | %s | bin/targets/ 下 target 专属包（kmod 等），同为发布产物 |\n' "${target_count}"
-  printf '| 暂存 · staging_dir | %s | 均为指向 bin/ 的符号链接，不是独立产物 |\n' "${staging_count}"
-  # 引导固件单独成行：它不走 .apk 口径，且两处目录里的内容**并不相同**
-  # （实测本机各 17 个、交集为 0），合并显示会让人误以为是同一批被数了两遍。
-  local boot_bin_count=0 boot_staging_count=0
-  boot_bin_count="$(boot_artifacts_in_bin | grep -c . || true)"
-  boot_staging_count="$(boot_artifacts_in_staging | grep -c . || true)"
-  if [[ ${boot_bin_count} -gt 0 || ${boot_staging_count} -gt 0 ]]; then
-    printf '| 引导固件 · bin | %s | 已进发布目录的 .bin/.fip（成品） |\n' "${boot_bin_count}"
-    printf '| 引导固件 · staging | %s | 暂存目录里的 .bin/.fip（中间件，与上者内容不同） |\n' "${boot_staging_count}"
+  printf '| 编译产出 · bin feed | %s | bin/packages/ 下按架构与 feed 分组，最终发布产物 |\n' "${_PKG_FEED_COUNT}"
+  printf '| 编译产出 · bin target | %s | bin/targets/ 下 target 专属包（kmod 等），同为发布产物 |\n' "${_PKG_TARGET_COUNT}"
+  printf '| 暂存 · staging_dir | %s | 均为指向 bin/ 的符号链接，不是独立产物 |\n' "${_PKG_STAGING_COUNT}"
+  if [[ ${_PKG_BOOT_BIN_COUNT} -gt 0 || ${_PKG_BOOT_STAGING_COUNT} -gt 0 ]]; then
+    printf '| 引导固件 · bin | %s | 已进发布目录的 .bin/.fip（成品） |\n' "${_PKG_BOOT_BIN_COUNT}"
+    printf '| 引导固件 · staging | %s | 暂存目录里的 .bin/.fip（中间件，与上者内容不同） |\n' "${_PKG_BOOT_STAGING_COUNT}"
   fi
-  if [[ ${orphan_count} -gt 0 ]]; then
-    printf '| 未生效的变体开关 | %s | 开关自身有值，但宿主包未被选中，合入固件后不会生效 |\n' "${orphan_count}"
+  if [[ ${_PKG_ORPHAN_COUNT} -gt 0 ]]; then
+    printf '| 未生效的变体开关 | %s | 开关自身有值，但宿主包未被选中，合入固件后不会生效 |\n' "${_PKG_ORPHAN_COUNT}"
+  fi
+}
+
+# 把「计划清单」切成「普通包」与「引导固件」两组，结果写入调用方传入的两个数组名。
+#   $1 计划清单文本  $2 普通包数组名  $3 引导固件数组名
+_split_planned_by_kind() {
+  local planned="${1}"
+  local -n pkg_out="$2"
+  local -n boot_out="$3"
+  local name
+
+  while IFS= read -r name; do
+    [[ -n "${name}" ]] || continue
+    case "${name}" in
+      u-boot-* | trusted-firmware-a-*) boot_out+=("${name}") ;;
+      *) pkg_out+=("${name}") ;;
+    esac
+  done <<<"${planned}"
+}
+
+# 把未生效变体开关归一化成可能对应的宿主包名（原名 + 下划线换连字符两种写法）。
+# 未生效开关的宿主包要先从「未产出」里剔掉：它已经在「未生效的变体开关」那一行
+# 单独报过，若这里再报一次，同一件事会在摘要里出现两遍（归一化后的基包名 + 原始开关名），
+# 读者会误以为有两个问题。
+_orphan_base_names() {
+  local orphans="${1}"
+  local ov
+
+  while IFS= read -r ov; do
+    [[ -n "${ov}" ]] || continue
+    printf '%s\n' "${ov%_*}"
+    printf '%s' "${ov%_*}" | sed 's/_/-/g'
+    printf '\n'
+  done <<<"${orphans}"
+}
+
+# 计算「选中但未产出 .apk」的普通包清单。
+# comm 的两侧必须是**已排序的集合流**。这里把「已产出」与「孤立基包」并成一个排除集合，
+# 再一次性做差——注意不能写成 sort -u "${built}" file：built 是字符串不是文件名，
+# sort 会把它当路径读并失败，结果整列被当成「未产出」（实测 380 条假报）。
+_missing_plain_packages() {
+  local -a pkg_planned=("$@")
+  local -a orphan_bases=()
+  local orphans="${_PKG_ORPHANS}"
+
+  if [[ -n "${orphans}" ]]; then
+    local line
+    while IFS= read -r line; do
+      [[ -n "${line}" ]] && orphan_bases+=("${line}")
+    done < <(_orphan_base_names "${orphans}")
   fi
 
-  # 验证行：只有真的读到 .config 时才谈得上「应编多少」，否则不臆造分母。
-  #
-  # 比对分两路，因为两类产物的形态根本不同：
-  #   · 普通包 -> 产出 .apk，与 built（两处 index.json 的并集）比集合差；
-  #   · 引导固件（u-boot-* / trusted-firmware-a-*）-> 产出 .bin/.fip，与产物文件名比词干。
-  # 把引导固件硬塞进 .apk 口径会永远报「未产出」——实测 16 条假报全部来自这里。
-  local verdict
-  if [[ ${planned_count} -gt 0 ]]; then
-    local missing_text="" missing_count=0 boot_text="" boot_count=0
-    local -a boot_arts_bin=() boot_arts_staging=()
-    local boot_ok_text=""
-    # 两处产物分别收集：引导固件可能只落在其中一处，位置本身就是信息。
-    # shellcheck disable=SC2207
-    boot_arts_bin=($(boot_artifacts_in_bin))
-    # shellcheck disable=SC2207
-    boot_arts_staging=($(boot_artifacts_in_staging))
+  if [[ ${#orphan_bases[@]} -gt 0 ]]; then
+    comm -23 <(printf '%s\n' "${pkg_planned[@]}" | sort -u) \
+      <(printf '%s\n' "${_PKG_BUILT}" "${orphan_bases[@]}" | sort -u) 2>/dev/null
+  else
+    comm -23 <(printf '%s\n' "${pkg_planned[@]}" | sort -u) \
+      <(printf '%s\n' "${_PKG_BUILT}" | sort -u) 2>/dev/null
+  fi
+}
 
-    local -a pkg_planned=() boot_planned=()
-    local name
-    while IFS= read -r name; do
-      [[ -n "${name}" ]] || continue
-      case "${name}" in
-        u-boot-* | trusted-firmware-a-*) boot_planned+=("${name}") ;;
-        *) pkg_planned+=("${name}") ;;
-      esac
-    done <<<"${planned}"
+# 引导固件：产物文件名里是否含该配置名的词干。
+# 分别判定落入 bin（发布目录）与 staging（暂存目录），不合并——
+# 只落在 staging 的产物说明它还没进发布目录，这是读者需要知道的事实。
+# 返回：0 至少一处命中；1 两处都没有（该变体未产出）
+_boot_variant_present() {
+  local boot="${1}"
+  local stem art
+  stem="$(boot_stem "${boot}")"
 
-    # 普通包：计划集合 - 已产出集合。
-    # 未生效开关的宿主包要先剔掉：它已经在「未生效的变体开关」那一行单独报过，
-    # 若这里再报一次，同一件事会在摘要里出现两遍（归一化后的基包名 + 原始开关名），
-    # 读者会误以为有两个问题。
-    if [[ ${#pkg_planned[@]} -gt 0 ]]; then
-      local -a orphan_bases=()
-      local ov
-      while IFS= read -r ov; do
-        [[ -n "${ov}" ]] || continue
-        orphan_bases+=("${ov%_*}")
-        orphan_bases+=("$(printf '%s' "${ov%_*}" | sed 's/_/-/g')")
-      done <<<"${orphans}"
-      if [[ ${#orphan_bases[@]} -gt 0 ]]; then
-        # comm 的两侧必须是**已排序的集合流**。这里把「已产出」与「孤立基包」并成一个
-        # 排除集合，再一次性做差——注意不能写成 sort -u "${built}" file：built 是字符串
-        # 不是文件名，sort 会把它当路径读并失败，结果整列被当成「未产出」（实测 380 条假报）。
-        missing_text="$(comm -23 <(printf '%s\n' "${pkg_planned[@]}" | sort -u) \
-                                  <(printf '%s\n' "${built}" "${orphan_bases[@]}" | sort -u) 2>/dev/null)"
-      else
-        missing_text="$(comm -23 <(printf '%s\n' "${pkg_planned[@]}" | sort -u) \
-                                  <(printf '%s\n' "${built}" | sort -u) 2>/dev/null)"
-      fi
-      [[ -n "${missing_text}" ]] && missing_count="$(printf '%s\n' "${missing_text}" | grep -c .)"
-    fi
-
-    # 引导固件：产物文件名里是否含该配置名的词干。
-    # 分别判定落入 bin（发布目录）与 staging（暂存目录），不合并——
-    # 只落在 staging 的产物说明它还没进发布目录，这是读者需要知道的事实。
-    local boot
-    local boot_in_bin=0 boot_in_staging=0 boot_in_none=0
-    for boot in "${boot_planned[@]}"; do
-      local stem
-      stem="$(boot_stem "${boot}")"
-      local hit_bin=0 hit_staging=0 art
-      for art in "${boot_arts_bin[@]}"; do
-        if [[ "${art}" == *"${stem}"* ]]; then
-          hit_bin=1
-          break
-        fi
-      done
-      for art in "${boot_arts_staging[@]}"; do
-        if [[ "${art}" == *"${stem}"* ]]; then
-          hit_staging=1
-          break
-        fi
-      done
-      case "${hit_bin}${hit_staging}" in
-        11) boot_in_bin=$((boot_in_bin + 1)); boot_in_staging=$((boot_in_staging + 1)) ;;
-        10) boot_in_bin=$((boot_in_bin + 1)) ;;
-        01) boot_in_staging=$((boot_in_staging + 1)) ;;
-        *)
-          boot_text+="${boot}"$'\n'
-          boot_count=$((boot_count + 1))
-          boot_in_none=$((boot_in_none + 1))
-          ;;
-      esac
+  if [[ ${#BOOT_ARTS_BIN[@]} -gt 0 ]]; then
+    for art in "${BOOT_ARTS_BIN[@]}"; do
+      [[ "${art}" == *"${stem}"* ]] && return 0
     done
+  fi
+  if [[ ${#BOOT_ARTS_STAGING[@]} -gt 0 ]]; then
+    for art in "${BOOT_ARTS_STAGING[@]}"; do
+      [[ "${art}" == *"${stem}"* ]] && return 0
+    done
+  fi
+  return 1
+}
 
-    local checked=$((planned_count - missing_count - boot_count))
-    local total=${planned_count}
-    if [[ $((missing_count + boot_count)) -eq 0 ]]; then
-      verdict="✅ 全部成功（${total} 个均产出产物）"
+# 编译验证的核心：把「本应编译的包」与「真的产出产物的包」做集合差。
+#
+# 三条关键判定（每一条都有实测依据，改之前先看注释）：
+#
+# 1) 只有 CONFIG_PACKAGE_<名>=y|m 才算「本应编译」的软件包（见 selection_packages）。
+# 2) 「编译产出」必须同时收 feed 索引与 target 索引。只收 feed 会把上百个 kmod 误判成未编译
+#    （实测本机 feed 225、target 155，kmod-ipt-core 只在 targets/.../packages 下）。
+# 3) u-boot / trusted-firmware 的产物是 .bin/.fip 而非 .apk，但它们确实是编译产物。
+#    判据改成「该名出现在 targets 目录的文件名里」即可，不强行套 .apk 口径。
+#    把引导固件硬塞进 .apk 口径会永远报「未产出」——实测 16 条假报全部来自这里。
+#
+# 只统计不判定成败：本脚本的职责是「报告」，未编译的包可能是有意精简配置的结果，
+# 让摘要红掉等于把配置决策当成构建故障。真正的构建成败由上一步的 make 决定。
+#
+# 结果写入全局：_PKG_MISSING_TEXT（含引导固件的完整未产出清单，供折叠块用）
+#               _PKG_MISSING_COUNT _PKG_VERDICT
+_PKG_MISSING_TEXT=""
+_PKG_MISSING_COUNT=0
+_PKG_VERDICT=""
+
+# 引导固件产物清单：两处分别收集，引导固件可能只落在其中一处，位置本身就是信息。
+BOOT_ARTS_BIN=()
+BOOT_ARTS_STAGING=()
+
+# 计算编译验证的结果行与未产出清单（写入 _PKG_VERDICT / _PKG_MISSING_TEXT）。
+_compute_verification() {
+  local -a pkg_planned=() boot_planned=()
+  local missing_text="" boot_text=""
+  local missing_count=0 boot_count=0
+
+  _PKG_MISSING_TEXT=""
+  _PKG_MISSING_COUNT=0
+  _PKG_VERDICT=""
+
+  # 没有真的读到 .config 时就谈不上「应编多少」，否则不臆造分母。
+  [[ ${_PKG_PLANNED_COUNT} -gt 0 ]] || return 0
+
+  # shellcheck disable=SC2207
+  BOOT_ARTS_BIN=($(boot_artifacts_in_bin))
+  # shellcheck disable=SC2207
+  BOOT_ARTS_STAGING=($(boot_artifacts_in_staging))
+
+  _split_planned_by_kind "${_PKG_PLANNED}" pkg_planned boot_planned
+
+  if [[ ${#pkg_planned[@]} -gt 0 ]]; then
+    missing_text="$(_missing_plain_packages "${pkg_planned[@]}")"
+    missing_count="$(_count_lines "${missing_text}")"
+  fi
+
+  local boot
+  for boot in "${boot_planned[@]}"; do
+    if ! _boot_variant_present "${boot}"; then
+      boot_text+="${boot}"$'\n'
+      boot_count=$((boot_count + 1))
+    fi
+  done
+
+  local total=${_PKG_PLANNED_COUNT}
+  if [[ $((missing_count + boot_count)) -eq 0 ]]; then
+    _PKG_VERDICT="✅ 全部成功（${total} 个均产出产物）"
+  else
+    _PKG_VERDICT="⚠️ $((missing_count + boot_count)) 个未产出（详见下方折叠块）"
+  fi
+
+  # 两类未产出合成一份清单，供下方折叠块使用；引导固件标注出来以免与包混淆。
+  if [[ -n "${boot_text}" ]]; then
+    local boot_ok_text
+    boot_ok_text="$(printf '%s' "${boot_text}" | sed '/^$/d; s/$/（引导固件，产物为 .bin\/.fip）/')"
+    if [[ -n "${missing_text}" ]]; then
+      missing_text="${missing_text}"$'\n'"${boot_ok_text}"
     else
-      verdict="⚠️ $((missing_count + boot_count)) 个未产出（详见下方折叠块）"
+      missing_text="${boot_ok_text}"
     fi
-    printf '| 编译验证 | %s / %s | %s |\n' "${checked}" "${total}" "${verdict}"
-
-    # 两类未产出合成一份清单，供下方折叠块使用；引导固件标注出来以免与包混淆。
-    if [[ -n "${boot_text}" ]]; then
-      boot_ok_text="$(printf '%s' "${boot_text}" | sed '/^$/d; s/$/（引导固件，产物为 .bin\/.fip）/')"
-      if [[ -n "${missing_text}" ]]; then
-        missing_text="${missing_text}"$'\n'"${boot_ok_text}"
-      else
-        missing_text="${boot_ok_text}"
-      fi
-      missing_count=$((missing_count + boot_count))
-    fi
+    missing_count=$((missing_count + boot_count))
   fi
+
+  _PKG_MISSING_TEXT="${missing_text}"
+  _PKG_MISSING_COUNT="${missing_count}"
+}
+
+# 渲染「编译验证」那一行。
+_render_verification_row() {
+  [[ -n "${_PKG_VERDICT}" ]] || return 0
+  local checked=$((_PKG_PLANNED_COUNT - _PKG_MISSING_COUNT))
+  printf '| 编译验证 | %s / %s | %s |\n' "${checked}" "${_PKG_PLANNED_COUNT}" "${_PKG_VERDICT}"
+}
+
+# 未生效变体开关的说明文字。
+# 这类项不是编译失败，也不是"配置残留"——实测从干净的根 .config 跑 make defconfig
+# 就会**自动生成**它们，因为对应的 Config.in 写了 default y（且无 depends 约束）。
+# 因此不能给"重新 defconfig 即可消失"这种错误建议：defconfig 只会把它再生成一遍。
+_render_orphan_note() {
+  local tick
+  tick="$(_fence_single)"
+  printf '%s\n' "以上开关的宿主包未被选中，因此开关虽然为 y，合入固件后并不生效。"
+  printf '%s\n' "它们由对应的 ${tick}Config.in${tick} 里 ${tick}default y${tick} 自动生成，${tick}make defconfig${tick} 会再次产生，不是残留、无需清理。"
+  printf '%s\n\n' "若确实要启用，选中宿主包即可；若要彻底消除该行，只能在 ${tick}Config.in${tick} 里去掉默认值。"
+}
+
+# 渲染「软件包」小节的折叠清单。
+_render_package_details() {
+  _render_details_block "装进固件的包" "${_PKG_INSTALLED_COUNT}" "${_PKG_INSTALLED}"
+  _render_details_block "编译产出的包" "${_PKG_BUILT_COUNT}" "${_PKG_BUILT}"
+  _render_details_block "选中但未产出产物的项" "${_PKG_MISSING_COUNT}" "${_PKG_MISSING_TEXT}"
+  if [[ ${_PKG_ORPHAN_COUNT} -gt 0 ]]; then
+    _render_details_block "未生效的变体开关" "${_PKG_ORPHAN_COUNT}" "${_PKG_ORPHANS}"
+    _render_orphan_note
+  fi
+}
+
+# 渲染「软件包」小节：表格 + 编译验证 + 折叠清单。
+# 三者都空说明这次没跑编译（或产物已清理），不是故障，静默跳过。
+render_package_section() {
+  _collect_package_counts
+
+  if [[ -z "${_PKG_INSTALLED}" && -z "${_PKG_BUILT}" && -z "${_PKG_PLANNED}" ]]; then
+    return 0
+  fi
+
+  _render_package_table
+  _compute_verification
+  _render_verification_row
   printf '\n'
-
-  local fence
-  # 反引号用 \x60 生成，避免围栏字面量在 shell 里被当成命令替换。
-  fence="$(printf '\x60\x60\x60')"
-
-  if [[ ${installed_count} -gt 0 ]]; then
-    printf '<details><summary>装进固件的包（%s 个）</summary>\n\n%stext\n%s\n%s\n\n</details>\n\n' \
-      "${installed_count}" "${fence}" "${installed}" "${fence}"
-  fi
-  if [[ ${built_count} -gt 0 ]]; then
-    printf '<details><summary>编译产出的包（%s 个）</summary>\n\n%stext\n%s\n%s\n\n</details>\n\n' \
-      "${built_count}" "${fence}" "${built}" "${fence}"
-  fi
-  if [[ -n "${missing_text:-}" ]]; then
-    printf '<details><summary>选中但未产出产物的项（%s 个）</summary>\n\n%stext\n%s\n%s\n\n</details>\n\n' \
-      "${missing_count}" "${fence}" "${missing_text}" "${fence}"
-  fi
-  if [[ ${orphan_count} -gt 0 ]]; then
-    printf '<details><summary>未生效的变体开关（%s 个）</summary>\n\n%stext\n%s\n%s\n\n</details>\n\n' \
-      "${orphan_count}" "${fence}" "${orphans}" "${fence}"
-    # 这类项不是编译失败，也不是"配置残留"——实测从干净的根 .config 跑 make defconfig
-    # 就会**自动生成**它们，因为对应的 Config.in 写了 default y（且无 depends 约束）。
-    # 因此不能给"重新 defconfig 即可消失"这种错误建议：defconfig 只会把它再生成一遍。
-    # 反引号用 \x60 生成：字面反引号在单引号串里会被 shellcheck 判成笔误（SC2016），
-    # 与仓库其他位置的处理一致。这里它是 Markdown 行内代码，不是命令替换。
-    local tick
-    tick="$(printf '\x60')"
-    printf '%s\n' "以上开关的宿主包未被选中，因此开关虽然为 y，合入固件后并不生效。"
-    printf '%s\n' "它们由对应的 ${tick}Config.in${tick} 里 ${tick}default y${tick} 自动生成，${tick}make defconfig${tick} 会再次产生，不是残留、无需清理。"
-    printf '%s\n\n' "若确实要启用，选中宿主包即可；若要彻底消除该行，只能在 ${tick}Config.in${tick} 里去掉默认值。"
-  fi
+  _render_package_details
 }
 
 # artifact 表格是接线的核心价值：读的人要先知道去哪个 artifact 取固件，
@@ -1232,6 +1399,55 @@ flush_error_to_stderr() {
   return 0
 }
 
+# 「自动校验要点」：把 CI 端会逐项校验的东西摊开在摘要里，读者不必回去翻脚本。
+# 数据全部取自 summary-provenance.sh 算好的同一份 PROV_*，这里绝不重算——
+# 重算就会与溯源块出现"表里 N、块里 M"的分歧，而这正是本小节想消灭的问题。
+render_auto_check_section() {
+  [[ "${PROVENANCE_AVAILABLE}" == "true" ]] || return 0
+  provenance_gather
+
+  # 溯源块的 10 个键（格式版本 2 起）：任一为空，CI 侧解析就会拿到空值，所以这里数"实际填了几个"。
+  # 末两键取自同一份 _PKG_* 计数（见 summary-provenance.sh 的 _prov_package_counts）：
+  # 不重算，且缺值时是 unknown 而不是空串——unknown 表示"无法证明"（本例没跑过编译），
+  # 它仍是"已填"的值，是否放过由 CI 侧判定，不在这里替它做判断。
+  local planned_count missing_count filled=0 value
+  read -r planned_count missing_count <<<"$(_prov_package_counts)"
+  for value in \
+    "${PROV_FORMAT_VERSION}" "${PROV_REPO}" "${PROV_BRANCH}" "${PROV_COMMIT}" \
+    "${PROV_GENERATED_AT}" "${PROV_BASE_REF}" "${PROV_CHANGED_COUNT}" "${PROV_FINGERPRINT}" \
+    "${planned_count}" "${missing_count}"; do
+    [[ -n "${value}" ]] && filled=$((filled + 1))
+  done
+
+  # 必备文件：溯源实现、摘要脚本、构建入口三缺一，CI 的校验步骤就没有可跑的对象。
+  local -a required_files=(
+    "scripts/ci/summary-provenance.sh"
+    "scripts/ci/generate-summary.sh"
+    "scripts/build/build.sh"
+  )
+  local present=0 file
+  for file in "${required_files[@]}"; do
+    [[ -f "${file}" ]] && present=$((present + 1))
+  done
+
+  printf '### 🔎 自动校验要点\n\n'
+  printf '| 校验项 | CI 会校验什么 | 本摘要中的实际值 |\n| --- | --- | --- |\n'
+  printf '| 摘要格式版本 | 溯源块「格式版本」必须是 2 | %s |\n' "$(md_cell "${PROV_FORMAT_VERSION}")"
+  printf '| 溯源块完整性 | begin/end 标记之间 10 个键全部非空 | %s/10 键非空 |\n' "${filled}"
+  printf '| 指纹一致性 | 按契约字节规则重算清单指纹，须与块内一致 | %s |\n' "$(md_cell "${PROV_FINGERPRINT}")"
+  printf '| 必备文件 | 溯源实现、摘要脚本、构建入口都存在 | %s/%s 存在 |\n' \
+    "${present}" "${#required_files[@]}"
+  printf '| 变更范围 | 变更清单须落在允许修改的路径内 | %s 个文件（基准 %s） |\n' \
+    "$(md_cell "${PROV_CHANGED_COUNT}")" "$(md_cell "${PROV_BASE_REF}")"
+  # 这一行是本小节里唯一"会判失败"的门禁口径：未产出数不为 0 就说明本次改动让部分软件包
+  # 不再被编译，稳定性无从谈起。unknown（非 build 流水线 / 没读到 .config）同等按失败处理——
+  # 无法证明"零漏编"与"确实漏编"在门禁上必须同结论，否则没编译过的流水线就能靠 0 蒙过去。
+  printf '| 编译验证 | 溯源块「未产出数」必须为 0（unknown 视为无法证明，同判失败） | 应编 %s，未产出 %s |\n' \
+    "$(md_cell "${planned_count}")" "$(md_cell "${missing_count}")"
+  printf '\n'
+  return 0
+}
+
 main() {
   local mode="${1:-build}"
   case "${mode}" in
@@ -1268,6 +1484,14 @@ main() {
     # 失败摘录读的是 logs/，只有会产出构建日志的流水线才谈得上"从这里找原行"。
     if [[ "${FAILURE_DETECTED}" == "true" ]] && uses_build_logs "${mode}"; then
       render_failure
+    fi
+    # 溯源块是整份摘要的收尾（契约要求它是文件最后一段），校验要点是它的导读，
+    # 因此两者按"要点 -> 溯源块"的顺序接在所有既有小节之后；
+    # 既有小节的顺序一律不动，免得读者已经熟悉的版面被改写。
+    if [[ "${PROVENANCE_AVAILABLE}" == "true" ]]; then
+      # 两个渲染函数各自收尾带换行，这里不再补空行，否则小节之间会多出一行空白。
+      render_auto_check_section
+      render_provenance_block
     fi
   )"
 

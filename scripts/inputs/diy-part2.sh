@@ -93,4 +93,7 @@ set_fan2go_version "0.15.0" auto
 # 修复 libnl-tiny 编译警告
 fix_libnl_tiny_compile
 
+# 向 LuCI 模板注入「备份软件包恢复失败」提示（构建期补丁，不改 feeds 源文件）
+apply_restore_pkg_notice_patch
+
 log INFO "Part 2 for ImmortalWrt completed."

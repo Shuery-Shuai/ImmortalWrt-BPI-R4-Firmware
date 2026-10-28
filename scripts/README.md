@@ -1,4 +1,4 @@
-# <img alt="scripts" src="https://cdn.simpleicons.org/gnubash/4EAA25" width="26" height="26" align="top"> scripts/ · 构建脚本说明
+# scripts/ · 构建脚本说明
 
 > 🛠️ 本地与 CI **共用同一套构建脚本**。固件功能、刷机、签名密钥等面向使用者的说明见 [仓库根 README](../README.md)。
 
@@ -9,14 +9,14 @@
 
 ## 📖 目录
 
-- [🗺️ 架构总览](#️-架构总览)
+- [🗺 架构总览](#-架构总览)
 - [🚀 本地构建](#-本地构建)
 - [🌲 目录结构](#-目录结构)
 - [📊 CI 运行总结](#ci-运行总结cigenerate-summarysh)
 - [📦 依赖自动更新与巡检](#依赖自动更新与巡检)
 - [🛡️ 错误处理](#错误处理libs02-error-handlersh)
 
-## 🗺️ 架构总览
+## 🗺 架构总览
 
 脚本分成三层，**按消费方划分**而非按文件类型：
 
@@ -180,6 +180,7 @@ scripts/
 >    执行入口由 `run_diypart1/2` 定为 `immortalwrt/diy/diy-part*.sh`，cwd 仍是根。
 
 <!-- 与上方 NOTE 分开，避免两个相邻 alert 被当成同一引用块 -->
+
 > [!NOTE]
 >
 > 目录按**消费方**划分而非按文件类型：`build/` 是本地与 CI 共用的构建逻辑，`ci/` 只放「CI 专属且本地无意义」的产物生成脚本，
@@ -215,18 +216,17 @@ scripts/
 
 ### CI 运行总结（`ci/generate-summary.sh`）
 
-一次运行的结论散落在各步骤日志里，想知道为什么红要逐个点开。`generate-summary.sh` 把它压成一段 Markdown 写进
-`$GITHUB_STEP_SUMMARY`，运行页顶部直接能看到步骤状态、产物和关键错误行。
+一次运行的结论散落在各步骤日志里，想知道为什么红要逐个点开。`generate-summary.sh` 把它压成一段 Markdown 写进`$GITHUB_STEP_SUMMARY`，运行页顶部直接能看到步骤状态、产物和关键错误行。
 
 ```sh
 bash scripts/ci/generate-summary.sh [build|update-checker|dependency-auditor|syntax-linter]   # 缺省 build
 ```
 
-| 项     | 约定                                                                                                   |
-| ------ | ------------------------------------------------------------------------------------------------------ |
-| 输出   | 设了 `GITHUB_STEP_SUMMARY` 就追加写入该文件；否则打印到 stdout **并落一份 `logs/summary.md`**          |
-| 退出码 | 恒为 `0`——摘要自身绝不能让流水线变红                                                                   |
-| 参数   | `build` / `update-checker` / `dependency-auditor` / `syntax-linter`，决定标题与适用章节；缺省 `build`  |
+| 项     | 约定                                                                                                  |
+| ------ | ----------------------------------------------------------------------------------------------------- |
+| 输出   | 设了 `GITHUB_STEP_SUMMARY` 就追加写入该文件；否则打印到 stdout **并落一份 `logs/summary.md`**         |
+| 退出码 | 恒为 `0`——摘要自身绝不能让流水线变红                                                                  |
+| 参数   | `build` / `update-checker` / `dependency-auditor` / `syntax-linter`，决定标题与适用章节；缺省 `build` |
 
 **入参全是环境变量，缺哪个就跳过对应小节**，所以本地不设任何变量也能跑出可用的一段 Markdown。
 
@@ -239,6 +239,7 @@ bash scripts/ci/generate-summary.sh [build|update-checker|dependency-auditor|syn
 | `ARTIFACT_BIN_NAME` / `ARTIFACT_FIRMWARE_NAME` / `ARTIFACT_LOGS_NAME` | 产物名                                                                                                                                                                  |
 | `CACHE_HIT`                                                           | 构建缓存是否命中（`true` / `false`，摘要渲染成「命中 / 未命中」）                                                                                                       |
 | `LOG_DIR`                                                             | 日志目录，相对仓库根，缺省 `logs`（选源只认 `LOG_NAME_CATALOG` 里的文件名）                                                                                             |
+| `TARGET_PACKAGE_INDEX_FILE`                                           | target 专属包 `index.json` 的快照路径；CI 里该目录会被摘要步骤之前删掉，靠这份副本补回（缺省空，回退到 glob）                                                           |
 | `COMMIT_HASH` / `BUILD_TRIGGERED`                                     | `update-checker` 专用：检出的上游 commit、是否触发了构建                                                                                                                |
 | `METRIC_SEQUENCE` / `METRIC_<KEY>`                                    | `dependency-auditor` / `syntax-linter` 专用：「本次结果」表，与 `STEP_SEQUENCE` 同写法，只差前缀                                                                        |
 | `DETAIL_SEQUENCE` / `DETAIL_<KEY>`                                    | 同上两条流水线专用：「明细」折叠块，`DETAIL_<KEY>` 为空则整块跳过                                                                                                       |
@@ -246,72 +247,60 @@ bash scripts/ci/generate-summary.sh [build|update-checker|dependency-auditor|syn
 
 摘要按下面几块拼装，每一块都只在自己的输入存在时才出现：
 
-| 小节                                               | 内容                                                              | 依据                                                                                             |
-| -------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| 结论 + 运行链接                                    | 成功 / 失败、`server/repo/actions/runs/<id>`                      | `JOB_STATUS`、`GITHUB_REPOSITORY`、`GITHUB_RUN_ID`                                               |
-| 运行信息                                           | workflow、job、事件、分支、提交、触发人、Runner OS、run attempt   | 标准 `GITHUB_*` + `git rev-parse`                                                                |
-| 上游更新                                           | 检出的上游 commit、是否触发构建（仅 `update-checker`）            | `COMMIT_HASH`、`BUILD_TRIGGERED`                                                                 |
-| 步骤状态                                           | 按 `STEP_SEQUENCE` 逐行列出 outcome，带结果徽标                   | `STEP_SEQUENCE` + `STEP_<KEY>`                                                                   |
-| 构建产物（仅 `build`）                             | 设备、文件日期、发布标签、构建缓存、产物名、固件体积              | `DEVICE_NAME` / `FILE_DATE` / `RELEASE_TAG` / `CACHE_HIT` / `ARTIFACT_*_NAME`                    |
-| 软件包（仅 `build`）                               | 「装进固件」「编译产出」（bin/staging 分行）+ 编译验证，清单折叠  | `bin/targets/*/*/*.manifest`、`bin/**/index.json`、`staging_dir/packages`、`immortalwrt/.config` |
-| 日志文件                                           | `LOG_DIR` 里实际产出的日志 → 它属于哪个 workflow 步骤             | `LOG_DIR` 目录内容 + `LOG_NAME_CATALOG`                                                          |
-| 耗时与缓存                                         | 按候选清单选中一份带首尾时间戳的日志算时长；有 ccache 时附命中率  | `LOG_DIR` + `LOG_NAME_CATALOG`                                                                   |
-| 失败详情                                           | 从选中的日志末尾筛出关键错误行，折叠在 `<details>` 里             | job 失败时的 `LOG_DIR`                                                                           |
-| 本次结果（`dependency-auditor` / `syntax-linter`） | 按 `METRIC_SEQUENCE` 逐行列出指标，带显示名                       | `METRIC_SEQUENCE` + `METRIC_<KEY>`                                                               |
-| 明细（`dependency-auditor` / `syntax-linter`）     | 按 `DETAIL_SEQUENCE` 把长正文折叠进 `<details>`                   | `DETAIL_SEQUENCE` + `DETAIL_<KEY>`                                                               |
+| 小节                                               | 内容                                                             | 依据                                                                                             |
+| -------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| 结论 + 运行链接                                    | 成功 / 失败、`server/repo/actions/runs/<id>`                     | `JOB_STATUS`、`GITHUB_REPOSITORY`、`GITHUB_RUN_ID`                                               |
+| 运行信息                                           | workflow、job、事件、分支、提交、触发人、Runner OS、run attempt  | 标准 `GITHUB_*` + `git rev-parse`                                                                |
+| 上游更新                                           | 检出的上游 commit、是否触发构建（仅 `update-checker`）           | `COMMIT_HASH`、`BUILD_TRIGGERED`                                                                 |
+| 步骤状态                                           | 按 `STEP_SEQUENCE` 逐行列出 outcome，带结果徽标                  | `STEP_SEQUENCE` + `STEP_<KEY>`                                                                   |
+| 构建产物（仅 `build`）                             | 设备、文件日期、发布标签、构建缓存、产物名、固件体积             | `DEVICE_NAME` / `FILE_DATE` / `RELEASE_TAG` / `CACHE_HIT` / `ARTIFACT_*_NAME`                    |
+| 软件包（仅 `build`）                               | 「装进固件」「编译产出」（bin/staging 分行）+ 编译验证，清单折叠 | `bin/targets/*/*/*.manifest`、`bin/**/index.json`、`staging_dir/packages`、`immortalwrt/.config` |
+| 日志文件                                           | `LOG_DIR` 里实际产出的日志 → 它属于哪个 workflow 步骤            | `LOG_DIR` 目录内容 + `LOG_NAME_CATALOG`                                                          |
+| 耗时与缓存                                         | 按候选清单选中一份带首尾时间戳的日志算时长；有 ccache 时附命中率 | `LOG_DIR` + `LOG_NAME_CATALOG`                                                                   |
+| 失败详情                                           | 从选中的日志末尾筛出关键错误行，折叠在 `<details>` 里            | job 失败时的 `LOG_DIR`                                                                           |
+| 本次结果（`dependency-auditor` / `syntax-linter`） | 按 `METRIC_SEQUENCE` 逐行列出指标，带显示名                      | `METRIC_SEQUENCE` + `METRIC_<KEY>`                                                               |
+| 明细（`dependency-auditor` / `syntax-linter`）     | 按 `DETAIL_SEQUENCE` 把长正文折叠进 `<details>`                  | `DETAIL_SEQUENCE` + `DETAIL_<KEY>`                                                               |
 
-选源不靠 mtime：日志文件名是**规则命名**（`build-<stage>.log` 这类固定名），选哪一份由 `LOG_NAME_CATALOG` 这份
-可 review 的清单决定，mtime 只用来排目录列表的顺序。原因见 [本地构建](#-本地构建) 的日志说明：mtime 只能答「谁最后写」，
-答不出「哪份属于这次构建」——按 mtime 挑，恰好会挑到摘要步骤自己刚写的那份空日志。
+选源不靠 mtime：日志文件名是**规则命名**（`build-<stage>.log` 这类固定名），选哪一份由`LOG_NAME_CATALOG` 这份可 review 的清单决定，mtime 只用来排目录列表的顺序。原因见
+[本地构建](#-本地构建)的日志说明：mtime 只能答「谁最后写」，答不出「哪份属于这次构建」——按 mtime 挑，恰好会挑到摘要步骤自己刚写的那份空日志。
 
-失败摘录是「诊断辅助」而非「原因判定」：它扫描的是选中日志的末尾若干行并按关键字过滤，
-真正的原因仍以该日志为准，摘要只负责把人带到那一行。
+失败摘录是「诊断辅助」而非「原因判定」：它扫描的是选中日志的末尾若干行并按关键字过滤，真正的原因仍以该日志为准，摘要只负责把人带到那一行。
 
 「软件包」小节刻意把几个数字分开，因为语义不同、混成一个清单会误导人：
 
 - **装进固件**（`bin/targets/*/*/*.manifest`）：镜像内自带，开机即有。`.config` 里 `=y` 的包在这里。
 - **编译产出**：按落盘目录**分行展示**，不合并成一个数字，因为语义不同：
   - `bin/packages/<arch>/<feed>/`（`index.json`）：target 无关的 feed 包，最终发布产物。
-  - `bin/targets/<board>/<sub>/packages/`（`index.json`）：target 专属包（kmod-*），同为发布产物。
+  - `bin/targets/<board>/<sub>/packages/`（`index.json`）：target 专属包（kmod-\*），同为发布产物。
+    **CI 里这个目录在统计前已被删掉**：`Organize files` 为缩小 firmware artifact 执行 `rm -rf packages`， 而 `Run summary` 排在它之后。删除前该步骤把索引拷到
+    `$RUNNER_TEMP` 并通过 `TARGET_PACKAGE_INDEX_FILE` 传进来，两份来源择一使用。少了这份快照，154 个包会全部落进 「未产出」——实测 `245 / 398`（153 条假报），补上后
+    `398 / 398`。
   - `staging_dir/packages/<board>/`：**全是指向 `bin/` 的符号链接**，不是独立产物。
-    实测 381 个链接 = 227（`bin/packages`）+ 154（`bin/targets`），与 bin 并集完全对应；
-    统计必须用 `-type l`，用 `-type f` 会得到 0。
-  「编译验证」的口径是**两处 `index.json` 的并集**（实测 227+154=381）：只收前者会把上百个 kmod
-  误判成未编译。
+    实测 381 个链接 = 227（`bin/packages`）+ 154（`bin/targets`），与 bin 并集完全对应； 统计必须用 `-type l`，用 `-type f` 会得到 0。
+    「编译验证」的口径是**两处 `index.json` 的并集**（实测 227+154=381）：只收前者会把上百个 kmod 误判成未编译。
 - **引导固件**：同样按目录分行——`bin/targets/` 里是已进发布目录的成品（`<device>-bl31-uboot.fip`），
-  `staging_dir/.../image/` 里是暂存中间件（`<变体>-bl2.img` / `<变体>-bl31.bin`）。
-  两处**内容不同**（实测各 17 个、交集为 0），所以不合并，否则读者会以为同一批被数了两遍。
+  `staging_dir/.../image/` 里是暂存中间件（`<变体>-bl2.img` / `<变体>-bl31.bin`）。 两处**内容不同**（实测各 17 个、交集为 0），所以不合并，否则读者会以为同一批被数了两遍。
 - **编译验证**：`.config` 里 `=y|=m` 的项减去实际产出，报出「计划 / 实际」。全部成功时显示 `✅`，
-  否则 `⚠️` 并折叠列出未产出项。**只统计不判失败**——未编进固件可能是配置有意精简，
-  真故障由 `make` 自己红，不该让摘要越权定性。
+  否则 `⚠️` 并折叠列出未产出项。**只统计不判失败**——未编进固件可能是配置有意精简， 真故障由 `make` 自己红，不该让摘要越权定性。
 - **未生效的变体开关**：形如 `<基包>_<开关>` 但宿主包本身未被选中的项（如 `knot-resolver_dnstap=y`
-  却没有 `knot-resolver`）。与「未产出」分开报，因为它是配置现象而非编译失败：
-  宿主没参与构建，开关为 `y` 也不会产生任何效果。这类项的宿主包会从「未产出」里剔掉，
-  避免同一件事报两遍。
+  却没有 `knot-resolver`）。与「未产出」分开报，因为它是配置现象而非编译失败： 宿主没参与构建，开关为 `y` 也不会产生任何效果。这类项的宿主包会从「未产出」里剔掉， 避免同一件事报两遍。
 
-  **成因已实测确认，不是「配置残留」**：`knot-resolver` 的 `Config.in` 写的是 `default y`
-  且无 `depends` 约束，因此从干净的根 `.config` 跑 `make defconfig` 就会**自动生成**这一行；
-  手工置为 `n` 后 `defconfig` 也保持 `n`（说明它并非被反复拉回 `y`）。
-  结论：`defconfig` 清不掉它，无需建议用户清理——要彻底消除只能改 `Config.in` 的默认值。
+**成因已实测确认，不是「配置残留」**：`knot-resolver` 的 `Config.in` 写的是 `default y` 且无 `depends` 约束，因此从干净的根 `.config` 跑 `make defconfig`
+就会**自动生成**这一行； 手工置为 `n` 后 `defconfig` 也保持 `n`（说明它并非被反复拉回 `y`）。 结论：`defconfig` 清不掉它，无需建议用户清理——要彻底消除只能改 `Config.in` 的默认值。
 
 验证口径有四个坑，都已按实测处理：
 
 1. `.config` 里 `CONFIG_PACKAGE_*` 混着**非独立包**的选择项：变体开关（`*_INCLUDE_*`、`dnsmasq_full_dhcp`）
-   与纯大写子选项（`TAR_GZIP`、`MAC80211_MESH`）。它们不产出独立包，必须先归一化或排除，
-   否则「未编译」永远不为 0。
+   与纯大写子选项（`TAR_GZIP`、`MAC80211_MESH`）。它们不产出独立包，必须先归一化或排除， 否则「未编译」永远不为 0。
 2. 引导固件（`u-boot-*` / `trusted-firmware-a-*`）产物是 `.bin`/`.fip`/`.img` 而非 `.apk`，判据改成比文件名词干。
-   两类命名习惯还不一样：`trusted-firmware-a-mt7988-ram-comb` 保留 SoC，
-   而 `u-boot-mt7988_bananapi_bpi-r4-emmc` 的产物**只有板名**（不含 SoC）。
+   两类命名习惯还不一样：`trusted-firmware-a-mt7988-ram-comb` 保留 SoC， 而 `u-boot-mt7988_bananapi_bpi-r4-emmc` 的产物**只有板名**（不含 SoC）。
 3. 引导固件产物**只扫 `bin/targets` 会漏一大半**。`arm-trusted-firmware-mediatek` 的
-   `Package/trusted-firmware-a/install` 把变体装到 `STAGING_DIR_IMAGE`（`<变体>-bl2.img` /
-   `<变体>-bl31.bin`），emmc-comb / sdmmc-comb / spim-nand-ubi-comb 这些**只**落在
-   `staging_dir/*/image/`，不进 `bin/targets`。两处都要扫，否则会把 7 个已编成功的变体
-   报成未产出（实测踩过）。
+   `Package/trusted-firmware-a/install` 把变体装到 `STAGING_DIR_IMAGE`（`<变体>-bl2.img` / `<变体>-bl31.bin`），emmc-comb / sdmmc-comb
+   / spim-nand-ubi-comb 这些**只**落在 `staging_dir/*/image/`，不进 `bin/targets`。两处都要扫，否则会把 7 个已编成功的变体 报成未产出（实测踩过）。
 4. 包名从 `index.json` 的 JSON 取而不是拆 `包名-版本-rN.apk` 文件名：包名自身含连字符、版本含 `~` 与 `-rN`，
    按正则拆分必然出错（如 `dae-geosite-2.0.0-r1`）。索引损坏时该 feed 静默跳过，不影响其余 feed 与整份摘要。
 
-两种模式各有取舍：`update-checker` 那个 job 拿不到固件，所以不渲染产物与体积小节（渲染了只会骗人）；
-反过来「上游更新」小节只在 `update-checker` 出现。
+两种模式各有取舍：`update-checker` 那个 job 拿不到固件，所以不渲染产物与体积小节（渲染了只会骗人）；反过来「上游更新」小节只在 `update-checker` 出现。
 
 > [!IMPORTANT]
 >
@@ -352,31 +341,25 @@ bash scripts/ci/generate-summary.sh [build|update-checker|dependency-auditor|syn
 | `install-deps.sh` 的 `EXTRAS_*` 常量  | `ci/check-pinned-tools.sh` + `dependency-auditor.yml` | upx 开 PR；padjffs2 / po2lmo 只开 issue                            |
 | `diy-part2.sh` 的 dae / fan2go 固定行 | `ci/check-pinned-tools.sh` + `dependency-auditor.yml` | 两者都开 PR；dae 同时改版本号与 sha256，fan2go 只改版本号          |
 
-dae 那一行的 sha256 优先取上游 release 的 `.dgst` 里的 `sha256` 行（只有几十字节）；上游没发 `.dgst` 时
-（实测 v2.1.0 是 404）回退为下载源码包现算。两条路径都必须走通，不能只认 `.dgst`。
-fan2go 的 hash 参数是字面量 `auto`（构建时现算），所以 PR 只动版本号那一个 token，改完必须仍是 `"<版本>" auto`。
+dae 那一行的 sha256 优先取上游 release 的 `.dgst` 里的 `sha256` 行（只有几十字节）；上游没发`.dgst` 时（实测 v2.1.0 是 404）回退为下载源码包现算。两条路径都必须走通，不能只认
+`.dgst`。fan2go 的hash 参数是字面量 `auto`（构建时现算），所以 PR 只动版本号那一个 token，改完必须仍是 `"<版本>" auto`。
 
 两点必须说清楚：
 
 - **Dependabot 没有 apt/deb 生态。** 官方支持的 `package-ecosystem` 里没有 apt，所以 `dependencies.txt` 不存在"被机器人自动升版本"这回事——那份清单本身也全是裸包名、零版本号。
 - **action 引用只在有 tag 时才可能被钉住。** 理由与构建 job 固定 `ubuntu-24.04` 而非
-  `ubuntu-latest` 相同：不让上游一次推送在不相关的提交上把构建搞红。
-  原先的 `klever1988/cachewrtbuild` 从未打过 tag（tags 为 0 条），只能跟 `main`、也不在
-  Dependabot 管理范围内——现已弃用，改用有正式 tag 的 `actions/cache/{restore,save}@v6`，
-  由 Dependabot 正常接管版本更新。
+  `ubuntu-latest` 相同：不让上游一次推送在不相关的提交上把构建搞红。 原先的 `klever1988/cachewrtbuild` 从未打过 tag（tags 为 0 条），只能跟 `main`、也不在 Dependabot
+  管理范围内——现已弃用，改用有正式 tag 的 `actions/cache/{restore,save}@v6`， 由 Dependabot 正常接管版本更新。
 
-**退出码约定**（两个检测脚本一致）：`E_SUCCESS(0)` 正常跑完（有漂移也是 0，脚本只报告不改文件）、
-`E_DATAERR(65)` 确有包名查不到、`E_UNAVAILABLE(69)` 网络或索引下载失败、
-`E_USAGE(64)`/`E_NOINPUT(66)` 参数与输入错误。
-workflow 只把 65 当"依赖问题"，其余非零码一律红叉（避免网络故障被静默吞掉）。
+**退出码约定**（两个检测脚本一致）：`E_SUCCESS(0)` 正常跑完（有漂移也是 0，脚本只报告不改文件）、`E_DATAERR(65)` 确有包名查不到、`E_UNAVAILABLE(69)`
+网络或索引下载失败、`E_USAGE(64)`/`E_NOINPUT(66)` 参数与输入错误。workflow 只把 65 当"依赖问题"，其余非零码一律红叉（避免网络故障被静默吞掉）。
 
-`dependency-auditor.yml` 的事件分工同样是刻意的：`pull_request` / `push` 只对改动依赖清单的路径跑包名校验并**当门禁**（非零即红叉）；
-开 issue、开 PR 这些副作用只在 `schedule` / `workflow_dispatch` 下发生，PR 上绝不自动改文件。
+`dependency-auditor.yml` 的事件分工同样是刻意的：`pull_request` / `push` 只对改动依赖清单的路径跑包名校验并**当门禁**（非零即红叉）；开 issue、开 PR 这些副作用只在
+`schedule` / `workflow_dispatch` 下发生，PR 上绝不自动改文件。
 
 ### 错误处理（`libs/02-error-handler.sh`）
 
-Shell 没有异常机制，错误处理围绕**退出码、`return`/`exit`、断言**展开。本库只做「控制流 + 退出码」，
-日志格式归 `01-shell-logger.sh`，两者边界清晰。
+Shell 没有异常机制，错误处理围绕**退出码、`return`/`exit`、断言**展开。本库只做「控制流 + 退出码」，日志格式归 `01-shell-logger.sh`，两者边界清晰。
 
 #### 核心分工（不可混用）
 
@@ -391,9 +374,11 @@ Shell 没有异常机制，错误处理围绕**退出码、`return`/`exit`、断
 
 #### 退出码常量（沿用 `sysexits.h`）
 
-`E_SUCCESS=0`、`E_GENERAL=1`、`E_USAGE=64`、`E_DATAERR=65`、`E_NOINPUT=66`、
-`E_UNAVAILABLE=69`、`E_SOFTWARE=70`、`E_OSERR=71`、`E_CANTCREAT=73`、`E_IOERR=74`。
-`exit_code_to_name <code>` 把码转成可读名（`64` → `USAGE`，未知 → `UNKNOWN`）。
+<!-- markdownlint-disable MD013 -- 退出码清单是一串 code span，唯一空格在 `exit_code_to_name <code>` 内部，断行会把命令拆开 -->
+
+`E_SUCCESS=0`、`E_GENERAL=1`、`E_USAGE=64`、`E_DATAERR=65`、`E_NOINPUT=66`、`E_UNAVAILABLE=69`、`E_SOFTWARE=70`、`E_OSERR=71`、`E_CANTCREAT=73`、`E_IOERR=74`。`exit_code_to_name <code>` 把码转成可读名（`64` → `USAGE`，未知 → `UNKNOWN`）。
+
+<!-- markdownlint-enable MD013 -->
 
 #### 当前退出码用法
 
@@ -412,8 +397,7 @@ Shell 没有异常机制，错误处理围绕**退出码、`return`/`exit`、断
 
 #### 断言与前置检查（全部 `return 1`）
 
-`require_cmd` / `require_var` / `require_file` / `require_dir` / `require_exec`。
-多参数时在第一个缺失项处返回，错误信息始终指向一个具体路径或命令名。
+`require_cmd` / `require_var` / `require_file` / `require_dir` / `require_exec`。多参数时在第一个缺失项处返回，错误信息始终指向一个具体路径或命令名。
 
 #### 命令执行包装
 

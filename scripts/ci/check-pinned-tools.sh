@@ -160,64 +160,64 @@ _parse_first_commit_sha() {
 }
 
 #######################################
-# 数值化比较版本号：candidate 是否比 pinned 新
+# 把版本串拆成「数字部分」与「预发布后缀」两段并归一（内部函数）
 #
 # 参数：
-#   $1 - 候选版本（上游最新，形如 5.2.1 / 2.1.1rc1）
-#   $2 - 钉住的版本（形如 5.0.2 / 2.0.0rc1）
+#   $1 - 版本串（形如 5.2.1 / 2.0.0rc1 / 1.0.0-rc1）
 #
-# 返回：
-#   0 - candidate > pinned
-#   1 - candidate <= pinned
+# 全局输出（两个都写，调用方自行取用；用全局是因为 02-error-handler 的分工约定里
+# 本文件不引入 main，且返回字符串会与「返回码表达比较结果」的语义冲突）：
+#   _VER_CORE - 纯数字段（点分隔），已剥掉后缀前的 -/_ 分隔符
+#   _VER_PRE  - 归一后的后缀（小写、无前导分隔符），无后缀时为空串
 #
-# 说明：分两段比，数字部分优先，预发布后缀只在数字部分完全相同时才参与判定。
-#       数字部分逐段按十进制比，因此 5.10 > 5.9（字符串比较会得到相反结论）；
-#       缺段按 0 补齐（5.2 == 5.2.0）。
-#       后缀按 semver 惯例：数字部分相同时 正式版 > 预发布版；预发布之间
-#       alpha < beta < pre < rc；前缀相同再比序号（rc2 > rc1）。
-#       后缀前的 -/_ 分隔符与大小写都做归一，2.0.0-rc1 与 2.0.0RC1 视为同一个预发布。
-#       两侧先由调用方用 _require_version_shape 卡过形状，这里不再兜底解析失败。
+# 返回：恒为 0（形状校验由 _require_version_shape 负责，这里不做判定）
 #######################################
-_version_is_newer() {
-    local candidate="$1"
-    local pinned="$2"
-    local cand_core=""
-    local pinned_core=""
-    local cand_pre=""
-    local pinned_pre=""
-    local cand_tag=""
-    local pinned_tag=""
-    local cand_num=""
-    local pinned_num=""
-    local cand_rank=0
-    local pinned_rank=0
-    local -a cand_parts=()
-    local -a pinned_parts=()
-    local width=0
-    local i=0
-    local a=""
-    local b=""
-    local ifs_saved="${IFS}"
+_VER_CORE=""
+_VER_PRE=""
+
+_split_version() {
+    local version="$1"
+    local core=""
 
     # 先把"数字部分 + 预发布后缀"切开：后缀固定是结尾那串字母加可选序号，
     # 数字部分只有数字和点，两种字符集不相交，所以从尾部剥即可。
     # 不分这一步的话，2.1.1rc1 的末段会带着 rc1 进算术，10#1rc1 直接抛错，
     # 而算术错误会让比较的两个 if 都不成立、最终返回"不更新"——上游从 rc 转正
     # 这一最该报警的时机反而被静默漏报。
-    cand_core="${candidate%%[A-Za-z]*}"
-    pinned_core="${pinned%%[A-Za-z]*}"
+    core="${version%%[A-Za-z]*}"
     # 后缀前的分隔符（1.0.0-rc1 / 1.0.0_rc1）不能留在数字部分里：
     # 留着会拼成 10#0- 这种记号，算术照样炸。
-    cand_core="${cand_core%[-_]}"
-    pinned_core="${pinned_core%[-_]}"
+    core="${core%[-_]}"
+
     # 统一小写再比后缀：上游标签大小写不统一时不至于让 RC 与 rc 判成两个不同前缀。
     # 这里同样把前导分隔符剥掉，1.0.0-rc1 才能与 1.0.0rc1 归一。
-    cand_pre="${candidate#"${cand_core}"}"
-    pinned_pre="${pinned#"${pinned_core}"}"
-    cand_pre="${cand_pre#[-_]}"
-    pinned_pre="${pinned_pre#[-_]}"
-    cand_pre="${cand_pre,,}"
-    pinned_pre="${pinned_pre,,}"
+    local pre="${version#"${core}"}"
+    pre="${pre#[-_]}"
+    pre="${pre,,}"
+
+    _VER_CORE="${core}"
+    _VER_PRE="${pre}"
+}
+
+#######################################
+# 逐段比较两个已拆好的数字部分（内部函数）
+#
+# 参数：
+#   $1 - 候选的数字部分
+#   $2 - 钉住的数字部分
+#
+# 返回：
+#   0 - 候选更大
+#   1 - 候选更小
+#   2 - 打平（需要调用方继续比较后缀）
+#######################################
+_compare_numeric_core() {
+    local cand_core="$1"
+    local pinned_core="$2"
+    local -a cand_parts=()
+    local -a pinned_parts=()
+    local ifs_saved="${IFS}"
+    local width i a b
 
     # 只在取分段时临时把 IFS 设成 '.'，读完立刻还原，避免污染调用方的 word splitting。
     IFS='.'
@@ -241,8 +241,51 @@ _version_is_newer() {
             return 1
         fi
     done
+    return 2
+}
 
-    # 数字部分打平后只剩后缀决定：没后缀的一侧是正式版，正式版更高。
+#######################################
+# 把预发布后缀映射成可比的大小（内部函数）
+#
+# 参数：
+#   $1 - 后缀（小写、无前导分隔符；可为空）
+#
+# 输出：stdout 输出 "<rank> <num>"，rank 越大越新
+#
+# 说明：按 semver 惯例 alpha < beta < pre < rc；未列入的前缀（如 dev / snapshot）
+#       排在 rc 之后，这样上游换了预发布命名时仍会按"预发布"处理，不会退化成正式版的判定。
+#######################################
+_version_suffix_rank() {
+    local pre="$1"
+    local tag num rank
+
+    tag="${pre%%[0-9]*}"
+    num="${pre#"${tag}"}"
+    case "${tag}" in
+        alpha) rank=1 ;;
+        beta) rank=2 ;;
+        pre | preview) rank=3 ;;
+        rc) rank=4 ;;
+        *) rank=5 ;;
+    esac
+    printf '%s %s' "${rank}" "${num:-0}"
+}
+
+#######################################
+# 数字部分打平后，用预发布后缀决定谁更新（内部函数）
+#
+# 参数：
+#   $1 - 候选后缀  $2 - 钉住后缀
+#
+# 返回：
+#   0 - 候选更新；1 - 候选不更新
+#######################################
+_compare_version_suffix() {
+    local cand_pre="$1"
+    local pinned_pre="$2"
+    local cand_rank cand_num pinned_rank pinned_num
+
+    # 没后缀的一侧是正式版，正式版更高。
     if [[ -z "${cand_pre}" && -z "${pinned_pre}" ]]; then
         # 两侧都是正式版且数字部分相同 -> 版本相同，不算更新。
         return 1
@@ -256,26 +299,8 @@ _version_is_newer() {
         return 1
     fi
 
-    # 先按 semver 惯例排字母前缀；未列入的前缀（如 dev / snapshot）排在 rc 之后，
-    # 这样上游换了预发布命名时仍会按"预发布"处理，不会退化成正式版的判定。
-    cand_tag="${cand_pre%%[0-9]*}"
-    pinned_tag="${pinned_pre%%[0-9]*}"
-    cand_num="${cand_pre#"${cand_tag}"}"
-    pinned_num="${pinned_pre#"${pinned_tag}"}"
-    case "${cand_tag}" in
-        alpha) cand_rank=1 ;;
-        beta) cand_rank=2 ;;
-        pre | preview) cand_rank=3 ;;
-        rc) cand_rank=4 ;;
-        *) cand_rank=5 ;;
-    esac
-    case "${pinned_tag}" in
-        alpha) pinned_rank=1 ;;
-        beta) pinned_rank=2 ;;
-        pre | preview) pinned_rank=3 ;;
-        rc) pinned_rank=4 ;;
-        *) pinned_rank=5 ;;
-    esac
+    read -r cand_rank cand_num <<<"$(_version_suffix_rank "${cand_pre}")"
+    read -r pinned_rank pinned_num <<<"$(_version_suffix_rank "${pinned_pre}")"
     if ((cand_rank > pinned_rank)); then
         return 0
     fi
@@ -287,6 +312,47 @@ _version_is_newer() {
         return 0
     fi
     return 1
+}
+
+#######################################
+# 数值化比较版本号：candidate 是否比 pinned 新
+#
+# 参数：
+#   $1 - 候选版本（上游最新，形如 5.2.1 / 2.1.1rc1）
+#   $2 - 钉住的版本（形如 5.0.2 / 2.0.0rc1）
+#
+# 返回：
+#   0 - candidate > pinned
+#   1 - candidate <= pinned
+#
+# 说明：分两段比，数字部分优先，预发布后缀只在数字部分完全相同时才参与判定。
+#       数字部分逐段按十进制比，因此 5.10 > 5.9（字符串比较会得到相反结论）；
+#       缺段按 0 补齐（5.2 == 5.2.0）。
+#       后缀按 semver 惯例：数字部分相同时 正式版 > 预发布版；预发布之间
+#       alpha < beta < pre < rc；前缀相同再比序号（rc2 > rc1）。
+#       后缀前的 -/_ 分隔符与大小写都做归一，2.0.0-rc1 与 2.0.0RC1 视为同一个预发布。
+#       两侧先由调用方用 _require_version_shape 卡过形状，这里不再兜底解析失败。
+#######################################
+_version_is_newer() {
+    local candidate="$1"
+    local pinned="$2"
+    local cand_core cand_pre pinned_core pinned_pre
+
+    _split_version "${candidate}"
+    cand_core="${_VER_CORE}"
+    cand_pre="${_VER_PRE}"
+    _split_version "${pinned}"
+    pinned_core="${_VER_CORE}"
+    pinned_pre="${_VER_PRE}"
+
+    # 数字部分：0 更大 / 1 更小 / 2 打平（结果码直接沿用 _compare_numeric_core 的约定）
+    _compare_numeric_core "${cand_core}" "${pinned_core}"
+    case $? in
+        0) return 0 ;;
+        1) return 1 ;;
+    esac
+
+    _compare_version_suffix "${cand_pre}" "${pinned_pre}"
 }
 
 #######################################
@@ -484,116 +550,198 @@ emit_key_value() {
     fi
 }
 
-main() {
-    local upx_body=""
-    local upx_latest=""
-    local pad_body=""
-    local pad_upstream=""
-    local po_body=""
-    local po2lmo_upstream=""
-    local upx_outdated="false"
-    local padjffs2_outdated="false"
-    local po2lmo_outdated="false"
-    local dae_body=""
-    local dae_pinned=""
-    local dae_latest=""
-    local dae_outdated="false"
-    local dae_new_hash=""
-    local fan2go_body=""
-    local fan2go_pinned=""
-    local fan2go_latest=""
-    local fan2go_outdated="false"
+#######################################
+# 取上游最新 release 的版本号（内部函数）
+#
+# 参数：
+#   $1 - API URL
+#   $2 - 失败时用于报错的工具名（upx / dae / fan2go）
+#
+# 输出：
+#   stdout 输出纯版本号；失败时输出空串
+#
+# 返回：
+#   0 - 取到且形状合法
+#   $E_UNAVAILABLE - 网络失败 / 解析失败 / 形状非法（均已 log_error）
+#######################################
+_fetch_latest_release_version() {
+    local url="$1"
+    local tool="$2"
+    local body=""
+    local latest=""
 
-    # 常量由 install-deps.sh 提供，取不到就没法巡检；这属于脚本环境问题，
-    # 用 E_UNAVAILABLE 统一表示"无法完成巡检"，与"有漂移"（仍是 0）区分开。
-    require_var EXTRAS_UPX_VERSION EXTRAS_PADJFFS2_COMMIT EXTRAS_PO2LMO_COMMIT || {
-        log_error "未能从 install-deps.sh 取得 EXTRAS_* 常量"
+    if ! body="$(_github_api_get "${url}")"; then
+        log_error "请求 ${tool} 最新 release 失败：${url}"
         return "${E_UNAVAILABLE}"
-    }
+    fi
+    if ! latest="$(_parse_release_tag "${body}")"; then
+        log_error "无法从 ${tool} release JSON 中解析 tag_name"
+        return "${E_UNAVAILABLE}"
+    fi
+    _require_version_shape "${latest}" "${tool} 上游" || return "${E_UNAVAILABLE}"
+    printf '%s' "${latest}"
+}
 
-    # inputs 层两个固定项只能从 diy-part2.sh 的调用行解析：把版本号再硬编码到本脚本
-    # 就等于出现第二份真值来源，改了一处忘了另一处会让巡检结果与实际构建用的版本悄悄分叉。
-    if ! dae_pinned="$(_parse_pinned_version_from_diy_part2 "set_dae_version")"; then
+#######################################
+# 取某个仓库指定路径的上游 HEAD commit（内部函数）
+#
+# 参数：
+#   $1 - API URL（per_page=1 的 commits 接口）
+#   $2 - 失败时用于报错的工具名（padjffs2 / po2lmo）
+#
+# 输出：
+#   stdout 输出 40 位 sha；失败时输出空串
+#
+# 返回：
+#   0 - 取到合法 sha；$E_UNAVAILABLE - 网络或解析失败（均已 log_error）
+#######################################
+_fetch_upstream_head_sha() {
+    local url="$1"
+    local tool="$2"
+    local body=""
+    local sha=""
+
+    if ! body="$(_github_api_get "${url}")"; then
+        log_error "请求 ${tool} 上游 HEAD 失败：${url}"
+        return "${E_UNAVAILABLE}"
+    fi
+    if ! sha="$(_parse_first_commit_sha "${body}")"; then
+        log_error "无法取得 ${tool} 上游 HEAD 的 commit sha"
+        return "${E_UNAVAILABLE}"
+    fi
+    printf '%s' "${sha}"
+}
+
+#######################################
+# 从 diy-part2.sh 取两个 inputs 项的钉住版本号（内部函数）
+#
+# 全局输出：
+#   _PIN_DAE     - set_dae_version 的版本号
+#   _PIN_FAN2GO  - set_fan2go_version 的版本号
+#
+# 返回：
+#   0 - 两个都取到且形状合法；$E_UNAVAILABLE - 解析或形状失败（均已 log_error）
+#
+# 说明：inputs 层两个固定项只能从 diy-part2.sh 的调用行解析：把版本号再硬编码到本脚本
+#       就等于出现第二份真值来源，改了一处忘了另一处会让巡检结果与实际构建用的版本悄悄分叉。
+#######################################
+_PIN_DAE=""
+_PIN_FAN2GO=""
+
+_read_pinned_inputs_versions() {
+    if ! _PIN_DAE="$(_parse_pinned_version_from_diy_part2 "set_dae_version")"; then
         log_error "无法从 ${DIY_PART2_FILE} 解析 set_dae_version 的版本号"
         return "${E_UNAVAILABLE}"
     fi
-    if ! fan2go_pinned="$(_parse_pinned_version_from_diy_part2 "set_fan2go_version")"; then
+    if ! _PIN_FAN2GO="$(_parse_pinned_version_from_diy_part2 "set_fan2go_version")"; then
         log_error "无法从 ${DIY_PART2_FILE} 解析 set_fan2go_version 的版本号"
         return "${E_UNAVAILABLE}"
     fi
     # 钉住值同样要过形状校验：上游从 rc 转正式版时，钉住侧常留在 2.0.0rc1 这种写法上，
     # 而脏值一旦进了比较就会静默判成"不落后"，正好漏掉这个该报警的时机。
-    _require_version_shape "${dae_pinned}" "dae 钉住" || return "${E_UNAVAILABLE}"
-    _require_version_shape "${fan2go_pinned}" "fan2go 钉住" || return "${E_UNAVAILABLE}"
+    _require_version_shape "${_PIN_DAE}" "dae 钉住" || return "${E_UNAVAILABLE}"
+    _require_version_shape "${_PIN_FAN2GO}" "fan2go 钉住" || return "${E_UNAVAILABLE}"
+}
 
-    if ! upx_body="$(_github_api_get "${URL_UPX_LATEST}")"; then
-        log_error "请求 upx 最新 release 失败：${URL_UPX_LATEST}"
-        return "${E_UNAVAILABLE}"
-    fi
-    if ! upx_latest="$(_parse_release_tag "${upx_body}")"; then
-        log_error "无法从 upx release JSON 中解析 tag_name"
-        return "${E_UNAVAILABLE}"
-    fi
-    _require_version_shape "${upx_latest}" "upx 上游" || return "${E_UNAVAILABLE}"
+#######################################
+# 输出一行 key=value 并（可选）写 GITHUB_OUTPUT —— 见 emit_key_value
+#
+# 巡检结果分三批输出，顺序固定：先 upx，再两个 commit，再两个 inputs 项。
+# 顺序固定是 workflow 与本地核对共同的契约，改动即破坏下游解析。
+#######################################
+_emit_upx_results() {
+    emit_key_value "upx_pinned" "${EXTRAS_UPX_VERSION}"
+    emit_key_value "upx_latest" "$1"
+    emit_key_value "upx_outdated" "$2"
+}
 
-    if ! pad_body="$(_github_api_get "${URL_PADJFFS2_HEAD}")"; then
-        log_error "请求 openwrt/openwrt 的 padjffs2 上游 HEAD 失败：${URL_PADJFFS2_HEAD}"
-        return "${E_UNAVAILABLE}"
-    fi
-    if ! pad_upstream="$(_parse_first_commit_sha "${pad_body}")"; then
-        log_error "无法从 openwrt/openwrt 的 commits JSON 中解析第一条 sha"
-        return "${E_UNAVAILABLE}"
-    fi
+_emit_commit_results() {
+    emit_key_value "padjffs2_pinned" "${EXTRAS_PADJFFS2_COMMIT:0:12}"
+    emit_key_value "padjffs2_upstream" "${1:0:12}"
+    emit_key_value "padjffs2_outdated" "$2"
+    emit_key_value "po2lmo_pinned" "${EXTRAS_PO2LMO_COMMIT:0:12}"
+    emit_key_value "po2lmo_upstream" "${3:0:12}"
+    emit_key_value "po2lmo_outdated" "$4"
+}
 
-    if ! po_body="$(_github_api_get "${URL_PO2LMO_HEAD}")"; then
-        log_error "请求 openwrt/luci 的 po2lmo 上游 HEAD 失败：${URL_PO2LMO_HEAD}"
-        return "${E_UNAVAILABLE}"
-    fi
-    if ! po2lmo_upstream="$(_parse_first_commit_sha "${po_body}")"; then
-        log_error "无法从 openwrt/luci 的 commits JSON 中解析第一条 sha"
-        return "${E_UNAVAILABLE}"
-    fi
+_emit_inputs_results() {
+    emit_key_value "dae_pinned" "${_PIN_DAE}"
+    emit_key_value "dae_latest" "$1"
+    emit_key_value "dae_outdated" "$2"
+    emit_key_value "dae_new_hash" "$3"
+    emit_key_value "fan2go_pinned" "${_PIN_FAN2GO}"
+    emit_key_value "fan2go_latest" "$4"
+    emit_key_value "fan2go_outdated" "$5"
+}
 
-    if ! dae_body="$(_github_api_get "${URL_DAE_LATEST}")"; then
-        log_error "请求 dae 最新 release 失败：${URL_DAE_LATEST}"
-        return "${E_UNAVAILABLE}"
-    fi
-    if ! dae_latest="$(_parse_release_tag "${dae_body}")"; then
-        log_error "无法从 dae release JSON 中解析 tag_name"
-        return "${E_UNAVAILABLE}"
-    fi
-    _require_version_shape "${dae_latest}" "dae 上游" || return "${E_UNAVAILABLE}"
-
-    if ! fan2go_body="$(_github_api_get "${URL_FAN2GO_LATEST}")"; then
-        log_error "请求 fan2go 最新 release 失败：${URL_FAN2GO_LATEST}"
-        return "${E_UNAVAILABLE}"
-    fi
-    if ! fan2go_latest="$(_parse_release_tag "${fan2go_body}")"; then
-        log_error "无法从 fan2go release JSON 中解析 tag_name"
-        return "${E_UNAVAILABLE}"
-    fi
-    _require_version_shape "${fan2go_latest}" "fan2go 上游" || return "${E_UNAVAILABLE}"
-
-    if _version_is_newer "${upx_latest}" "${EXTRAS_UPX_VERSION}"; then
-        upx_outdated="true"
+#######################################
+# 逐项打印漂移告警（顺序与上面的输出顺序一致）
+#######################################
+_log_drift_warnings() {
+    if [[ "$1" == "true" ]]; then
+        log_warning "upx 有新版本：钉 ${EXTRAS_UPX_VERSION}，上游 $2（workflow 会开 PR）"
     fi
     # commit 钉死是为了防 main 漂移：判定标准只是"是否还是同一个 commit"，
     # 不看快慢、不看先进程度——上游 HEAD 一动就说明钉的位置已落后于它。
+    if [[ "$3" == "true" ]]; then
+        log_warning "padjffs2 commit 已漂移：钉 ${EXTRAS_PADJFFS2_COMMIT:0:12}，上游 ${4:0:12}（只报告，不自动升级）"
+    fi
+    if [[ "$5" == "true" ]]; then
+        log_warning "po2lmo commit 已漂移：钉 ${EXTRAS_PO2LMO_COMMIT:0:12}，上游 ${6:0:12}（只报告，不自动升级）"
+    fi
+    if [[ "$7" == "true" ]]; then
+        log_warning "dae 有新版本：钉 ${_PIN_DAE}，上游 $8（workflow 会开 PR，版本号与 sha256 一起改）"
+    fi
+    if [[ "$9" == "true" ]]; then
+        log_warning "fan2go 有新版本：钉 ${_PIN_FAN2GO}，上游 ${10}（workflow 会开 PR，只改版本号，hash 保持 auto）"
+    fi
+}
+
+#######################################
+# 主流程
+#
+# 结构：main 只负责「取数 → 判定 → 输出」三段接线，每段都拆成独立函数。
+# 取数失败一律以 E_UNAVAILABLE 结束（"无法完成巡检"），与"有漂移"（仍是 E_SUCCESS）区分开。
+#######################################
+main() {
+    # 常量由 install-deps.sh 提供，取不到就没法巡检；这属于脚本环境问题。
+    require_var EXTRAS_UPX_VERSION EXTRAS_PADJFFS2_COMMIT EXTRAS_PO2LMO_COMMIT || {
+        log_error "未能从 install-deps.sh 取得 EXTRAS_* 常量"
+        return "${E_UNAVAILABLE}"
+    }
+
+    _read_pinned_inputs_versions || return "${E_UNAVAILABLE}"
+
+    # ---- 取数：五个上游项各自独立失败，任一失败即整体 E_UNAVAILABLE ----
+    local upx_latest="" pad_upstream="" po2lmo_upstream=""
+    local dae_latest="" fan2go_latest=""
+    upx_latest="$(_fetch_latest_release_version "${URL_UPX_LATEST}" "upx")" || return "${E_UNAVAILABLE}"
+    pad_upstream="$(_fetch_upstream_head_sha "${URL_PADJFFS2_HEAD}" "padjffs2")" || return "${E_UNAVAILABLE}"
+    po2lmo_upstream="$(_fetch_upstream_head_sha "${URL_PO2LMO_HEAD}" "po2lmo")" || return "${E_UNAVAILABLE}"
+    dae_latest="$(_fetch_latest_release_version "${URL_DAE_LATEST}" "dae")" || return "${E_UNAVAILABLE}"
+    fan2go_latest="$(_fetch_latest_release_version "${URL_FAN2GO_LATEST}" "fan2go")" || return "${E_UNAVAILABLE}"
+
+    # ---- 判定：版本号用数值比较；commit 只比"是否还是同一个" ----
+    local upx_outdated="false" padjffs2_outdated="false" po2lmo_outdated="false"
+    local dae_outdated="false" fan2go_outdated="false"
+    if _version_is_newer "${upx_latest}" "${EXTRAS_UPX_VERSION}"; then
+        upx_outdated="true"
+    fi
     if [[ "${pad_upstream}" != "${EXTRAS_PADJFFS2_COMMIT}" ]]; then
         padjffs2_outdated="true"
     fi
     if [[ "${po2lmo_upstream}" != "${EXTRAS_PO2LMO_COMMIT}" ]]; then
         po2lmo_outdated="true"
     fi
-    if _version_is_newer "${dae_latest}" "${dae_pinned}"; then
+    if _version_is_newer "${dae_latest}" "${_PIN_DAE}"; then
         dae_outdated="true"
     fi
-    if _version_is_newer "${fan2go_latest}" "${fan2go_pinned}"; then
+    if _version_is_newer "${fan2go_latest}" "${_PIN_FAN2GO}"; then
         fan2go_outdated="true"
     fi
 
-    # hash 只在漂移时才取：未漂移时 workflow 不开 PR，没必要为一次巡检
-    # 下载一个几十上百 MiB 的源码包。
+    # ---- 仅在 dae 漂移时取新 hash：未漂移时 workflow 不开 PR ----
+    local dae_new_hash=""
     if [[ "${dae_outdated}" == "true" ]]; then
         DAE_TMP_DIR="$(mktemp -d)" || {
             log_error "无法创建回退下载源码包用的临时目录"
@@ -607,38 +755,17 @@ main() {
         fi
     fi
 
-    emit_key_value "upx_pinned" "${EXTRAS_UPX_VERSION}"
-    emit_key_value "upx_latest" "${upx_latest}"
-    emit_key_value "upx_outdated" "${upx_outdated}"
-    emit_key_value "padjffs2_pinned" "${EXTRAS_PADJFFS2_COMMIT:0:12}"
-    emit_key_value "padjffs2_upstream" "${pad_upstream:0:12}"
-    emit_key_value "padjffs2_outdated" "${padjffs2_outdated}"
-    emit_key_value "po2lmo_pinned" "${EXTRAS_PO2LMO_COMMIT:0:12}"
-    emit_key_value "po2lmo_upstream" "${po2lmo_upstream:0:12}"
-    emit_key_value "po2lmo_outdated" "${po2lmo_outdated}"
-    emit_key_value "dae_pinned" "${dae_pinned}"
-    emit_key_value "dae_latest" "${dae_latest}"
-    emit_key_value "dae_outdated" "${dae_outdated}"
-    emit_key_value "dae_new_hash" "${dae_new_hash}"
-    emit_key_value "fan2go_pinned" "${fan2go_pinned}"
-    emit_key_value "fan2go_latest" "${fan2go_latest}"
-    emit_key_value "fan2go_outdated" "${fan2go_outdated}"
+    # ---- 输出：key=value 与告警，顺序固定 ----
+    _emit_upx_results "${upx_latest}" "${upx_outdated}"
+    _emit_commit_results "${pad_upstream}" "${padjffs2_outdated}" "${po2lmo_upstream}" "${po2lmo_outdated}"
+    _emit_inputs_results "${dae_latest}" "${dae_outdated}" "${dae_new_hash}" "${fan2go_latest}" "${fan2go_outdated}"
 
-    if [[ "${upx_outdated}" == "true" ]]; then
-        log_warning "upx 有新版本：钉 ${EXTRAS_UPX_VERSION}，上游 ${upx_latest}（workflow 会开 PR）"
-    fi
-    if [[ "${padjffs2_outdated}" == "true" ]]; then
-        log_warning "padjffs2 commit 已漂移：钉 ${EXTRAS_PADJFFS2_COMMIT:0:12}，上游 ${pad_upstream:0:12}（只报告，不自动升级）"
-    fi
-    if [[ "${po2lmo_outdated}" == "true" ]]; then
-        log_warning "po2lmo commit 已漂移：钉 ${EXTRAS_PO2LMO_COMMIT:0:12}，上游 ${po2lmo_upstream:0:12}（只报告，不自动升级）"
-    fi
-    if [[ "${dae_outdated}" == "true" ]]; then
-        log_warning "dae 有新版本：钉 ${dae_pinned}，上游 ${dae_latest}（workflow 会开 PR，版本号与 sha256 一起改）"
-    fi
-    if [[ "${fan2go_outdated}" == "true" ]]; then
-        log_warning "fan2go 有新版本：钉 ${fan2go_pinned}，上游 ${fan2go_latest}（workflow 会开 PR，只改版本号，hash 保持 auto）"
-    fi
+    _log_drift_warnings "${upx_outdated}" "${upx_latest}" \
+        "${padjffs2_outdated}" "${pad_upstream}" \
+        "${po2lmo_outdated}" "${po2lmo_upstream}" \
+        "${dae_outdated}" "${dae_latest}" \
+        "${fan2go_outdated}" "${fan2go_latest}"
+
     log_success "手钉常量巡检完成。"
     return "${E_SUCCESS}"
 }

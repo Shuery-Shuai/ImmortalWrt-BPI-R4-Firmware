@@ -1,7 +1,13 @@
 # markdownlint 配置（YAML 格式：标准 JSON 不允许注释，YAML 天然支持）
 #
-# 用法：仓库根执行 `npx markdownlint-cli2 "README.md" "scripts/README.md"`，
-#       cli2 会自动发现本文件（同目录或上层目录）。
+# 用法：仓库根执行
+#   npx markdownlint-cli2 "README.md" "README-workflow.md" "scripts/README.md" \
+#     "CONTRIBUTING.md" ".github/pull_request_template.md"
+#   npx prettier --check "README.md" "README-workflow.md" "scripts/README.md" \
+#     "CONTRIBUTING.md" ".github/pull_request_template.md"
+#       cli2 会自动发现本文件（同目录或上层目录）；prettier 读取同目录的 .prettierrc.json。
+#       这份清单由 CI 的 .github/workflows/syntax-linter.yml（markdownlint job）决定，
+#       改这里就要同步改那里；CONTRIBUTING.md 的「本地自查」命令也抄同一份。
 #
 # 只对确实无法满足或不适用的规则做调整，其余保持默认；每条调整都写明理由。
 config:
@@ -10,17 +16,25 @@ config:
   #   · 表格单元格由列对齐决定，手动折行会破坏渲染；
   #   · 代码块折行会改变实际命令（复制粘贴即出错）；
   #   · 标题（尤其带徽章 <img> 的）折行会破坏锚点生成。
+  # prettier 用 proseWrap: preserve 原样保留手写折行，不按 printWidth 重排段落——
+  # 即折行由人写、由 MD013 把关，prettier 只做格式归一（表格对齐、行尾符、转义）。
   MD013:
     line_length: 120
     tables: false
     code_blocks: false
     headings: false
   # MD033 禁止内联 HTML。
-  # 标题里的 <img> 徽章是 GitHub README 的通行写法（shields.io / simpleicons），
-  # 没有纯 Markdown 等价物；<details>/<summary> 用于折叠长内容，也属必要。
-  # 因此按白名单放行这几个元素，其余 HTML 仍会被报错。
+  # 白名单只留 <br>/<kbd>/<sub>/<sup>：它们是纯文本排版的必要缺口，没有 Markdown 等价物。
+  # 两个 README 的 H1 已去掉 <img> 徽章；<details>/<summary> 在本仓库文档里只出现在
+  # 行内代码中（不是真实 HTML），故一并移除。
+  # 收紧而不是继续放行，是为了让写错的内联 HTML 尽早暴露，而不是被静默放行。
   MD033:
-    allowed_elements: [img, br, details, summary, sub, sup, kbd]
+    allowed_elements: [br, kbd, sub, sup]
+  # MD060（table-column-style）必须关闭。
+  # prettier 会把含 CJK 的表格按显示宽度重新对齐，该输出与 MD060 默认的 aligned 风格互斥；
+  # 两者同时开启时，prettier 归一出来的表格必然被 MD060 判错，CI 会永久红。
+  # 本仓库以 prettier 的输出为准，故在此关闭 MD060。
+  MD060: false
   # MD041 要求文件首行是一级标题。
   # 两个 README 首行确实都是 H1，但该 H1 内嵌 <img> 徽章，
   # 部分版本的规则会把含 HTML 的首行误判为非标题，故关闭。
