@@ -5,11 +5,14 @@
 #   - 未设置时打印到 stdout，便于本地预览；
 #   - 失败路径下，同一段错误行还会打到 stderr，让本地终端与 CI 页面看到同一份证据。
 #
-# 用法：bash scripts/ci/generate-summary.sh [build|update-checker|dependency-auditor|syntax-linter]
+# 用法：bash scripts/ci/generate-summary.sh [build|update-checker|dependency-auditor|syntax-linter|verify]
 #
 # 为什么退出码恒为 0：本脚本挂在 workflow 收尾步骤（if: always()）上，它只负责“汇报”。
 # 若它自己非零退出，就会覆盖掉真正的构建结论，所以任何输入缺失、命令不存在，
 # 一律降级为跳过对应小节；同理这里不用 set -e。
+#
+# verify 是上面这条契约的唯一例外：它是**门禁**而不是汇报，判定不通过就以非 0 退出，
+# 好让排在它后面的 release / deploy 被跳过；因此它必须放在发布之前，不能挂在收尾步骤上。
 #
 
 # 本文件位于 scripts/ci/，目录必须自己解析：调用方可能从任意 cwd 调用。
@@ -348,6 +351,9 @@ readonly TARGET_PACKAGE_INDEX_GLOB_PATTERN="immortalwrt/bin/targets/*/*/packages
 TARGET_PACKAGE_INDEX_FILE="${TARGET_PACKAGE_INDEX_FILE:-}"
 # 编译前的包选择：.config 里 CONFIG_PACKAGE_<名>=y|m 的才算「本应编译」。
 readonly CONFIG_FILE="immortalwrt/.config"
+# 仓库根 .config：作者手写的输入配置（构建时被 cp 进 immortalwrt/.config 再 defconfig 展开）。
+# verify 模式的「静默丢弃」校验以它为基准——只有它能回答“作者本来要什么”。
+readonly REPO_CONFIG_FILE=".config"
 
 # 从 manifest 取「装进固件」的包名（只取名字，版本不参与去重）。
 manifest_packages() {
@@ -934,6 +940,209 @@ render_package_section() {
   _render_package_details
 }
 
+# ===== verify 模式：编译产出的门禁（唯一会判失败的模式）=====
+#
+# 为什么单独开一个模式，而不是让 build 模式非零退出：
+#   build 挂在 workflow 收尾（if: always() + continue-on-error: true），契约是「汇报」，
+#   非零退出一旦生效就只会盖掉真正的构建结论；而门禁必须排在 Generate release tag
+#   **之前**独立执行，才有机会拦住一次不完整的发布。判定与渲染因此分开：
+#   build 只渲染，verify 只判定。
+#
+# 判定三项，任一不过即非零退出。前两项用自己的 == 应编 - 产出 == 口径，后两项是两份配置的比对：
+#   1) 编译验证：immortalwrt/.config 里 =y|=m 的包减去实际产物（复用 _compute_verification）。
+#   2) 静默丢弃：仓库根 .config 选中的符号，在 immortalwrt/.config 里连「is not set」都没有。
+#      那不是「配置有意精简」，而是符号/feed 缺失导致的选择被无声丢掉，必须拦住。
+#   3) 明确关闭被打开：仓库根 .config 用 "is not set" 关掉的符号，在 immortalwrt/.config 里变成
+#      =y|=m。关掉往往是有理由的（dropbear / uhttpd 这类必须不留的组件），被 defconfig 悄悄打开
+#      必须拦住——它与第 2 项方向相反，所以只能分开算，不能并进同一个集合。
+#
+# 三项都 fail-closed：读不到配置、产物索引不可用一律判失败——
+# 「无法证明零漏编」与「确实漏编」在门禁上必须同结论，否则没验证过的一轮就能靠 0 蒙过去。
+
+# 静默丢弃校验的开关；缺省开。要关掉得显式写 false，默认值不给逃避空间。
+VERIFY_CONFIG_SYMBOLS="${VERIFY_CONFIG_SYMBOLS:-true}"
+
+# 按 kconfig 语义解析 .config 的包符号。三种写法的口径必须分开，混起来必然误判：
+#   CONFIG_PACKAGE_x=y|m             -> 选中
+#   "# CONFIG_PACKAGE_x is not set"  -> 显式关闭（# 后**有**空格）
+#   "#CONFIG_PACKAGE_x=y"            -> 普通注释（# 后无空格）：kconfig 完全忽略这一行，
+#                                       既不算选中也不算关闭，门禁不得因此报错或漏报
+# 「最后写者胜」也是 kconfig 的真实规则：同一符号只认最后一次赋值，所以顺序扫描、同名覆盖即可，
+# 不能按「出现即算」——同一符号先 =y 后 "is not set" 时，结论必须是不选。
+#   $1 配置文件  $2 selected=取 =y|=m；disabled=取显式关闭；all=出现过的全部符号
+_kconfig_scan() {
+  local file="${1:-}"
+  local want="${2:-all}"
+  [[ -f "${file}" ]] || return 0
+  awk -v want="${want}" '
+    /^CONFIG_PACKAGE_[A-Za-z0-9_.+-]+=/ {
+      name = $0
+      sub(/^CONFIG_PACKAGE_/, "", name)
+      sub(/=.*$/, "", name)
+      value[name] = substr($0, index($0, "=") + 1)
+      next
+    }
+    /^# CONFIG_PACKAGE_[A-Za-z0-9_.+-]+ is not set$/ {
+      name = $0
+      sub(/^# CONFIG_PACKAGE_/, "", name)
+      sub(/ is not set$/, "", name)
+      value[name] = "n"
+      next
+    }
+    END {
+      for (name in value) {
+        if (want == "selected") {
+          if (value[name] == "y" || value[name] == "m") print name
+        } else if (want == "disabled") {
+          if (value[name] == "n") print name
+        } else {
+          print name
+        }
+      }
+    }
+  ' "${file}" | sort -u
+}
+
+# 应编符号（=y|=m，同名后写者胜）。
+kconfig_selected_packages() {
+  _kconfig_scan "${1:-}" selected
+}
+
+# 显式关闭的符号（"# CONFIG_PACKAGE_x is not set"，同样后写者胜）。
+# 用户把它关掉往往是有理由的（dropbear / uhttpd 这类必须不留的组件），
+# 所以「关掉的又被 defconfig 打开」必须单独成一项判定，不能并进选中集去看。
+kconfig_disabled_packages() {
+  _kconfig_scan "${1:-}" disabled
+}
+
+# 出现过的全部符号：连「is not set」也算「符号在场」——它证明 kconfig 认得这个符号，
+# 只是没选；与「符号根本不存在」是两件事，后者才是要拦的静默丢弃。
+kconfig_mentioned_symbols() {
+  _kconfig_scan "${1:-}" all
+}
+
+# 写 $GITHUB_OUTPUT 供 workflow 使用。值是单行契约，清单用逗号压平；
+# 没有该变量时静默跳过，本地跑不产生副作用。
+# 三个分项各出一个键，好让读的人一眼看出「两份配置都查了」，而不是只拿到一个总数；
+# missing_count 仍是三项之和，保持与既有消费方一致。
+_verify_emit_output() {
+  local ok="${1}" artifact="${2}" silent="${3}" reopened="${4}" list="${5}"
+  [[ -n "${GITHUB_OUTPUT:-}" ]] || return 0
+  {
+    printf 'packages_ok=%s\n' "${ok}"
+    printf 'missing_count=%s\n' "$((artifact + silent + reopened))"
+    printf 'missing_packages=%s\n' "${list}"
+    printf 'artifact_missing_count=%s\n' "${artifact}"
+    printf 'silent_drop_count=%s\n' "${silent}"
+    printf 'reopened_count=%s\n' "${reopened}"
+  } >>"${GITHUB_OUTPUT}" 2>/dev/null || log_warning "无法写入 GITHUB_OUTPUT，门禁结论仅在日志里"
+  return 0
+}
+
+# 门禁结论同时写进运行页：失败信息只留在日志里，读者要先点开才知道红在哪。
+_verify_emit_step_summary() {
+  local body="${1}"
+  [[ -n "${GITHUB_STEP_SUMMARY:-}" ]] || return 0
+  printf '### 📦 软件包编译门禁\n\n%s\n\n' "${body}" \
+    >>"${GITHUB_STEP_SUMMARY}" 2>/dev/null || log_warning "无法写入 GITHUB_STEP_SUMMARY"
+  return 0
+}
+
+# 门禁主体：返回 0 = 通过，非 0 = 拦住发布。
+run_verify() {
+  # 一、fail-closed 前置条件：缺任何一份输入都判失败，理由见本节开头。
+  if [[ ! -f "${CONFIG_FILE}" ]]; then
+    printf '❌ 编译门禁无法执行：%s 不存在，无从判定哪些软件包应当编译（fail-closed）。\n' "${CONFIG_FILE}"
+    _verify_emit_output false 0 0 0 ""
+    return 1
+  fi
+  if ! package_index_available; then
+    printf '❌ 编译门禁无法执行：找不到 python3，读不了产物索引 index.json（fail-closed）。\n'
+    _verify_emit_output false 0 0 0 ""
+    return 1
+  fi
+
+  # 二、编译验证：分母 = immortalwrt/.config，与 build 模式同一口径。
+  _collect_package_counts
+  _compute_verification
+
+  local missing_count="${_PKG_MISSING_COUNT}"
+  local missing_pkgs
+  # 折叠块里的清单带「（引导固件，产物为 .bin/.fip）」后缀，交给下游的是纯名字。
+  missing_pkgs="$(printf '%s\n' "${_PKG_MISSING_TEXT}" | sed 's/（引导固件.*$//' | grep . || true)"
+
+  # 三、两份配置的比对。开关只管这两项（编译验证是硬性口径，不受开关控制）：
+  #     · 静默丢弃      根 .config 选中  -> imm 连符号都没有
+  #     · 明确关闭被打开 根 .config is-not-set -> imm 里 =y|=m
+  local silent_count=0
+  local silent_pkgs=""
+  local reopened_count=0
+  local reopened_pkgs=""
+  if [[ "${VERIFY_CONFIG_SYMBOLS}" == "false" ]]; then
+    printf '· 静默丢弃 / 明确关闭被打开 两项校验已按 VERIFY_CONFIG_SYMBOLS=false 跳过\n'
+  elif [[ ! -f "${REPO_CONFIG_FILE}" ]]; then
+    printf '❌ 编译门禁无法执行：%s 不存在（两份配置比对的基准，fail-closed）。\n' "${REPO_CONFIG_FILE}"
+    _verify_emit_output false "${missing_count}" 0 0 "$(printf '%s' "${missing_pkgs}" | tr '\n' ',')"
+    return 1
+  else
+    local repo_selected repo_disabled mentioned imm_selected
+    repo_selected="$(kconfig_selected_packages "${REPO_CONFIG_FILE}")"
+    repo_disabled="$(kconfig_disabled_packages "${REPO_CONFIG_FILE}")"
+    mentioned="$(kconfig_mentioned_symbols "${CONFIG_FILE}")"
+    imm_selected="$(kconfig_selected_packages "${CONFIG_FILE}")"
+    # comm 两侧必须是已排序集合流；grep . 去掉空行，否则空输入会退化成"一个空元素"。
+    silent_pkgs="$(comm -23 \
+      <(printf '%s\n' "${repo_selected}" | grep . | sort -u) \
+      <(printf '%s\n' "${mentioned}" | grep . | sort -u) || true)"
+    silent_count="$(_count_lines "${silent_pkgs}")"
+    # 方向相反的一项：根 .config 关掉、imm 却打开 —— 取交集。
+    reopened_pkgs="$(comm -12 \
+      <(printf '%s\n' "${repo_disabled}" | grep . | sort -u) \
+      <(printf '%s\n' "${imm_selected}" | grep . | sort -u) || true)"
+    reopened_count="$(_count_lines "${reopened_pkgs}")"
+  fi
+
+  # 四、结论与输出。三行计数先把「两份都查了」摆出来，再逐项列名单。
+  local total_count=$((missing_count + silent_count + reopened_count))
+  local ok=true
+  if [[ ${total_count} -gt 0 ]]; then
+    ok=false
+  fi
+
+  printf '\n[verify] 比对两份配置：%s（作者手写） × %s（defconfig 实况）\n' \
+    "${REPO_CONFIG_FILE}" "${CONFIG_FILE}"
+  printf '[verify] 应编 %s 项 / 未产出 %s 项 / 静默丢弃 %s 项 / 明确关闭被打开 %s 项\n' \
+    "${_PKG_PLANNED_COUNT}" "${missing_count}" "${silent_count}" "${reopened_count}"
+  if [[ -n "${missing_pkgs}" ]]; then
+    printf '未产出产物（选中但没编出来）：\n%s\n' "${missing_pkgs}"
+  fi
+  if [[ -n "${silent_pkgs}" ]]; then
+    printf '静默丢弃（仓库根 .config 选中，但 immortalwrt/.config 里连符号都不存在）：\n%s\n' "${silent_pkgs}"
+  fi
+  if [[ -n "${reopened_pkgs}" ]]; then
+    printf '明确关闭被打开（仓库根 .config 用 is not set 关掉，immortalwrt/.config 里却是 =y|=m）：\n%s\n' "${reopened_pkgs}"
+  fi
+
+  # 扁平清单去重：同一符号可能同时命中两项（既在 imm 里被打开、产物又没出），
+  # 但它是给人看的清单，重复一遍只会让人以为有两个问题；分项计数才是权威口径。
+  local flat_missing
+  flat_missing="$(printf '%s\n%s\n%s\n' "${missing_pkgs}" "${silent_pkgs}" "${reopened_pkgs}" \
+    | grep . | sort -u | tr '\n' ',' | sed 's/,$//' || true)"
+  _verify_emit_output "${ok}" "${missing_count}" "${silent_count}" "${reopened_count}" "${flat_missing}"
+
+  if [[ "${ok}" == "true" ]]; then
+    printf '✅ 编译门禁通过：选中的软件包全部有产物，没有静默丢弃，也没有关掉的被重新打开。\n'
+    _verify_emit_step_summary "✅ 通过：应编 ${_PKG_PLANNED_COUNT} 项；未产出 0、静默丢弃 0、明确关闭被打开 0。"
+    return 0
+  fi
+
+  printf '❌ 编译门禁未通过：共 %s 项有问题（未产出 %s、静默丢弃 %s、明确关闭被打开 %s），本次不发布。\n' \
+    "${total_count}" "${missing_count}" "${silent_count}" "${reopened_count}"
+  _verify_emit_step_summary "$(printf '❌ 未通过：应编 %s 项；未产出 %s、静默丢弃 %s、明确关闭被打开 %s。详见本步骤日志。' \
+    "${_PKG_PLANNED_COUNT}" "${missing_count}" "${silent_count}" "${reopened_count}")"
+  return 1
+}
+
 # artifact 表格是接线的核心价值：读的人要先知道去哪个 artifact 取固件，
 # 所以即使 DEVICE_NAME 之类的元信息全空，只要有 artifact 名就要渲染。
 artifact_rows() {
@@ -1451,12 +1660,18 @@ render_auto_check_section() {
 main() {
   local mode="${1:-build}"
   case "${mode}" in
-    build | update-checker | dependency-auditor | syntax-linter) ;;
+    build | update-checker | dependency-auditor | syntax-linter | verify) ;;
     *)
       log_warning "未知模式 '${mode}'，按 build 处理"
       mode="build"
       ;;
   esac
+
+  # verify 是门禁而非汇报：不走摘要渲染，直接判定并由结果决定退出码。
+  if [[ "${mode}" == "verify" ]]; then
+    run_verify
+    return $?
+  fi
 
   detect_failure
   # 摘录来源于 logs/，只有 build / update-checker 才会产出这份日志。

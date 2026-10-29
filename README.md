@@ -48,13 +48,12 @@
 
 ## 📦 固件内置组件
 
-| 分类 | 软件包                  | 说明           |
-| :--- | :---------------------- | :------------- |
-| 界面 | `luci-theme-argon`      | Argon 主题     |
-|      | `luci-app-argon-config` | Argon 主题配置 |
-| 网络 | `luci-nginx`            | Nginx 前端引擎 |
-|      | `luci-app-nginx`        | Nginx 前端管理 |
-| 语言 | `default-settings-chn`  | 中文默认设置包 |
+| 分类 | 软件包                 | 说明                     |
+| :--- | :--------------------- | :----------------------- |
+| 界面 | `luci-theme-argon`     | Argon 主题与主题配置界面 |
+| 网络 | `luci-nginx`           | Nginx 前端引擎           |
+|      | `luci-app-nginx`       | Nginx 前端管理           |
+| 语言 | `default-settings-chn` | 中文默认设置包           |
 
 ## 🧩 可选扩展包
 
@@ -75,7 +74,6 @@
 |          | `luci-app-openclash`            | OpenClash 代理工具                                   |
 |          | `dockerd`                       | Docker 容器引擎                                      |
 | 资源下载 | `luci-app-qbittorrent-original` | 原版 qBittorrent 下载器                              |
-| 媒体处理 | `ffmpeg`                        | 多媒体处理工具                                       |
 | 补充字体 | `noto-fonts-cjk`                | 中日韩字体                                           |
 |          | `noto-fonts-emoji`              | Emoji 字体                                           |
 
