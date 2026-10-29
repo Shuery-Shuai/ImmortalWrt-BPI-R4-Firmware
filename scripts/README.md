@@ -219,14 +219,14 @@ scripts/
 一次运行的结论散落在各步骤日志里，想知道为什么红要逐个点开。`generate-summary.sh` 把它压成一段 Markdown 写进`$GITHUB_STEP_SUMMARY`，运行页顶部直接能看到步骤状态、产物和关键错误行。
 
 ```sh
-bash scripts/ci/generate-summary.sh [build|update-checker|dependency-auditor|syntax-linter]   # 缺省 build
+bash scripts/ci/generate-summary.sh [build|update-checker|dependency-auditor|syntax-linter|verify]   # 缺省 build
 ```
 
-| 项     | 约定                                                                                                  |
-| ------ | ----------------------------------------------------------------------------------------------------- |
-| 输出   | 设了 `GITHUB_STEP_SUMMARY` 就追加写入该文件；否则打印到 stdout **并落一份 `logs/summary.md`**         |
-| 退出码 | 恒为 `0`——摘要自身绝不能让流水线变红                                                                  |
-| 参数   | `build` / `update-checker` / `dependency-auditor` / `syntax-linter`，决定标题与适用章节；缺省 `build` |
+| 项     | 约定                                                                                                                    |
+| ------ | ----------------------------------------------------------------------------------------------------------------------- |
+| 输出   | 设了 `GITHUB_STEP_SUMMARY` 就追加写入该文件；否则打印到 stdout **并落一份 `logs/summary.md`**                           |
+| 退出码 | 恒为 `0`——摘要自身绝不能让流水线变红；`verify` 模式例外：判定不通过即非零退出                                           |
+| 参数   | `build` / `update-checker` / `dependency-auditor` / `syntax-linter` / `verify`；缺省 `build`，`verify` 只判定不渲染摘要 |
 
 **入参全是环境变量，缺哪个就跳过对应小节**，所以本地不设任何变量也能跑出可用的一段 Markdown。
 
@@ -240,6 +240,7 @@ bash scripts/ci/generate-summary.sh [build|update-checker|dependency-auditor|syn
 | `CACHE_HIT`                                                           | 构建缓存是否命中（`true` / `false`，摘要渲染成「命中 / 未命中」）                                                                                                       |
 | `LOG_DIR`                                                             | 日志目录，相对仓库根，缺省 `logs`（选源只认 `LOG_NAME_CATALOG` 里的文件名）                                                                                             |
 | `TARGET_PACKAGE_INDEX_FILE`                                           | target 专属包 `index.json` 的快照路径；CI 里该目录会被摘要步骤之前删掉，靠这份副本补回（缺省空，回退到 glob）                                                           |
+| `VERIFY_CONFIG_SYMBOLS`                                               | `verify` 模式专用：`false` 时跳过「静默丢弃」判定（编译验证仍生效），缺省 `true`                                                                                        |
 | `COMMIT_HASH` / `BUILD_TRIGGERED`                                     | `update-checker` 专用：检出的上游 commit、是否触发了构建                                                                                                                |
 | `METRIC_SEQUENCE` / `METRIC_<KEY>`                                    | `dependency-auditor` / `syntax-linter` 专用：「本次结果」表，与 `STEP_SEQUENCE` 同写法，只差前缀                                                                        |
 | `DETAIL_SEQUENCE` / `DETAIL_<KEY>`                                    | 同上两条流水线专用：「明细」折叠块，`DETAIL_<KEY>` 为空则整块跳过                                                                                                       |
@@ -281,7 +282,8 @@ bash scripts/ci/generate-summary.sh [build|update-checker|dependency-auditor|syn
 - **引导固件**：同样按目录分行——`bin/targets/` 里是已进发布目录的成品（`<device>-bl31-uboot.fip`），
   `staging_dir/.../image/` 里是暂存中间件（`<变体>-bl2.img` / `<变体>-bl31.bin`）。 两处**内容不同**（实测各 17 个、交集为 0），所以不合并，否则读者会以为同一批被数了两遍。
 - **编译验证**：`.config` 里 `=y|=m` 的项减去实际产出，报出「计划 / 实际」。全部成功时显示 `✅`，
-  否则 `⚠️` 并折叠列出未产出项。**只统计不判失败**——未编进固件可能是配置有意精简， 真故障由 `make` 自己红，不该让摘要越权定性。
+  否则 `⚠️` 并折叠列出未产出项。`build` 模式**只统计不判失败**——未编进固件可能是配置有意精简，
+  真故障由 `make` 自己红；要不要因此拦发布，由 `verify` 模式单独决定（见下方「软件包编译门禁」）。
 - **未生效的变体开关**：形如 `<基包>_<开关>` 但宿主包本身未被选中的项（如 `knot-resolver_dnstap=y`
   却没有 `knot-resolver`）。与「未产出」分开报，因为它是配置现象而非编译失败： 宿主没参与构建，开关为 `y` 也不会产生任何效果。这类项的宿主包会从「未产出」里剔掉， 避免同一件事报两遍。
 
@@ -300,6 +302,41 @@ bash scripts/ci/generate-summary.sh [build|update-checker|dependency-auditor|syn
 4. 包名从 `index.json` 的 JSON 取而不是拆 `包名-版本-rN.apk` 文件名：包名自身含连字符、版本含 `~` 与 `-rN`，
    按正则拆分必然出错（如 `dae-geosite-2.0.0-r1`）。索引损坏时该 feed 静默跳过，不影响其余 feed 与整份摘要。
 
+#### 软件包编译门禁（`verify` 模式）
+
+`build` 模式只报告，`verify` 模式负责拦截：复用同一套判定函数（`selection_packages` / `planned_packages` / `built_packages` /
+`_compute_verification`），差别只在结论——不通过就以非 0 退出。CI 里它是一条独立步骤 `Verify selected packages`，位置见
+`.github/workflows/immortalwrt-builder.yml`。它一次比对两份配置：仓库根 `.config`（作者手写）与 `immortalwrt/.config`（defconfig 实况）。
+
+- **位置**：`artifact_firmware` 之后、`Generate release tag` **之前**。`tag` / `release` 排在 `Run summary` 之前，
+  把门禁挂到收尾步骤上拦不住已经发出的 release；而固件在 `artifact_firmware` 里已上传完毕，失败的那一轮照样能下载 artifact 排查。
+- **失败后果**：该步骤非零退出 → job 失败 → `tag` / `release` 被跳过 → `deploy` job（`needs: build`）不运行。刻意不设
+  `continue-on-error`：它是门禁，不是汇报。
+- **判定项一 · 编译验证**：分母取 `immortalwrt/.config`（defconfig 展开后的全量口径，与 `build` 模式一致），未产出数量大于 0 即失败。
+- **判定项二 · 静默丢弃**：仓库根 `.config` 里 `=y|=m` 的符号，若在 `immortalwrt/.config` 里**连符号都不存在**
+  （连 `# ... is not set` 都没有），判为失败。这不是「配置有意精简」，而是符号或 feed 缺失导致的选择被无声丢掉，必须拦住。
+- **判定项三 · 明确关闭被打开**：仓库根 `.config` 用 `# CONFIG_PACKAGE_x is not set` 显式关闭的符号，若在
+  `immortalwrt/.config` 里变成 `=y|=m`，判为失败并单独点名。关掉往往是有理由的（dropbear / uhttpd 这类
+  必须不留的组件），被 `make defconfig` 或某个 `default y` 悄悄打开同样要拦住；它与判定项二方向相反，
+  只能分开算，不能并进同一个集合。
+
+符号解析严格按 kconfig 语义，三种写法的口径各不相同——混淆任何一种都会造出假缺失或假通过：
+
+| `.config` 里的写法              | kconfig 语义                               | 门禁怎么算                           |
+| ------------------------------- | ------------------------------------------ | ------------------------------------ |
+| `CONFIG_PACKAGE_x=y` / `=m`     | 选中（后写者胜）                           | 进「编译产出」分母，参与「静默丢弃」 |
+| `# CONFIG_PACKAGE_x is not set` | 显式关闭（`#` 后有空格）                   | 参与「明确关闭被打开」               |
+| `#CONFIG_PACKAGE_x=y`           | 普通注释（`#` 后无空格），kconfig 完全忽略 | 既不算选中也不算关闭，不得报错       |
+
+- **后写者胜**：符号解析按 kconfig 语义只认最后一次赋值。仓库根 `.config` 曾同时有 `CONFIG_PACKAGE_dropbear=y` 与随后的
+  `# CONFIG_PACKAGE_dropbear is not set`，按「出现即算」去读会造出一条永远填不满的假缺失。
+- **开关**：`VERIFY_CONFIG_SYMBOLS=false` 跳过判定项二与判定项三；判定项一始终生效。
+- **输出**：`$GITHUB_OUTPUT` 写 `packages_ok`、三项之和 `missing_count`、合并去重后的清单 `missing_packages`，
+  以及三个分项 `artifact_missing_count` / `silent_drop_count` / `reopened_count`；
+  并向 `$GITHUB_STEP_SUMMARY` 追加一段结论。
+- **fail-closed**：`immortalwrt/.config`、仓库根 `.config` 缺失，或没有 `python3` 读不了
+  `index.json`，一律判失败——「无法证明零漏编」与「确实漏编」在门禁上必须同结论。
+
 两种模式各有取舍：`update-checker` 那个 job 拿不到固件，所以不渲染产物与体积小节（渲染了只会骗人）；反过来「上游更新」小节只在 `update-checker` 出现。
 
 > [!IMPORTANT]
@@ -307,6 +344,8 @@ bash scripts/ci/generate-summary.sh [build|update-checker|dependency-auditor|syn
 > 四条流水线（builder / update-checker / dependency-auditor / syntax-linter）都以 `if: always()` + `continue-on-error: true` 调它：
 > 摘要是「事后报告」，编译失败或被取消时它更要跑到，而它自己挂掉也绝不能给已经失败的 job 再补一刀。
 > 脚本内置的「恒 0」是第二道保险，两道都在。
+>
+> `verify` 模式不在此列：它是发布前的门禁，见下方「软件包编译门禁」。
 
 <!-- 与上方 IMPORTANT 分开，避免两个 alert 被视为同一引用块 -->
 

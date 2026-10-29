@@ -390,6 +390,24 @@ jobs:
           echo "::warning file=wetransfer.com::$(cat wetransfer.log | grep https)"
           echo "url=$(cat wetransfer.log | grep https | cut -f3 -d" ")" >> "$GITHUB_OUTPUT"
 
+      # 软件包编译门禁：选中的自定义软件包只要有一个没编出产物，这一轮就不许发布。
+      #
+      # 为什么必须放在这里，而不是挂到 Run summary 上：tag / release 两步排在 Run summary **之前**，
+      # 收尾步骤（if: always() + continue-on-error: true）红了也拦不住已经发出去的 release。
+      # 门禁只有站在发布之前才叫门禁，所以它是一条独立步骤，且不设 continue-on-error：
+      # 它一失败，job 即失败 → tag / release 被跳过 → deploy job（needs: build）根本不会运行。
+      #
+      # 为什么放在 artifact_firmware 之后：固件在它之前就上传完了，门禁拦住的是「发布」而不是
+      # 「取固件」——失败的那一轮依然能从 Actions 页面下载 artifact 去排查。
+      #
+      # 为什么不带 UPLOAD_RELEASE 判断（对比 tag 的条件）：这项校验判定的是固件质量，
+      # 与「这次发不发 release」是两件事，关掉发布的轮次同样要做；编译没成功的轮次没有产物可验，
+      # 按 compile 状态跳过即可。
+      - name: Verify selected packages
+        id: verify_packages
+        if: steps.compile.outputs.status == 'success' && !cancelled()
+        run: bash scripts/ci/generate-summary.sh verify
+
       # release.txt 由脚本生成（读 COWTRANSFER_URL / WETRANSFER_URL），仍以环境变量传上游 step 的输出。
       - name: Generate release tag
         id: tag
