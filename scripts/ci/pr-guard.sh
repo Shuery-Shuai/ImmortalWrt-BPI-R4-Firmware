@@ -1,6 +1,6 @@
 #!/bin/bash
 #######################################
-# PR 合规门禁（scripts/ci/pr-compliance.sh）
+# PR 合规门禁（scripts/ci/pr-guard.sh）
 #
 # 为什么需要它：分支保护只能引用一个“必需检查”，而 PR 的合规性散落在很多处（分支命名、
 # 来源仓库、摘要溯源、变更范围、禁改路径）。拆成多个 job 会让分支保护配置随重构漂移，
@@ -23,12 +23,21 @@
 #       非人写提交豁免；type/scope/长度阈值可覆盖）
 #   C8  编译完整性：溯源块「未产出数」必须为 0。应编产物数为 0、两键为 unknown、键缺失或读不到溯源块，一律 FAIL —— 没有证据不等于合格，默认放行会让这条门禁形同虚设
 #
+# 编译证据豁免（作用于 C3/C6/C8 与 P1..P11，不影响 C1/C2/C4 阈值/C5/C7）：
+#   产物无关：改动【全部】落在 PRODUCT_AGNOSTIC_*（.github/、scripts/ci/、文档与配置）内时，
+#     编译证据没有对象，上述检查降级为 SKIP 且 RESULT 仍可为 PASS。判据是「改了哪些路径」
+#     而不是「谁开的 PR」—— 路径是变更本身的事实，分支名与作者可以近似伪造；这条也顺带
+#     覆盖了人类改 CI 的 PR（例如给本门禁改名的那次）。
+#   显式放行：PR 带 skip-compile 标签时同等处理，标签名会写进日志与 step summary，事后可审计。
+#   例外：dependabot/ 前缀的分支只豁免 C1 命名（名字由机器人决定），不豁免编译证据。
+#
 # 可变阈值一律走环境变量，默认值集中定义在下面的常量里（改默认值只改一处）：
 #   MAX_CHANGED_FILES=60   变更文件数上限（契约 A 口径：排除 logs/summary.md）
 #   MAX_FILE_LINES=1500    单个文件新增行数上限
 #   BRANCH_PATTERN         C1 的允许前缀正则，默认 ^(feat|fix|chore|docs|refactor|perf|test|build|ci|revert)/
 #   BRANCH_ALLOWLIST       C1 额外放行的分支名（空格分隔），优先级高于受保护名与正则
 #   ALLOW_FORK_PR=1        C2 允许来自 fork 的 PR（默认要求同仓库）
+#   PR_LABELS              逗号分隔的 PR 标签名（由 workflow 注入）；含 skip-compile 时豁免编译证据
 #   MAX_COMMIT_SUBJECT_LEN=72  C7 标题正文长度上限（按字符计，口径见 C7 常量处的注释）
 #   COMMIT_TYPE_PATTERN    C7 允许的 type 清单正则（默认与 BRANCH_PATTERN 同一套词表）
 #   COMMIT_SCOPE_PATTERN   C7 允许的 scope 正则，默认 ^[a-z0-9._-]+$
@@ -81,6 +90,36 @@ readonly COMMIT_SCOPE_PATTERN_DEFAULT='^[a-z0-9._-]+$'
 # release/ 前缀同理（发布分支由维护者直接推送补丁）。
 readonly PROTECTED_BRANCHES="main master gh-pages release develop"
 readonly PROTECTED_PREFIXES="release/"
+# 机器人自动分支前缀：分支名由 Dependabot 之类机器人生成，人无法决定，因此不参与命名约定判定。
+# 只豁免 C1（命名）这一条 —— 绝不用它去豁免编译证据，见下面的 PRODUCT_AGNOSTIC_*。
+readonly AUTO_BRANCH_PREFIXES="dependabot/"
+# 产物无关路径白名单：改动【全部】落在这些路径内时，C3/C6/C8 与 P1..P11 的结论降级为 SKIP。
+# 判据是「改了哪些路径」而不是「谁开的 PR」：路径是变更本身的事实，分支名与作者可以近似伪造；
+# 同一条判据顺带覆盖人类改 CI 的 PR（例如给门禁改名的那次）。
+# 不在此列的路径（scripts/build/、scripts/inputs/、files/、immortalwrt/、keys/…）一律算产物相关。
+readonly -a PRODUCT_AGNOSTIC_PREFIXES=(
+    ".devcontainer/"
+    ".github/"
+    "scripts/ci/"
+)
+readonly -a PRODUCT_AGNOSTIC_FILES=(
+    ".gitignore"
+    ".markdownlint-cli2.yaml"
+    ".prettierrc.json"
+    "CONTRIBUTING.md"
+    "LICENSE"
+    "LICENSE-workflow"
+    "README.md"
+    "README-workflow.md"
+    "docker-compose.yml"
+    "scripts/README.md"
+)
+# 显式放行标签：由维护者贴给 PR，等同于声明「本次不要求编译证据」。标签名会写进 step summary，
+# 事后可查是谁在哪个 PR 上放了行。改这个值时【必须同步三处】，否则门禁会继续要求摘要：
+#   .github/workflows/dependency-auditor.yml 的 SKIP_COMPILE_LABEL（版本 bump PR 自动贴标）
+#   CONTRIBUTING.md 的「编译证据豁免」小节（贡献者读到的名字）
+#   仓库里的标签本体（由 dependency-auditor 的 Ensure 步骤幂等创建）
+readonly SKIP_COMPILE_LABEL="skip-compile"
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -147,7 +186,7 @@ flush_step_summary() {
     local result="$1" row
     [[ -n "${GITHUB_STEP_SUMMARY:-}" ]] || return 0
     {
-        printf '### PR 合规门禁（pr-compliance）\n\n'
+        printf '### PR 合规门禁（pr-guard）\n\n'
         printf '| 检查 | 结果 | 说明 |\n'
         printf '| --- | --- | --- |\n'
         for row in "${REPORT_ROWS[@]}"; do
@@ -290,6 +329,80 @@ COMMIT_SCOPE_PATTERN="${COMMIT_SCOPE_PATTERN:-$COMMIT_SCOPE_PATTERN_DEFAULT}"
 MAX_MISSING_PACKAGES="$(sanitize_int "${MAX_MISSING_PACKAGES:-}" "$MAX_MISSING_PACKAGES_DEFAULT")"
 
 #######################################
+# 变更清单（C4/C5/C6 共用一份，口径：已提交差异，排除 logs/summary.md）
+#
+# 为什么挪到溯源校验之前：豁免判定要按变更路径决定是否采用溯源结论，所以必须先用上 CHANGED_ALL。
+#######################################
+BASE_REF=""
+BASE_COMMIT=""
+declare -a CHANGED_ALL=()
+declare -a CHANGED=()
+DIFF_OK=false
+
+if git rev-parse --git-dir >/dev/null 2>&1; then
+    if BASE_REF="$(resolve_base_ref)"; then
+        BASE_COMMIT="$(git merge-base HEAD "$BASE_REF" 2>/dev/null || true)"
+    else
+        BASE_REF=""
+        BASE_COMMIT=""
+    fi
+    if [[ -n "$BASE_COMMIT" ]]; then
+        mapfile -t CHANGED_ALL < <(git -c core.quotePath=false diff --name-only "$BASE_COMMIT" HEAD -- 2>/dev/null || true)
+        for path in "${CHANGED_ALL[@]}"; do
+            if [[ "$path" != "$SUMMARY_PATH" ]]; then
+                CHANGED+=("$path")
+            fi
+        done
+        DIFF_OK=true
+    fi
+fi
+
+#######################################
+# 编译证据豁免判定（C3/C6/C8 与 P1..P11）
+#
+# 为什么需要它：这些检查断言的是「产物内容可追溯」。当一次改动根本不进入固件时，这句话没有对象，
+# 门禁不该因此变红 —— 否则 Dependabot 的 action 升级、以及一切只改 CI/文档的 PR（包含给本门禁
+# 改名的那次）都会被永久挡住。
+#
+# 两条通道，任一成立即生效：
+#   1) 产物无关：全部变更落在 PRODUCT_AGNOSTIC_* 内（自动，零人工）
+#   2) 显式放行：PR 带 SKIP_COMPILE_LABEL 标签（人工，日志与 step summary 留痕）
+# 豁免只解除「编译证据」，不解除「是否该合入」：C1/C2/C4 阈值/C5/C7 在任何豁免下都照常判定。
+#######################################
+EXEMPT_REASON=""
+if [[ "$DIFF_OK" == true && ${#CHANGED_ALL[@]} -gt 0 ]]; then
+    product_agnostic=true
+    for path in "${CHANGED_ALL[@]}"; do
+        path_agnostic=false
+        for agnostic_prefix in "${PRODUCT_AGNOSTIC_PREFIXES[@]}"; do
+            case "$path" in
+            "$agnostic_prefix"*) path_agnostic=true ;;
+            esac
+        done
+        for agnostic_file in "${PRODUCT_AGNOSTIC_FILES[@]}"; do
+            if [[ "$path" == "$agnostic_file" ]]; then
+                path_agnostic=true
+            fi
+        done
+        if [[ "$path_agnostic" != true ]]; then
+            product_agnostic=false
+            break
+        fi
+    done
+    if [[ "$product_agnostic" == true ]]; then
+        EXEMPT_REASON="全部 ${#CHANGED_ALL[@]} 个变更文件都落在产物无关路径（workflow / 门禁脚本 / 文档），没有对象可做编译溯源"
+    fi
+fi
+if [[ -z "$EXEMPT_REASON" && -n "${PR_LABELS:-}" ]]; then
+    IFS=',' read -r -a pr_label_list <<<"${PR_LABELS}"
+    for pr_label in "${pr_label_list[@]}"; do
+        if [[ "$pr_label" == "$SKIP_COMPILE_LABEL" ]]; then
+            EXEMPT_REASON="PR 带标签 $SKIP_COMPILE_LABEL，由维护者显式放行编译证据"
+        fi
+    done
+fi
+
+#######################################
 # 第一步：跑摘要溯源校验，把它的结论并入本脚本
 #######################################
 BLOCK_PRESENT=""
@@ -302,7 +415,7 @@ VERIFIER_RESULT=""
 VERIFIER_OUTPUT=""
 VERIFIER_RC=0
 
-FACTS_FILE="$(mktemp "${TMPDIR:-/tmp}/pr-compliance-facts.XXXXXX" 2>/dev/null || true)"
+FACTS_FILE="$(mktemp "${TMPDIR:-/tmp}/pr-guard-facts.XXXXXX" 2>/dev/null || true)"
 
 if [[ -f "$VERIFIER" ]]; then
     # CI_VERIFIER_CHILD=1：注解与 step summary 由本脚本统一发布，避免同一条失败出现两次。
@@ -339,6 +452,12 @@ while IFS= read -r line; do
             child_id="$rest"
             child_note=""
         fi
+        # 编译证据豁免生效时，溯源链的 FAIL 降级为 SKIP：RESULT 不该被一条「没有对象」的断言
+        # 否决，但原始结论仍要留在日志与 step summary 里（写成 SKIP 行并把原因带上）。
+        if [[ -n "$EXEMPT_REASON" && "$status" == "FAIL" ]]; then
+            report_skip "$child_id" "编译证据豁免：$EXEMPT_REASON（溯源原结论 FAIL：$child_note）"
+            continue
+        fi
         # 原样转发：契约 D 要求每条检查在 stdout 都有一行，父脚本不能只统计不输出。
         printf '%s\n' "$line"
         case "$status" in
@@ -365,33 +484,10 @@ while IFS= read -r line; do
 done <<<"$VERIFIER_OUTPUT"
 
 if [[ "$VERIFIER_RESULT" != "PASS" && "$child_fail_seen" == false ]]; then
-    report_fail PX "摘要溯源校验脚本未给出结论（rc=$VERIFIER_RC）：请确认 scripts/ci/verify-summary-provenance.sh 存在且可执行，勿在门禁失效时放行"
-fi
-
-#######################################
-# 变更清单（C4/C5/C6 共用一份，口径：已提交差异，排除 logs/summary.md）
-#######################################
-BASE_REF=""
-BASE_COMMIT=""
-declare -a CHANGED_ALL=()
-declare -a CHANGED=()
-DIFF_OK=false
-
-if git rev-parse --git-dir >/dev/null 2>&1; then
-    if BASE_REF="$(resolve_base_ref)"; then
-        BASE_COMMIT="$(git merge-base HEAD "$BASE_REF" 2>/dev/null || true)"
+    if [[ -n "$EXEMPT_REASON" ]]; then
+        report_skip PX "编译证据豁免：$EXEMPT_REASON（溯源脚本未给出结论，rc=$VERIFIER_RC）"
     else
-        BASE_REF=""
-        BASE_COMMIT=""
-    fi
-    if [[ -n "$BASE_COMMIT" ]]; then
-        mapfile -t CHANGED_ALL < <(git -c core.quotePath=false diff --name-only "$BASE_COMMIT" HEAD -- 2>/dev/null || true)
-        for path in "${CHANGED_ALL[@]}"; do
-            if [[ "$path" != "$SUMMARY_PATH" ]]; then
-                CHANGED+=("$path")
-            fi
-        done
-        DIFF_OK=true
+        report_fail PX "摘要溯源校验脚本未给出结论（rc=$VERIFIER_RC）：请确认 scripts/ci/verify-summary-provenance.sh 存在且可执行，勿在门禁失效时放行"
     fi
 fi
 
@@ -408,8 +504,17 @@ else
             allowlisted=true
         fi
     done
+    auto_branch=false
+    # shellcheck disable=SC2086  # 故意不引号：AUTO_BRANCH_PREFIXES 是空格分隔的清单
+    for auto_prefix in $AUTO_BRANCH_PREFIXES; do
+        case "$PR_HEAD_REF" in
+        "$auto_prefix"*) auto_branch=true ;;
+        esac
+    done
     if [[ "$allowlisted" == true ]]; then
         report_pass C1 "分支 $PR_HEAD_REF 命中 BRANCH_ALLOWLIST，按显式放行处理"
+    elif [[ "$auto_branch" == true ]]; then
+        report_pass C1 "分支 $PR_HEAD_REF 属于机器人自动分支（AUTO_BRANCH_PREFIXES=$AUTO_BRANCH_PREFIXES），名字由机器人决定，豁免命名约定"
     else
         c1_issues=()
         case " $PROTECTED_BRANCHES " in
@@ -454,6 +559,8 @@ fi
 #######################################
 if [[ "$BLOCK_PRESENT" == "yes" ]]; then
     report_pass C3 "PR 描述含 build-summary 托管块（摘要正文由 PR 描述承载，logs/ 不入库）"
+elif [[ -n "$EXEMPT_REASON" ]]; then
+    report_skip C3 "编译证据豁免：$EXEMPT_REASON"
 elif [[ -z "$BLOCK_PRESENT" ]]; then
     report_skip C3 "无法从溯源校验结果里读到托管块状态（溯源脚本未给出结论，见 PX）"
 else
@@ -471,7 +578,8 @@ else
     if ((changed_total > MAX_CHANGED_FILES)); then
         c4_issues+=("变更文件 $changed_total 个，超过上限 $MAX_CHANGED_FILES 个（拆成多个 PR 更易审）")
     fi
-    if [[ -n "$CLAIMED_COUNT" && "$CLAIMED_COUNT" =~ ^[0-9]+$ && "$CLAIMED_COUNT" != "$changed_total" ]]; then
+    # 「与摘要一致」属于编译证据的一部分：豁免生效时没有摘要可对账，规模阈值仍然生效。
+    if [[ -z "$EXEMPT_REASON" && -n "$CLAIMED_COUNT" && "$CLAIMED_COUNT" =~ ^[0-9]+$ && "$CLAIMED_COUNT" != "$changed_total" ]]; then
         c4_issues+=("摘要记录变更文件数 $CLAIMED_COUNT，真实为 $changed_total：摘要与真实变更脱节，请在最终提交前重新运行 bash scripts/ci/generate-summary.sh")
     fi
 
@@ -495,7 +603,11 @@ else
     fi
 
     if ((${#c4_issues[@]} == 0)); then
-        report_pass C4 "变更 $changed_total 个文件（阈值 $MAX_CHANGED_FILES），新增 $added_total 行 / 删除 $deleted_total 行，单文件新增均 <= $MAX_FILE_LINES，且与摘要一致"
+        c4_summary_note="，且与摘要一致"
+        if [[ -n "$EXEMPT_REASON" ]]; then
+            c4_summary_note="（编译证据豁免，不与摘要对账）"
+        fi
+        report_pass C4 "变更 $changed_total 个文件（阈值 $MAX_CHANGED_FILES），新增 $added_total 行 / 删除 $deleted_total 行，单文件新增均 <= $MAX_FILE_LINES$c4_summary_note"
     else
         report_fail C4 "$(join_notes '；' "${c4_issues[@]}")"
     fi
@@ -549,7 +661,9 @@ fi
 #######################################
 # C6 托管块与本 PR 真实变更一致（文件数 + 指纹）
 #######################################
-if [[ "$DIFF_OK" != true ]]; then
+if [[ -n "$EXEMPT_REASON" ]]; then
+    report_skip C6 "编译证据豁免：$EXEMPT_REASON"
+elif [[ "$DIFF_OK" != true ]]; then
     report_skip C6 "无法解析变更基准，跳过摘要与变更一致性检查"
 else
     real_changed_count=${#CHANGED[@]}
@@ -637,7 +751,11 @@ fi
 # 把“没有数据”当成“默认合格”就是给门禁留一个默认放行的洞。同理，读不到溯源块（P1 没过）
 # 也不能 SKIP —— 没有完整性证据就不能合入。
 #######################################
-if [[ "$BLOCK_PRESENT" != "yes" ]]; then
+if [[ -n "$EXEMPT_REASON" ]]; then
+    # 这条 SKIP 与「unknown 当合格」是两回事，不能混用：unknown 说的是「本该有编译证据却拿不到」，
+    # 豁免说的是「本次变更不在产物范围内，编译证据没有对象」。语义相反，所以文案里必须写清是豁免。
+    report_skip C8 "编译证据豁免：$EXEMPT_REASON"
+elif [[ "$BLOCK_PRESENT" != "yes" ]]; then
     report_fail C8 "读不到溯源块（对应 P1 未通过），没有任何编译完整性证据：请先在 PR 描述里用 build-summary 的 begin/end 标记贴入完整的构建摘要，再重新运行本检查"
 elif [[ -z "$CLAIMED_PLANNED" || -z "$CLAIMED_MISSING" ]]; then
     report_fail C8 "本次摘要缺少编译完整性数据，请下载该 PR 的构建产物后，在本 PR 的 head 提交上重新运行 bash scripts/ci/generate-summary.sh，把新摘要整段替换进 PR 描述（缺数据不等于通过）"

@@ -4,7 +4,7 @@
 #
 # 为什么需要这个脚本：
 #   main 是【编译分支】——immortalwrt-builder 在 main 上产出固件与 Release，
-#   因此一条直推 main 的提交会绕过 pr-compliance 直接进入发布链路。
+#   因此一条直推 main 的提交会绕过 pr-guard 直接进入发布链路。
 #   手工在网页上点分支保护有三个问题：无法评审、无法复现、重建仓库时全靠记忆。
 #   本脚本把"应该是什么样"写成代码，幂等执行，任何克隆里跑一次都得到同一状态。
 #
@@ -14,7 +14,7 @@
 #   既满足幂等，也让人看得懂这次到底改了什么（输出逐条给出「当前 → 期望」）。
 #
 # 为什么 required_status_checks.contexts 取【并集】而不是覆盖成固定值：
-#   同样是整体覆盖语义的直接后果——若把 contexts 写死成 pr-compliance，第一次运行就会把
+#   同样是整体覆盖语义的直接后果——若把 contexts 写死成 pr-guard，第一次运行就会把
 #   syntax-linter 的 shellcheck / actionlint / markdownlint 从"必需检查"里摘掉，
 #   门禁悄悄变弱而没有任何报错。因此这里的天条是：
 #   任何 PUT 都不得让既有必需检查消失。做法是 GET 现状后取
@@ -61,14 +61,14 @@ cd "${SCRIPT_DIR}/../.." || {
     exit "${E_UNAVAILABLE}"
 }
 
-# 必需检查项：pr-compliance 是本脚本存在的理由（它证明这次合入经过了流程校验），
+# 必需检查项：pr-guard 是本脚本存在的理由（它证明这次合入经过了流程校验），
 # 其余三条来自 .github/workflows/syntax-linter.yml 的三个 job 名。
 # 名字必须与 workflow 的 job 名逐字一致：required_status_checks 里写错一个字，
 # 症状不是报错而是"PR 永远 pending"，只有列出真实上报的 check 名才能定位。
 # 已知限制：job 改名后这里不会自动跟随，GitHub 也没有"这个 context 是否存在"的查询接口，
 # 因此改名的那次 PR 必须同步改这个数组，否则门禁会等一个永不上报的名字。
 readonly -a REQUIRED_CONTEXTS=(
-    "pr-compliance"
+    "pr-guard"
     "shellcheck"
     "actionlint"
     "markdownlint"
@@ -96,7 +96,7 @@ readonly -a FIELD_LABELS=(
 #   强制 up-to-date 会让"刚通过 CI 又被别人的合并顶掉"变成反复重跑，收益不抵成本。
 # enforce_admins=true：管理员也走 PR。这是本脚本的核心目的——单人仓库里，
 #   enforce_admins=false 意味着唯一有权限的人随时可以绕过保护直推 main，等于没禁。
-#   它不构成硬锁：修 pr-compliance 的 PR 会用修复后的 workflow 版本运行并可通过（可自救）。
+#   它不构成硬锁：修 pr-guard 的 PR 会用修复后的 workflow 版本运行并可通过（可自救）。
 # required_approving_review_count=0：见 REQUIRED_APPROVALS 的注释（与 enforce_admins=true 同用会死锁）。
 # dismiss_stale_reviews=false：批准数要求为 0 时"新提交作废旧批准"没有可作废的对象，
 #   保留 true 只会让读规则的人以为这里有人审环节，如实写 false。
@@ -161,7 +161,7 @@ usage() {
   -h, --help         打印本用法
 
 脚本把 main 的分支保护设为：
-  · 必需检查 = 「现状 contexts ∪ pr-compliance/shellcheck/actionlint/markdownlint」（strict=false）；
+  · 必需检查 = 「现状 contexts ∪ pr-guard/shellcheck/actionlint/markdownlint」（strict=false）；
     并集是硬约束——任何 PUT 都不会让既有必需检查从列表里消失
   · enforce_admins=true（管理员也不能直推，但不构成死锁：修 CI 的 PR 用修复后的 workflow 运行）
   · 不要求人审（required_approving_review_count=0，单人仓库下要求批准会锁死合并）
@@ -606,7 +606,7 @@ apply_changes() {
 # 的症状是"规则看起来配好了，PR 却永远 pending"，只有列出真实上报的 check 名才能定位。
 #
 # 另附一句关于 enforce_admins=true 的说明：它封死的是"绕过 PR 直推"，
-# 不是"永远改不了 CI"——修复 pr-compliance 的 PR 用的是修复后版本，能自己把自己救回来。
+# 不是"永远改不了 CI"——修复 pr-guard 的 PR 用的是修复后版本，能自己把自己救回来。
 # 不写清楚这一点，读脚本的人会以为这是一个把人锁死的设置。
 #######################################
 print_verification() {
@@ -623,7 +623,7 @@ print_verification() {
   3. 在某个 PR 上读实际上报的检查名（把 1 换成真实 PR 号）：
      gh pr view 1 --repo ${REPO} --json statusCheckRollup --jq '[.statusCheckRollup[].name]'
 
-说明：enforce_admins=true 只封死"绕过 PR 直推 main"。修 pr-compliance 的 PR 会用修复后的
+说明：enforce_admins=true 只封死"绕过 PR 直推 main"。修 pr-guard 的 PR 会用修复后的
 workflow 版本运行并通过，因此不存在"改坏了 CI 就再也合不进修复"的死锁。
 EOF
 }

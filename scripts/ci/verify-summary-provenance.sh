@@ -46,7 +46,7 @@
 #      “提交可从 HEAD 到达且距 HEAD <= 5 个提交”
 #   P10 生成时间新鲜：不来自未来、不在 30 天前、不早于 HEAD 提交时间 6 小时
 #   P11 摘要正文含「结论 / 运行信息 / 步骤状态」三节
-#   PX  校验脚本自身异常（只在无法执行契约时出现，由 pr-compliance.sh 判定）
+#   PX  校验脚本自身异常（只在无法执行契约时出现，由 pr-guard.sh 判定）
 #
 # 环境变量（全部可选）：
 #   PR_BODY / PR_BODY_FILE  数据源，见上。
@@ -54,7 +54,7 @@
 #   PR_HEAD_REPO_FULL_NAME / PR_REPO_FULL_NAME   P4 的比对基准（头仓库优先）。
 #   PR_HEAD_REF             P5 的比对基准。
 #   PR_BASE_REF / SUMMARY_BASE_REF   变更基准，解析顺序：SUMMARY_BASE_REF -> PR_BASE_REF -> origin/main -> main。
-#   PROVENANCE_FACTS_FILE   被 pr-compliance.sh 调用时导出 key=value，避免第二个脚本再实现一份解析。
+#   PROVENANCE_FACTS_FILE   被 pr-guard.sh 调用时导出 key=value，避免第二个脚本再实现一份解析。
 #   CI_VERIFIER_CHILD=1     同上：关闭本脚本的 GitHub 注解与 step summary，由父脚本统一发布。
 #
 # 退出码：0 通过（允许 SKIP）；1 存在 FAIL；2 脚本自身无法执行。
@@ -330,7 +330,7 @@ if [[ "$BODY_INPUT" == "present" ]]; then
         fi
     fi
 
-    # BLOCK_PRESENT 只表示“托管块能被抽取出来”，供 pr-compliance.sh 的 C3 复用；
+    # BLOCK_PRESENT 只表示“托管块能被抽取出来”，供 pr-guard.sh 的 C3 复用；
     # 它与 P1 是否通过无关：块超长时 P1 失败，但块本身确实存在，C3 不该误报“缺少托管块”。
     if ((begin_idx >= 0 && end_idx > begin_idx)) && ((${#BODY_REGION[@]} > 0)); then
         BLOCK_PRESENT="yes"
