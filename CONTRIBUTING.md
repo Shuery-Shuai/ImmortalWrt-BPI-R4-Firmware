@@ -10,7 +10,7 @@
 - [分支模型](#-分支模型)
 - [PR 流程](#-pr-流程)
 - [摘要与溯源](#-摘要与溯源)
-- [CI 门禁](#-ci-门禁pr-compliance)
+- [CI 门禁](#-ci-门禁pr-guard)
 - [变更范围限制](#-变更范围限制)
 - [合并后自动删除分支](#-合并后自动删除分支)
 - [常见失败与自助修复](#-常见失败与自助修复)
@@ -23,7 +23,7 @@
 `main` 不是"开发主线"，而是**编译产物线**：`.github/workflows/immortalwrt-builder.yml`在 main 上跑完整构建，产物直接进 Release 与 Pages
 索引。一次直推会同时造成三件事：
 
-1. 绕过 `pr-compliance`——没人检查这次改动是否附带摘要、是否在允许的变更范围内；
+1. 绕过 `pr-guard`——没人检查这次改动是否附带摘要、是否在允许的变更范围内；
 2. 绕过语法门禁——shellcheck / actionlint / markdownlint 还没来得及跑，提交已经在 main 上；
 3. 直接成为下一次构建的输入——写坏一个镜像源或一处包名，代价是"下一次要刷进路由器的固件"。
 
@@ -53,7 +53,7 @@ PR 的价值不在于仪式，而在于它把这三件事变成**可检查、可
 | `perf`     | 性能、体积、构建时长               | `perf/parallel-compile`        |
 | `test`     | 测试与校验脚本                     | `test/pinned-tools`            |
 | `build`    | 构建脚本与流水线                   | `build/ccache-default`         |
-| `ci`       | workflow 与 CI 脚本                | `ci/pr-compliance`             |
+| `ci`       | workflow 与 CI 脚本                | `ci/pr-guard`                  |
 | `revert`   | 回退某次合入                       | `revert/ccache-default`        |
 
 为什么限定这十个前缀：分类数量有限才能用于统计、自动打标签和"这次改动该谁看"；放任 `bugfix/`、`hotfix/`、`feature/` 与 `fix`、`feat` 并存，一周之后就没人能说清两个词的区别，规则也就失效了。
@@ -166,16 +166,16 @@ emoji 只是可读性标记，**C7 不校验具体 emoji**：同一个 type 用�
 
 | 写法                                                                                                                                          | 判定        | 原因                              |
 | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | --------------------------------- |
-| `✨ feat(ci): 给 pr-compliance 增加 C7`                                                                                                       | ✅ 合规     | 四部分齐全，scope 小写，总长合规  |
-| `✨ feat: 给 pr-compliance 增加 C7`                                                                                                           | ❌ C7 拦下  | 缺 scope（scope 必填非空）        |
-| `✨ feat(CI): 给 pr-compliance 增加 C7`                                                                                                       | ❌ C7 拦下  | scope 含大写字母                  |
+| `✨ feat(ci): 给 pr-guard 增加 C7`                                                                                                            | ✅ 合规     | 四部分齐全，scope 小写，总长合规  |
+| `✨ feat: 给 pr-guard 增加 C7`                                                                                                                | ❌ C7 拦下  | 缺 scope（scope 必填非空）        |
+| `✨ feat(CI): 给 pr-guard 增加 C7`                                                                                                            | ❌ C7 拦下  | scope 含大写字母                  |
 | `✨ feat(编译): 调整编译参数`                                                                                                                 | ❌ C7 拦下  | scope 含中文                      |
 | `🐞 fix(summary): 修正生成时间新鲜度判断在跨时区与夏令时切换时给出错误结论的边界情况并补上对应的回归测试用例、注释说明与失败时的自助修复提示` | ❌ C7 拦下  | 标题正文 75 字符，超过 72 上限    |
 | `📃 docs(readme): 更新安装步骤。`                                                                                                             | ⚠️ 不合约定 | 结尾带句号；C7 不拦，但不要这么写 |
 
 ##### C7 不合规会挡住 PR
 
-C7 是硬性门禁：标题不合规 `pr-compliance` 就是红的，PR 合不进去。自助修复：
+C7 是硬性门禁：标题不合规 `pr-guard` 就是红的，PR 合不进去。自助修复：
 
 ```bash
 git commit --amend              # 只修最后一条：改标题，保存退出
@@ -337,9 +337,9 @@ git diff --name-only "$base" HEAD | LC_ALL=C sort | grep -vx 'logs/summary.md' |
 3. **摘要不入库**：`logs/` 被 `.gitignore` 整目录忽略，这是刻意的，
    不需要为 `logs/summary.md` 开任何例外。`git add logs/summary.md` 报"被忽略"是正常现象， 不要去 `-f` 强行加进来。
 
-## ✅ CI 门禁：pr-compliance
+## ✅ CI 门禁：pr-guard
 
-`pr-compliance` 是分支保护里的核心必需检查（与语法门禁的三条并列）。它的输出协议是固定的：逐条打印 `PASS <编号> <说明>` 或 `FAIL <编号> <说明>`，最后一行是`RESULT PASS` 或
+`pr-guard` 是分支保护里的核心必需检查（与语法门禁的三条并列）。它的输出协议是固定的：逐条打印 `PASS <编号> <说明>` 或 `FAIL <编号> <说明>`，最后一行是`RESULT PASS` 或
 `RESULT FAIL`，只有 `RESULT PASS` 时退出码为 0；设了 `GITHUB_STEP_SUMMARY` 时还会追加一张检查结果表，失败项同时以`::error title=<编号>::` 形式发 GitHub
 annotation。
 
@@ -367,9 +367,40 @@ P8、P10、P11。**P9 已被删除**，所以编号从 P8 直接跳到 P10——
 | P10  | 生成时间新鲜：不来自未来、不在 30 天前、不早于 HEAD 提交时间 6 小时                                                  | `FAIL P10 ...`   |
 | P11  | 摘要正文含「结论 / 运行信息 / 步骤状态」三节                                                                         | `FAIL P11 ...`   |
 
+### 编译证据豁免（不产固件的 PR）
+
+C3 / C6 / C8 与 P1 ~ P11 断言的是「产物内容可追溯」。当一次改动根本不进入固件时，这句话没有对象，
+门禁不该因此变红——否则 Dependabot 的 action 升级、以及一切只改 CI/文档的 PR 都会被永久挡住。
+判据有两条，任一成立即免掉上述检查；**C1 / C2 / C4 的规模阈值 / C5 / C7 在任何豁免下都照常判定**：
+
+| 通道     | 触发条件                                                                                                                           | 人工成本       |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| 产物无关 | 全部变更落在 `.github/`、`scripts/ci/`、`.devcontainer/`、根目录文档，以及 `.markdownlint-cli2.yaml` / `.prettierrc.json` 等配置内 | 零             |
+| 显式放行 | PR 带 `skip-compile` 标签                                                                                                          | 每个 PR 贴一次 |
+
+**判据是「改了哪些路径」而不是「谁开的 PR」**：路径是变更本身的事实，而分支名与作者字段都可以近似伪造。
+`dependabot/` 前缀的分支只豁免 C1（分支名由机器人决定，人改不了），不豁免编译证据。
+
+放行留痕：带 `skip-compile` 的 PR 会在日志与 step summary 里打印「PR 带标签 skip-compile，由维护者显式放行编译证据」，
+事后可查是谁在哪个 PR 上放了行。反过来，改了 `scripts/build/`、`scripts/inputs/`、`files/`、
+`immortalwrt/` 等产物路径的 PR 不在豁免范围内——这些改动必须附带构建摘要。
+
+#### 哪些 PR 会自动带 skip-compile
+
+`dependency-auditor` 每周巡检后自动开的版本 bump PR（`chore/upx-bump-*`、`chore/dae-bump-*`、
+`chore/fan2go-bump-*`）改的是 `scripts/build/`、`scripts/inputs/` 里的版本常量，**属于产物路径**，
+但它们由机器人创建、PR 描述无人可改，产不出构建摘要。因此该 workflow 在 `gh pr create` 时就带上
+`skip-compile`（标签由同一个 job 里的 Ensure 步骤幂等创建，缺标签会让 job 直接红在创建那一步）。
+
+这是一笔明账：**这些版本 bump 合入时不经过构建验证**，只过 C1/C2/C4/C5/C7 与三条语法门禁。
+要收回这条通道，删掉 `dependency-auditor.yml` 里的 `--label` 与 Ensure 步骤即可——代价是这些 PR
+从此需要人工跑构建并贴摘要。
+
+`dependabot` 的 action 升级 PR **不需要**这个标签：它只改 `.github/`，走「产物无关」通道自动豁免。
+
 ### 并行运行的语法门禁
 
-`syntax-linter` 的 `shellcheck` / `actionlint` / `markdownlint` 三条与`pr-compliance` 并列，都挂在分支保护的必需检查里（strict 模式为
+`syntax-linter` 的 `shellcheck` / `actionlint` / `markdownlint` 三条与`pr-guard` 并列，都挂在分支保护的必需检查里（strict 模式为
 false，即不要求你在合并前把分支 rebase 到最新 main）。任一失败都说明这次改动不该合入。
 
 ## 📏 变更范围限制
@@ -630,8 +661,13 @@ bash scripts/ci/setup-branch-protection.sh             # 真正应用
 脚本的两条设计原则值得知道：
 
 1. **先 GET 再决定 PUT**：PUT 是整体覆盖语义，无条件执行会静默清掉别处新增的保护项；
-2. **contexts 取并集**：任何 PUT 都不得让既有必需检查消失——把 `pr-compliance`
+2. **contexts 取并集**：任何 PUT 都不得让既有必需检查消失——把 `pr-guard`
    写死成唯一 context，第一次运行就会把三条语法门禁从必需列表里摘掉，而没有任何报错。
+
+**改必需检查的名字时，顺序不能颠倒**：并集语义意味着脚本只会加不会减，所以先把改名后的 workflow
+合进 main，再运行本脚本。反过来做（先跑脚本让远端要求 `pr-guard`，而 main 上还没有这个 job）会让
+所有 PR 等一个永不上报的 context：每个 PR 都停在 "Expected — Waiting for status to be reported"，
+连修复用的那个 PR 也合并不了，只能手工 `gh api` 改写 contexts 或临时降级保护。
 
 它同样解释了两个容易被误解的设置：`enforce_admins=true` 封死的是"绕过 PR 直推"，不是"仓库再也改不了"（修 CI 的 PR 用修复后的 workflow
 版本运行，能自己把自己救回来）；`required_approving_review_count=0` 则是因为单维护者仓库里"要求批准 + 强制管理员"会形成死锁——GitHub 不允许批准自己的 PR。

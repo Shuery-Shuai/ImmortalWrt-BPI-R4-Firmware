@@ -53,6 +53,10 @@ env:
   BRANCH_PREFIX_UPX: 'chore/upx-bump-'
   BRANCH_PREFIX_DAE: 'chore/dae-bump-'
   BRANCH_PREFIX_FAN2GO: 'chore/fan2go-bump-'
+  # 「编译证据豁免」标签名：版本 bump PR 由机器人创建、body 无人可改，产不出构建摘要，
+  # 因此统一贴它，让 pr-guard 只做 C1/C2/C4/C5/C7。改名时必须与
+  # scripts/ci/pr-guard.sh 的 SKIP_COMPILE_LABEL 同步，否则门禁会继续要求摘要、PR 被卡住。
+  SKIP_COMPILE_LABEL: 'skip-compile'
 
 permissions:
   contents: write
@@ -231,6 +235,22 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      # gh pr create --label 在标签不存在时会直接失败（连 PR 都不创建），所以先幂等建一次。
+      # 这一步失败就让 job 红掉：问题留在建标签处，而不是等 PR 开出来被门禁挡住才发现。
+      - name: Ensure the skip-compile label exists
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh label list --limit 100 --json name --jq '.[].name' | grep -qx "${SKIP_COMPILE_LABEL}"; then
+            echo "标签 ${SKIP_COMPILE_LABEL} 已存在"
+            exit 0
+          fi
+          gh label create "${SKIP_COMPILE_LABEL}" \
+            --color 0e8a16 \
+            --description "PR 不产固件：豁免 pr-guard 的编译证据检查（C3/C6/C8 与 P1..P11）"
+
       - name: Open or update the dependency audit issue
         if: needs.apt-names.outputs.missing_count != '0' || needs.pinned-tools.outputs.padjffs2_outdated == 'true' || needs.pinned-tools.outputs.po2lmo_outdated == 'true'
         shell: bash
@@ -388,7 +408,8 @@ jobs:
             echo "下载 URL 由 EXTRAS_UPX_VERSION 拼接，无需同步其它位置。"
           } >"${pr_body_file}"
           gh pr create --head "${branch}" --base "${DEFAULT_BRANCH}" \
-            --title "${commit_msg}" --body-file "${pr_body_file}"
+            --title "${commit_msg}" --body-file "${pr_body_file}" \
+            --label "${SKIP_COMPILE_LABEL}"
           rm -f "${pr_body_file}"
 
       - name: Open a PR to bump dae when a newer release exists
@@ -469,7 +490,8 @@ jobs:
             echo "只改了 scripts/inputs/diy-part2.sh 里的一行固定项，未改动其它任何内容。"
           } >"${pr_body_file}"
           gh pr create --head "${branch}" --base "${DEFAULT_BRANCH}" \
-            --title "${commit_msg}" --body-file "${pr_body_file}"
+            --title "${commit_msg}" --body-file "${pr_body_file}" \
+            --label "${SKIP_COMPILE_LABEL}"
           rm -f "${pr_body_file}"
 
       - name: Open a PR to bump fan2go when a newer release exists
@@ -531,5 +553,6 @@ jobs:
             echo "hash 参数保持字面量 auto，构建时按上游源码包现算，无需同步其它位置。"
           } >"${pr_body_file}"
           gh pr create --head "${branch}" --base "${DEFAULT_BRANCH}" \
-            --title "${commit_msg}" --body-file "${pr_body_file}"
+            --title "${commit_msg}" --body-file "${pr_body_file}" \
+            --label "${SKIP_COMPILE_LABEL}"
           rm -f "${pr_body_file}"

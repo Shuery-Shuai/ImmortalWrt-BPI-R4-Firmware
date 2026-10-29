@@ -86,7 +86,9 @@ jobs:
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
           set -euo pipefail
-          # --auto 只是"武装"：真正合并要等分支保护里那三个必需检查通过。
+          # --auto 只是"武装"：真正合并要等分支保护里的四个必需检查通过
+          # （pr-guard + shellcheck / actionlint / markdownlint）。dependabot 的 PR 不产固件，
+          # pr-guard 对它豁免 C3/C6/C8（见门禁的「编译证据豁免」），只保留 C1/C2/C4/C5/C7。
           # --squash 让历史保持一条 PR 一条提交，与本仓库既有的整提交风格一致。
           gh pr merge --auto --squash "${PR_URL}"
 

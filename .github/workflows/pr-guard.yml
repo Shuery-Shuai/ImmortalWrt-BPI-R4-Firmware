@@ -1,7 +1,7 @@
-# PR 合规门禁（pr-compliance）
+# PR 合规门禁（pr-guard）
 #
 # 每个 pull_request 都跑一次，结论（RESULT PASS）作为分支保护的必需检查项引用。
-# 必需检查项的上下文由 job id 决定，因此 job id 与 name 都固定写成 pr-compliance：
+# 必需检查项的上下文由 job id 决定，因此 job id 与 name 都固定写成 pr-guard：
 # 两者不一致时分支保护里看到的上下文名会随 name 变化而漂移。
 #
 # 为什么 pull_request 不加 paths 过滤（与 syntax-linter.yml 同理）：
@@ -10,10 +10,14 @@
 #   最需要校验的 PR 会绕过门禁。门禁必须对全部 PR 无条件生效。
 #
 # 权限只给读取：本门禁只做判定并写 step summary，不评论、不推送、不打标签。
-name: PR Compliance Gate
+name: PR Guard
 
 on:
   pull_request:
+    # 默认只触发 opened / synchronize / reopened。这里额外纳入 labeled / unlabeled：
+    # 「编译证据豁免」的显式通道靠 skip-compile 标签生效，人给已存在的 PR 补上（或撤掉）标签后
+    # 必须立刻重跑一次，否则那一次运行永远停在旧结论上（贴了标签却不变绿，撤了也不变红）。
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions:
   contents: read
@@ -22,12 +26,12 @@ permissions:
 concurrency:
   # 同一个 PR 反复推送时取消旧运行：门禁结论只对最新一次提交有意义，
   # 旧运行还会和新运行抢同一个必需检查项状态。
-  group: pr-compliance-${{ github.event.pull_request.number }}
+  group: pr-guard-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  pr-compliance:
-    name: pr-compliance
+  pr-guard:
+    name: pr-guard
     runs-on: ubuntu-24.04
     steps:
       # fetch-depth: 0 是硬要求：摘要溯源要与 merge-base..HEAD 的真实差异对账，
@@ -47,8 +51,8 @@ jobs:
       # PR_BODY 必须经 env 传入，绝不能把描述原文用表达式内插进 run: 脚本：
       # PR 描述是任意用户文本（含引号、换行、$(...)、反引号），内插会破坏脚本本身，
       # 更是一个命令注入面。env 传参期间它只是一段普通字符串。
-      - name: Run pr-compliance
-        id: compliance
+      - name: Run pr-guard
+        id: guard
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
@@ -58,5 +62,7 @@ jobs:
           PR_HEAD_REPO_FULL_NAME: ${{ github.event.pull_request.head.repo.full_name }}
           PR_DRAFT: ${{ github.event.pull_request.draft }}
           PR_AUTHOR_ASSOC: ${{ github.event.pull_request.author_association }}
+          # 标签用来「显式放行编译证据」（skip-compile）：标签名会进日志与 step summary，可事后审计。
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           PR_BODY: ${{ github.event.pull_request.body }}
-        run: bash scripts/ci/pr-compliance.sh
+        run: bash scripts/ci/pr-guard.sh
