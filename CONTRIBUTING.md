@@ -143,7 +143,7 @@ git push -u origin feat/my-change
 | `test`     | ✅                 | 新增或调整测试                     |
 | `build`    | 🔧                 | 构建脚本与产物参数                 |
 | `ci`       | 🐎                 | workflow 与门禁脚本                |
-| `revert`   | ↩                  | 回滚某个提交                       |
+| `revert`   | ↩                 | 回滚某个提交                       |
 
 emoji 只是可读性标记，**C7 不校验具体 emoji**：同一个 type 用不同 emoji 不会被拦下，选哪个只影响 `git log --oneline` 好不好扫。
 
