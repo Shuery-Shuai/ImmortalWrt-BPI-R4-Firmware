@@ -385,6 +385,10 @@ C3 / C6 / C8 与 P1 ~ P11 断言的是「产物内容可追溯」。当一次改
 事后可查是谁在哪个 PR 上放了行。反过来，改了 `scripts/build/`、`scripts/inputs/`、`files/`、
 `immortalwrt/` 等产物路径的 PR 不在豁免范围内——这些改动必须附带构建摘要。
 
+`files/` 会整体叠加进固件根文件系统，其中 `files/lib/upgrade/`、`files/lib/preinit/` 存放的是
+sysupgrade 与 preinit 阶段执行的钩子脚本——改动它们等于改运行时行为，属于产物路径，
+同样必须附上构建摘要与真机验证证据。
+
 #### 哪些 PR 会自动带 skip-compile
 
 `dependency-auditor` 每周巡检后自动开的版本 bump PR（`chore/upx-bump-*`、`chore/dae-bump-*`、

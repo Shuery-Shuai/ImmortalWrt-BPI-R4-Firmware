@@ -19,21 +19,23 @@
 - [🧳 移植教程：换机型与自建仓库](#-移植教程换机型与自建仓库)
 - [🔄 固件更新与软件包恢复](#-固件更新与软件包恢复)
 - [🛠 构建系统](#-构建系统)
+- [🤝 贡献](#-贡献)
 - [📄 许可证](#-许可证)
 - [🙏 致谢](#-致谢)
 
 ## ✨ 项目特点
 
-|     | 特性                          | 说明                                                                                   |
-| :-- | :---------------------------- | :------------------------------------------------------------------------------------- |
-| 🌱  | **基于 ImmortalWrt 最新源码** | 跟踪上游 `master`，由 Update Checker 每 3 天探测新提交并自动触发构建。                 |
-| ⚡  | **针对 BPI-R4 硬件优化**      | 目标 `mediatek/filogic`，设备 `bananapi_bpi-r4`，内核配置按该板网口/PWM/USB 能力裁剪。 |
-| 🎯  | **极简固件**                  | 仅内置基础组件 + Argon 主题 + Nginx；其余功能以可选包（`=m`）形式提供，按需安装。      |
-| 🔧  | **替换上游默认组件**          | 1. `dropbear` → `OpenSSH`；<br />2. `uhttpd` → `Nginx`。                               |
-| 🔁  | **自动更新软件包**            | 升级固件时自动备份已装包列表，重启后由 hotplug 脚本恢复。                              |
-| 🔐  | **软件包签名可固定**          | 使用固定 EC P-256 密钥签名仓库，避免升级后出现 `UNTRUSTED signature`。                 |
-| 🧪  | **CI 与本地同一套脚本**       | 构建逻辑全部在 `scripts/` 下，CI 只是把 stage 拆成几步，本地可完整复现。               |
-| 📊  | **失败可诊断**                | 每步日志落 `logs/`，流水线末尾生成运行总结并摘录编译错误行。                           |
+|     | 特性                          | 说明                                                                                                                                                                         |
+| :-- | :---------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🌱  | **基于 ImmortalWrt 最新源码** | 跟踪上游 `master`，由 Update Checker 每 3 天探测新提交并自动触发构建。                                                                                                       |
+| ⚡  | **针对 BPI-R4 硬件优化**      | 目标 `mediatek/filogic`，设备 `bananapi_bpi-r4`，内核配置按该板网口/PWM/USB 能力裁剪。                                                                                       |
+| 🎯  | **极简固件**                  | 仅内置基础组件 + Argon 主题 + Nginx；其余功能以可选包（`=m`）形式提供，按需安装。                                                                                            |
+| 🔧  | **替换上游默认组件**          | 1. `dropbear` → `OpenSSH`；<br />2. `uhttpd` → `Nginx`。                                                                                                                     |
+| 🔁  | **自动更新软件包**            | 升级固件时自动备份已装包列表，重启后由 hotplug 脚本恢复。                                                                                                                    |
+| 🔐  | **软件包签名可固定**          | 使用固定 EC P-256 密钥签名仓库，避免升级后出现 `UNTRUSTED signature`。                                                                                                       |
+| 🧪  | **CI 与本地同一套脚本**       | 构建逻辑全部在 `scripts/` 下，CI 只是把 stage 拆成几步，本地可完整复现。                                                                                                     |
+| 💾  | **升级备份双保险**            | 升级时除官方 `sysupgrade.tgz` 外，另把完整备份落到 eMMC 的 btrfs 分区安全屋并记录条目权限与属主；官方恢复后由 preinit 钩子只补缺失文件。**需勾选「保留配置」**，否则不生效。 |
+| 📊  | **失败可诊断**                | 每步日志落 `logs/`，流水线末尾生成运行总结并摘录编译错误行。                                                                                                                 |
 
 > [!WARNING]
 >
@@ -402,7 +404,7 @@ flowchart TD
     A["系统 → 备份/升级<br/>勾选『备份已安装软件包』(= sysupgrade -k)"] --> B["生成包列表<br/>/etc/backup/installed_packages.txt"]
     B --> C["打包进配置备份<br/>/tmp/sysupgrade.tgz"]
     C --> D[sysupgrade 刷写新固件]
-    D --> E["首次启动解包配置备份<br/>preinit 80_mount_root"]
+    D --> E["首次启动解包配置备份<br/>preinit 80_mount_root<br/>随后 99_90_restore-enhanced.sh 补齐缺失文件"]
     E --> F["WAN 上线触发 hotplug<br/>99-restore-package"]
     F --> G{"开机窗口内?<br/>(uptime ≤ BOOT_WINDOW)"}
     G -->|否| X["跳过（WAN 重拨不重复恢复）"]
@@ -524,6 +526,85 @@ rm -f /etc/backup/restore_pkg.state /etc/backup/restore_pkg_failures.ndjson
 > /etc/qbittorrent/
 > ```
 
+### 增强备份与恢复
+
+官方 sysupgrade 的配置备份存在偶发漏文件、目录权限元数据不保留的问题。本机制在官方流程之外再加一层
+保险：升级时多打一份完整归档，升级后首次启动把官方漏掉的文件补齐。它**不修改官方脚本**，只通过
+`/lib/upgrade` 与 `/lib/preinit` 两个钩子目录扩展。
+
+#### 安全屋位置与探测链
+
+安全屋目录固定为 `<挂载点>/backup-enhanced`。探测顺序是：`/boot` → `/recovery` →
+`mount` 输出中 `/dev/mmcblk0p1` 的挂载点 → `/opt`（p8 已挂好的情况）→ 仅恢复阶段多一步
+自挂载 `/dev/mmcblk0p8`（只读挂到临时目录，拷完即卸）。
+
+前三个候选是给真有 `/boot` 或 `/recovery` 的板子留的顺序，**本机型（BPI-R4）上它们必然落空**：
+
+- `/dev/mmcblk0p1` 是裸 eMMC boot blob（首扇区 `SDMMC_BOOT`，GPT 名 `bl2`），挂不上；
+- `/boot` 与 `/recovery` 不存在；
+- p5 / p6 是 FIT 分区，不能当存储。
+
+真正可用的是 `/dev/mmcblk0p8`（btrfs，平时挂 `/opt`）：fitrw 的 f2fs overlay 与 squashfs 同属
+`mmcblk0p7`，升级时会被重写，只有 p8 幸存。备份阶段只认已挂载的 `/opt`（升级前它本来就在）；
+恢复阶段若 `/opt` 还没挂上，钩子会自己只读挂载 p8，把三件套拷进 tmpfs 后立即卸载。
+
+三件套：
+
+| 文件                     | 用途                                                                                                                    |
+| :----------------------- | :---------------------------------------------------------------------------------------------------------------------- |
+| `backup-enhanced.tar.gz` | 归档本体，内容来自官方备份清单                                                                                          |
+| `filelist-enhanced.txt`  | `sysupgrade --list-backup` 的原始清单，恢复时用来对照                                                                   |
+| `meta-enhanced.txt`      | 每行 `mode uid gid path` 的权限与属主记录；**条目数比清单多**，因为额外记录了每个文件的父目录（清单只有文件、不含目录） |
+
+#### 与官方流程的衔接
+
+备份阶段：`/sbin/sysupgrade` 执行 `include /lib/upgrade` 时会 source 本脚本，脚本在 source 期把
+`backup_enhanced_hook` 追加进 `sysupgrade_init_conffiles`，于是 `create_backup_archive()` 里的
+`run_hooks` 会调用它——官方备份照常生成，增强归档是额外产物。
+
+恢复阶段：`99_90_restore-enhanced.sh` 用 `boot_hook_add preinit_main` 注册钩子。文件名取
+`99_90_` 前缀是为了排在 `80_mount_root` 之后：`/etc/preinit` 按文件名通配 source
+`/lib/preinit/*`，钩子按注册顺序 FIFO 执行，而官方配置恢复写在 `80_mount_root` 的
+`do_mount_root()` 里。
+
+#### 冲突避免三条
+
+- 时机：恢复钩子晚于官方 `do_mount_root`，官方恢复已经跑完，这里看到的才是「官方漏了什么」。
+- 内容：只补缺失，**已存在的路径完全不碰**。做法是先 `tar -tzf` 取归档成员，只把当前不存在的
+  路径写进 `-T` 列表再解包。不用 `tar -x -k` 的原因：BusyBox 的 `-k` 遇到第一个已存在文件会
+  整体中止并返回非 0，后面本该补齐的文件全部丢失。
+- 权限：先比对再修正。逐条读 `meta-enhanced.txt`，与当前 `ls -ldn` 结果一致就跳过并记日志，
+  只在不一致时 `chmod` / `chown`。
+
+#### 前提条件
+
+> [!IMPORTANT]
+>
+> **升级时必须勾选「保留配置」（不要用 `sysupgrade -n`）。** 不保留配置就不会生成
+> `/sysupgrade.tgz`，恢复钩子的闸门判定为 idle，连安全屋都不会去探测，增强备份整条链路不生效。
+
+#### 已知限制
+
+- 升级后首次开机的 btrfs 依赖本脚本自行 `modprobe`。上游 `base-files` 的
+  `/lib/preinit/78_btrfs_scan_pre` 是 `85_btrfs_scan_post` 的符号链接，两者被 `/etc/preinit`
+  通配 source 时会各 source 一次，把同一个 `preinit_btrfs_scan` 注册两次；`boot_run_hook` 的
+  `PI_RAN_` 去重让它在 78 的位置（`80_mount_root` 之前）先跑，那时 btrfs 模块还没加载，
+  `grep -q btrfs /proc/filesystems` 为假而静默跳过，85 想要的「挂载后做 btrfs device scan」
+  因此永不发生。这是既有缺陷，本机制未修。
+- 安全屋是唯一副本，p8 损坏即全丢。
+- setuid / setgid / sticky 位只统计并记日志，不恢复。
+- 跳过日志默认只记前 20 条，以免冲掉 64K 环缓冲；`RESTORE_ENHANCED_VERBOSE=1` 可全量输出。
+- 恢复钩子在 preinit 阶段自挂载 p8 时用只读方式，并在子 shell 里用 `trap` 保证卸载：若遗留挂载，
+  fstools 的 `block mount` 会误判 `/opt` 已挂载而直接跳过，导致该次启动没有 `/opt`。
+
+#### 日志
+
+标签 `backup-enhanced` / `restore-enhanced`，用 `logread -e backup-enhanced` 查看。
+
+恢复闸门的判定条件是 `/sysupgrade.tgz` 或 `/tmp/sysupgrade.tar` 存在；手工测试时可
+`touch /tmp/.restore-enhanced-force`，或在安全屋里放 `.restore-enhanced-trigger` 强制触发一次
+（后者只在 `/opt` 已挂载时可见）。
+
 ## 🛠 构建系统
 
 所有构建逻辑收敛在 `scripts/` 下，CI 与本机执行**完全相同的脚本**：
@@ -565,6 +646,10 @@ flowchart TD
 
 构建产物与日志会分别作为 artifact 上传；日志位于仓库根 `logs/`（已 gitignore），文件名即步骤名（`build-compile.log`、`build-deps.log`…），整包上传，选哪份由文件名决定而不是靠
 mtime。
+
+## 🤝 贡献
+
+欢迎提交 Pull Request 与 Issue。`main` 分支受保护、不能直接推送，请从功能分支开 PR；开 PR 前请先读 [CONTRIBUTING.md](CONTRIBUTING.md)，本地自查命令与 CI 完全一致。
 
 ## 📄 许可证
 

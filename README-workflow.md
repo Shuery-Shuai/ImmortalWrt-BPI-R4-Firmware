@@ -1,34 +1,28 @@
-**English** | [中文](https://p3terx.com/archives/build-openwrt-with-github-actions.html)
+> 🛠 本文件说明工作流本身；固件功能、刷机、签名密钥等面向使用者的说明见 [仓库根 README](README.md)。
 
-# Actions-OpenWrt
+# 工作流说明
 
-[![LICENSE](https://img.shields.io/github/license/mashape/apistatus.svg?style=flat-square&label=LICENSE)](https://github.com/P3TERX/Actions-OpenWrt/blob/master/LICENSE)
-![GitHub Stars](https://img.shields.io/github/stars/P3TERX/Actions-OpenWrt.svg?style=flat-square&label=Stars&logo=github)
-![GitHub Forks](https://img.shields.io/github/forks/P3TERX/Actions-OpenWrt.svg?style=flat-square&label=Forks&logo=github)
+本仓库的 GitHub Actions 工作流：构建 ImmortalWrt（`mediatek/filogic`，BPI-R4）固件、跑发布前的
+包校验门禁，并把产物发布到 Releases 与 Pages。
 
-A template for building OpenWrt with GitHub Actions
+## 用法
 
-## Usage
+- 本仓库已是可直接使用的构建仓库，不需要「使用模板」生成副本；fork 后要先自建签名密钥，
+  见根 README 的「软件包签名密钥 → 移植（fork 本仓库）」。
+- 源码为 [ImmortalWrt](https://github.com/immortalwrt/immortalwrt)，目标机型与包选择由仓库根的 `.config`、
+  `files/`、`libs/` 决定，不需要另行生成 `.config` 文件。
+- 在 Actions 页面选择 `ImmortalWrt Builder`，点 `Run workflow` 手动触发；日常由 `Update Checker`
+  每 3 天探测上游新提交后经 `repository_dispatch` 自动触发。
+- 构建完成后在该次运行页面右上角的 `Artifacts` 下载归档，固件整包同时发布到
+  [Releases](https://github.com/Shuery-Shuai/ImmortalWrt-BPI-R4-Firmware/releases)。
 
-- Click the [Use this template](https://github.com/P3TERX/Actions-OpenWrt/generate) button to create a new repository.
-- Generate `.config` files using [Lean's OpenWrt](https://github.com/coolsnowwolf/lede) source code.
-  ( You can change it through environment variables in the workflow file. )
-- Push `.config` file to the GitHub repository.
-- Select `Build OpenWrt` on the Actions page.
-- Click the `Run workflow` button.
-- When the build is complete, click the `Artifacts` button in the upper right corner of the Actions page
-  to download the binaries.
+## 提示
 
-## Tips
+- 生成 `.config` 与编译固件都很耗时。
+- 决定自建之前，可以先[在 GitHub 搜索 `Actions-Openwrt`](https://github.com/search?q=Actions-openwrt)，看看是否已有人构建出满足需求的固件。
+- 在仓库简介里写清固件的架构与已装软件包，能省下别人核实的时间。
 
-- It may take a long time to create a `.config` file and build the OpenWrt firmware.
-  Thus, before create repository to build your own firmware, you may check out if others have
-  already built it which meet your needs by simply
-  [search `Actions-Openwrt` in GitHub](https://github.com/search?q=Actions-openwrt).
-- Add some meta info of your built firmware (such as firmware architecture and installed packages)
-  to your repository introduction, this will save others' time.
-
-## Package verification gate
+## 包校验门禁
 
 The build job runs `bash scripts/ci/generate-summary.sh verify` after the firmware artifact is
 uploaded and **before** the release tag is generated. It compares both config files — the
@@ -56,7 +50,7 @@ downloadable for inspection. `$GITHUB_OUTPUT` carries one count per check
 Set `VERIFY_CONFIG_SYMBOLS=false` in the step environment to disable the two config-comparison
 checks; the compilation check always runs.
 
-## Credits
+## 致谢
 
 - [Microsoft Azure](https://azure.microsoft.com)
 - [GitHub Actions](https://github.com/features/actions)
@@ -73,6 +67,6 @@ checks; the compilation check always runs.
 - [dev-drprasad/delete-older-releases](https://github.com/dev-drprasad/delete-older-releases)
 - [peter-evans/repository-dispatch](https://github.com/peter-evans/repository-dispatch)
 
-## License
+## 许可证
 
 [MIT](https://github.com/P3TERX/Actions-OpenWrt/blob/main/LICENSE) © [**P3TERX**](https://p3terx.com)
