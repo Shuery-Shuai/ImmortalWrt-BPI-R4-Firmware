@@ -16,8 +16,11 @@
 #   C2  来源仓库与目标仓库相同（ALLOW_FORK_PR=1 才允许 fork）
 #   C3  PR 描述含 build-summary 托管块（摘要正文由 PR 描述承载，logs/ 不入库）
 #   C4  变更范围：文件数、单文件新增行数、与摘要“变更文件数”一致
-#   C5  禁改路径：logs/ 下任何路径（摘要只用 PR 描述承载，不入库）、明文 .config、keys/ 下私钥、
+#   C5  禁改路径：logs/ 下任何路径（摘要只用 PR 描述承载，不入库）、keys/ 下私钥、
 #       immortalwrt/ 子模块内容、.git 内部路径
+#       注：仓库根 .config 是【允许改动】的固件输入（它被 git 跟踪，包选择靠改它来落地）。
+#       它故意不列在禁改路径里，也不在 PRODUCT_AGNOSTIC_FILES 里 —— 改它会改变构建产物，
+#       因此必须带编译证据（C3/C6/C8 照常要求摘要）。
 #   C6  托管块里的变更文件数与变更文件指纹都必须与本 PR 真实变更一致
 #   C7  本 PR 每条提交信息符合 <emoji> <type>(<scope>): <说明>（merge/dependabot 等
 #       非人写提交豁免；type/scope/长度阈值可覆盖）
@@ -620,6 +623,10 @@ fi
 # git add -f 把 logs/summary.md（或构建日志）提交进来，门禁读的却是 PR 描述，两边必然脱节，
 # 而且几百 KB 的日志会永久留在仓库历史里。C4/C6 继续用排除 logs/summary.md 的 CHANGED，
 # 保持契约 A 的字节口径不变；这条规则只看“有没有入库”。
+#
+# 为什么 .config 不在这里：它是被 git 跟踪的固件输入，换包只能靠改它，禁掉等于没有合法通道。
+# 它同样不在 PRODUCT_AGNOSTIC_FILES 里，所以改它必须带编译证据（C3/C6/C8 照常要求摘要），
+# 评审在 diff 里也看得到每一行包选择 —— 这才是对「改一行就改变所有构建产物」的正确约束。
 #######################################
 if [[ "$DIFF_OK" != true ]]; then
     report_skip C5 "无法解析变更基准，跳过禁改路径检查"
@@ -630,9 +637,6 @@ else
         case "$path" in
         logs/*)
             violations+=("$path（摘要不该入库；logs/ 被 .gitignore 整目录忽略，强行 git add -f 会让摘要进入仓库历史，而门禁读的是 PR 描述 —— 请从变更中移除该文件（git rm --cached logs/summary.md））")
-            ;;
-        .config | */.config)
-            violations+=("$path（明文 .config 会泄露设备配置）")
             ;;
         .git/* | */.git/*)
             violations+=("$path（.git 内部路径不允许入库）")
@@ -652,7 +656,7 @@ else
         esac
     done
     if ((${#violations[@]} == 0)); then
-        report_pass C5 "变更清单未命中禁改路径（logs/ 入库 / 明文 .config / keys 私钥 / immortalwrt 子模块内容 / .git 内部路径）"
+        report_pass C5 "变更清单未命中禁改路径（logs/ 入库 / keys 私钥 / immortalwrt 子模块内容 / .git 内部路径）"
     else
         report_fail C5 "命中禁改路径：$(join_notes '；' "${violations[@]}")：请按每条括号里的处置方式把路径从本次变更中移除后再提交"
     fi
