@@ -170,10 +170,10 @@ resolve_verdict() {
 
 render_header() {
   case "${1}" in
-    update-checker) printf '## 🔄 上游更新检查总结\n\n' ;;
-    dependency-auditor) printf '## 🔍 依赖巡检总结\n\n' ;;
-    syntax-linter) printf '## 🧹 语法与规范门禁总结\n\n' ;;
-    *) printf '## 🏗️ ImmortalWrt BPI-R4 构建总结\n\n' ;;
+    update-checker) printf '### 🔄 上游更新检查总结\n\n' ;;
+    dependency-auditor) printf '### 🔍 依赖巡检总结\n\n' ;;
+    syntax-linter) printf '### 🧹 语法与规范门禁总结\n\n' ;;
+    *) printf '### 🏗️ ImmortalWrt BPI-R4 构建总结\n\n' ;;
   esac
   printf '**结论：** %s\n\n' "$(resolve_verdict)"
   if [[ -n "${GITHUB_REPOSITORY:-}" && -n "${GITHUB_RUN_ID:-}" ]]; then
@@ -197,7 +197,7 @@ render_meta() {
     meta_row "运行次数" "${GITHUB_RUN_ATTEMPT:-}"
   )"
   [[ -n "${rows}" ]] || return 0
-  printf '### 运行信息\n\n| 项 | 值 |\n| --- | --- |\n%s\n\n' "${rows}"
+  printf '#### 运行信息\n\n| 项 | 值 |\n| --- | --- |\n%s\n\n' "${rows}"
 }
 
 render_steps() {
@@ -210,11 +210,11 @@ render_steps() {
   # 结果列复用 step_badge 的空值映射（⚪ 未执行），语义与"因前序失败而没跑"的步骤同一套，
   # 不再另造一个词，读者不必学第二套记号。
   if [[ -z "${STEP_SEQUENCE:-}" ]]; then
-    printf '### 步骤状态\n\n| 步骤 | 结果 |\n| --- | --- |\n'
+    printf '#### 步骤状态\n\n| 步骤 | 结果 |\n| --- | --- |\n'
     printf '| %s | %s |\n\n' '（本地运行，无 CI 步骤信息）' "$(step_badge "")"
     return 0
   fi
-  printf '### 步骤状态\n\n| 步骤 | 结果 |\n| --- | --- |\n'
+  printf '#### 步骤状态\n\n| 步骤 | 结果 |\n| --- | --- |\n'
   local line key name value
   while IFS= read -r line; do
     [[ -n "${line}" ]] || continue
@@ -285,7 +285,7 @@ render_logs() {
   local unexpected=""
   ((${#unexpected_names[@]} > 0)) && unexpected="${unexpected_names[*]}"
   [[ "${listed}" == "1" || -n "${unexpected}" ]] || return 0
-  printf '### 日志文件\n\n'
+  printf '#### 日志文件\n\n'
   if [[ "${listed}" == "1" ]]; then
     printf '| 日志文件 | 所属步骤 |\n| --- | --- |\n'
     printf '%s\n' "${rows[@]}"
@@ -716,7 +716,7 @@ _collect_package_counts() {
 
 # 渲染「软件包」小节的表格部分。
 _render_package_table() {
-  printf '### 软件包\n\n'
+  printf '#### 软件包\n\n'
   # 表格后必须空一行，否则紧跟的段落会被 Markdown 当成表格续行。
   printf '| 类别 | 数量 | 说明 |\n| --- | --- | --- |\n'
   printf '| 装进固件 | %s | 镜像内自带，开机即有 |\n' "${_PKG_INSTALLED_COUNT}"
@@ -1043,7 +1043,7 @@ _verify_emit_output() {
 _verify_emit_step_summary() {
   local body="${1}"
   [[ -n "${GITHUB_STEP_SUMMARY:-}" ]] || return 0
-  printf '### 📦 软件包编译门禁\n\n%s\n\n' "${body}" \
+  printf '#### 📦 软件包编译门禁\n\n%s\n\n' "${body}" \
     >>"${GITHUB_STEP_SUMMARY}" 2>/dev/null || log_warning "无法写入 GITHUB_STEP_SUMMARY"
   return 0
 }
@@ -1193,7 +1193,7 @@ render_build_info() {
   if [[ -z "${rows}" && -z "${size_line}" && -z "${artifacts}" ]]; then
     return 0
   fi
-  printf '### 构建产物\n\n'
+  printf '#### 构建产物\n\n'
   if [[ -n "${rows}" ]]; then
     # 表格后必须空一行，否则紧跟的普通段落会被 Markdown 解析成表格的续行。
     printf '| 项 | 值 |\n| --- | --- |\n%s\n' "${rows}"
@@ -1380,7 +1380,7 @@ render_duration() {
   if [[ -z "${line}" && -z "${cache}" ]]; then
     return 0
   fi
-  printf '### 耗时与缓存\n\n'
+  printf '#### 耗时与缓存\n\n'
   [[ -n "${line}" ]] && printf -- '- %s\n' "${line}"
   [[ -n "${cache}" ]] && printf -- '- %s\n' "${cache}"
   printf '\n'
@@ -1438,7 +1438,7 @@ log_kind_label() {
 }
 
 render_failure() {
-  printf '### 失败详情\n\n'
+  printf '#### 失败详情\n\n'
   if [[ -n "${ERROR_EXCERPT}" ]]; then
     local count
     count="$(printf '%s\n' "${ERROR_EXCERPT}" | grep -c '')"
@@ -1467,10 +1467,10 @@ render_update_checker() {
     false) rows+=("| 构建 | 未触发构建（上游无新提交） |") ;;
   esac
   if [[ ${#rows[@]} -eq 0 ]]; then
-    printf '### 上游更新\n\n未提供上游 commit 信息。\n\n'
+    printf '#### 上游更新\n\n未提供上游 commit 信息。\n\n'
     return 0
   fi
-  printf '### 上游更新\n\n| 项 | 值 |\n| --- | --- |\n'
+  printf '#### 上游更新\n\n| 项 | 值 |\n| --- | --- |\n'
   printf '%s\n' "${rows[@]}"
   printf '\n'
 }
@@ -1492,7 +1492,7 @@ render_metrics() {
     *) return 0 ;;
   esac
   [[ -n "${METRIC_SEQUENCE:-}" ]] || return 0
-  printf '### 本次结果\n\n| 项 | 值 |\n| --- | --- |\n'
+  printf '#### 本次结果\n\n| 项 | 值 |\n| --- | --- |\n'
   local line key name value
   while IFS= read -r line; do
     [[ -n "${line}" ]] || continue
@@ -1536,7 +1536,7 @@ render_details() {
     # 没有正文就不出折叠块：一个空 <details> 比不渲染更让人困惑。
     [[ -n "${body}" ]] || continue
     if [[ "${printed}" == "0" ]]; then
-      printf '### 明细\n\n'
+      printf '#### 明细\n\n'
       printed=1
     fi
     printf '<details><summary>%s</summary>\n\n%stext\n%s\n%s\n\n</details>\n\n' \
@@ -1639,7 +1639,7 @@ render_auto_check_section() {
     [[ -f "${file}" ]] && present=$((present + 1))
   done
 
-  printf '### 🔎 自动校验要点\n\n'
+  printf '#### 🔎 自动校验要点\n\n'
   printf '| 校验项 | CI 会校验什么 | 本摘要中的实际值 |\n| --- | --- | --- |\n'
   printf '| 摘要格式版本 | 溯源块「格式版本」必须是 2 | %s |\n' "$(md_cell "${PROV_FORMAT_VERSION}")"
   printf '| 溯源块完整性 | begin/end 标记之间 10 个键全部非空 | %s/10 键非空 |\n' "${filled}"

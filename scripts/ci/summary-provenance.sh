@@ -9,7 +9,8 @@
 #
 # 用法（被 source，不单独执行）：
 #   source scripts/ci/summary-provenance.sh
-#   render_provenance_block      # 输出整段 Markdown（含 "### 🔒 摘要溯源" 标题）
+#   render_provenance_block      # 输出整段 Markdown（含 "#### 🔒 摘要溯源" 标题）
+#                                标题层级为四级：整份摘要贴进 PR 描述后是「## 🔒 构建摘要」的子节
 #
 # 契约（格式版本 2）：块内固定 10 个键，**顺序即契约**——
 #   格式版本 / 仓库 / 分支 / 提交 / 生成时间 / 变更基准 / 变更文件数 / 变更文件指纹 /
@@ -263,7 +264,7 @@ render_provenance_block() {
   provenance_gather
   local planned_count missing_count
   read -r planned_count missing_count <<<"$(_prov_package_counts)"
-  printf '### 🔒 摘要溯源\n\n'
+  printf '#### 🔒 摘要溯源\n\n'
   printf '<!-- dsh-provenance:begin -->\n\n'
   printf '| 项 | 值 |\n| --- | --- |\n'
   printf '| 格式版本 | %s |\n' "$(_prov_cell "${PROV_FORMAT_VERSION}")"

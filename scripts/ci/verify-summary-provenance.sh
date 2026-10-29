@@ -189,10 +189,12 @@ git_changed_paths() {
         LC_ALL=C sort
 }
 
+# 允许的标题层级是 2..4：整份摘要贴进 PR 描述后挂在「## 🔒 构建摘要」之下，
+# 因此它自己的总标题是三级、各小节是四级。再深就该怀疑正文里嵌套了别的结构。
 has_section() {
     local name="$1" line
     for line in "${BODY_REGION[@]}"; do
-        if [[ "$line" =~ ^#{2,3}[[:space:]]+[^#] ]] && [[ "$line" == *"$name"* ]]; then
+        if [[ "$line" =~ ^#{2,4}[[:space:]]+[^#] ]] && [[ "$line" == *"$name"* ]]; then
             return 0
         fi
         if [[ "$line" == "**$name"* ]]; then
