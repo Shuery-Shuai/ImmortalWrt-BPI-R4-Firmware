@@ -47,7 +47,7 @@ install_dependencies() {
 # readonly 常量只能赋值一次：重复 source 本文件时用哨兵跳过，保证幂等且不报"只读变量"。
 if [[ -z "${_ORCH_DEPS_SH_LOADED:-}" ]]; then
   readonly _ORCH_DEPS_SH_LOADED=1
-  readonly EXTRAS_UPX_VERSION="5.2.1"
+  readonly EXTRAS_UPX_VERSION="5.3.0"
   readonly EXTRAS_PADJFFS2_COMMIT="d06b68fe83ebb969baa64335779045d80bc41f89"
   readonly EXTRAS_PO2LMO_COMMIT="6ebcfe66eca2f9b6c5ef41c8992fa190f499436d"
 fi
