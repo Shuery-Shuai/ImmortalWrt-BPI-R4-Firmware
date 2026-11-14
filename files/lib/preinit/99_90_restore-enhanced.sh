@@ -11,16 +11,31 @@
 # 99_90_restore-enhanced.sh (not restore-enhanced.sh). The hook function name is
 # unique on purpose: boot_run_hook de-duplicates on PI_RAN_<func>.
 #
+# Where the payload comes from
+# ----------------------------
+# backup-enhanced.sh packs its archive as a nested tarball and appends it to the
+# manifest sysupgrade uses to build CONF_TAR (/tmp/sysupgrade.tgz). That is the
+# only carrier that survives the reboot without any extra mount: procd dd's
+# CONF_TAR onto the eMMC (emmc_copy_config), initramfs reads it back, and
+# do_mount_root() unpacks it here. By the time this hook runs the nested payload
+# is already sitting in /tmp/backup-enhanced, so the normal upgrade path never
+# touches /dev/mmcblk0p8 at all.
+#
+# A copy also stays in the /opt safe house, but only as a redundant,
+# human-inspectable artifact - it is used when the nested payload is absent
+# (e.g. an upgrade that kept no config, or a manual restore on a live system).
+#
 # /opt is NOT mounted during preinit: /etc/fstab is an empty file, /opt comes
 # from uci (/etc/config/fstab) through fstools /sbin/block, driven by
 # /etc/init.d/fstab at START=11. btrfs is a module living in the overlay upper
 # layer, so modprobe only works after mount_root - which is where this hook runs.
 #
-# Touching /dev/mmcblk0p8 is the risky part here. If a mount of p8 is still in
-# place when fstools mounts /opt, mount_device() finds an existing mountpoint and
-# skips /opt for the whole boot, leaving dockerd with an empty data-root. So:
+# Touching /dev/mmcblk0p8 is the risky part of the fallback path. If a mount of
+# p8 is still in place when fstools mounts /opt, mount_device() finds an existing
+# mountpoint and skips /opt for the whole boot, leaving dockerd with an empty
+# data-root. So:
 #   - a cheap gate runs FIRST, before any mount, so an ordinary boot never probes
-#     p8 at all (see the three conditions in do_restore_backup_enhanced());
+#     p8 at all (see the conditions in do_restore_backup_enhanced());
 #   - when p8 must be mounted it is mounted READ-ONLY, the payload is copied to
 #     tmpfs immediately, and the unmount happens inside a subshell whose EXIT
 #     trap guarantees it, with umount -l as the last resort, every outcome logged.
@@ -54,6 +69,9 @@ RESTORE_ENHANCED_DEV="/dev/mmcblk0p8"
 RESTORE_ENHANCED_MNT="/tmp/restore-enhanced-store"
 RESTORE_ENHANCED_STAGE="/tmp/restore-enhanced.stage"
 RESTORE_ENHANCED_BASE=""
+# Where the nested payload lands once the official restore has unpacked
+# /sysupgrade.tgz. Must match BACKUP_ENHANCED_PAYLOAD_DIR in backup-enhanced.sh.
+RESTORE_ENHANCED_PAYLOAD="/tmp/backup-enhanced"
 [ -n "$RESTORE_ENHANCED_VERBOSE" ] || RESTORE_ENHANCED_VERBOSE=0
 
 # ---------------------------------------------------------------------------
@@ -88,6 +106,26 @@ restore_enhanced_mountpoint_of() {
 restore_enhanced_has_payload() {
 	[ -n "$1" ] || return 1
 	[ -f "$1/$RESTORE_ENHANCED_NAME/$RESTORE_ENHANCED_TAR" ]
+}
+
+# Preferred carrier: the nested tarball that rode inside /sysupgrade.tgz.
+# do_mount_root() has already unpacked that file by the time this hook runs, so
+# the payload is sitting in tmpfs and needs no mount, no module and no /opt.
+# Returns 0 and sets RESTORE_ENHANCED_BASE when it is usable.
+restore_enhanced_fetch_nested() {
+	local src="$RESTORE_ENHANCED_PAYLOAD"
+
+	[ -f "$src/$RESTORE_ENHANCED_TAR" ] || return 1
+	rm -rf "$RESTORE_ENHANCED_STAGE"
+	mkdir -p "$RESTORE_ENHANCED_STAGE" 2>/dev/null || return 1
+	cp "$src/$RESTORE_ENHANCED_TAR" "$RESTORE_ENHANCED_STAGE/" 2>/dev/null || {
+		rm -rf "$RESTORE_ENHANCED_STAGE"
+		return 1
+	}
+	cp "$src/$RESTORE_ENHANCED_META" "$RESTORE_ENHANCED_STAGE/" 2>/dev/null
+	cp "$src/$RESTORE_ENHANCED_LIST" "$RESTORE_ENHANCED_STAGE/" 2>/dev/null
+	RESTORE_ENHANCED_BASE="$RESTORE_ENHANCED_STAGE"
+	return 0
 }
 
 # Unmount the temporary store, lazily if a busy mount refuses a plain umount.
@@ -149,12 +187,19 @@ restore_enhanced_fetch_selfmount() {
 	return 0
 }
 
-# Probe chain: /boot -> /recovery -> mountpoint of /dev/mmcblk0p1 -> /opt ->
-# mount /dev/mmcblk0p8 ourselves. Same hardware reality as in
-# backup-enhanced.sh: the first three never match on this board.
+# Locate the payload, cheapest carrier first.
+#   1. the nested tarball already unpacked from CONF_TAR into tmpfs (no I/O risk)
+#   2. an already mounted safe house (/boot, /recovery, mmcblk0p1, /opt)
+#   3. mounting /dev/mmcblk0p8 ourselves - last resort only, because a stray
+#      mount hides /opt from fstools for the whole boot
 # Sets RESTORE_ENHANCED_BASE to the directory holding the three files.
 restore_enhanced_locate() {
 	local cand
+
+	if restore_enhanced_fetch_nested; then
+		restore_enhanced_log "payload found in $RESTORE_ENHANCED_PAYLOAD (rode inside CONF_TAR)"
+		return 0
+	fi
 
 	for cand in /boot /recovery; do
 		if restore_enhanced_is_mount "$cand" && restore_enhanced_has_payload "$cand"; then
@@ -350,12 +395,16 @@ do_restore_backup_enhanced() {
 	# 1. Cheap gate, before any mount. During preinit the safe house lives on a
 	#    partition that is not mounted yet, so probing it costs a mount/unmount
 	#    round trip - and an ordinary boot has nothing to restore. Run only when:
-	#      - /sysupgrade.tgz or /tmp/sysupgrade.tar exists (the official restore
-	#        just ran; 80_mount_root recognises both names), or
+	#      - the nested payload is already on disk: do_mount_root() unpacked it
+	#        from CONF_TAR moments ago, which is the normal upgrade case, or
+	#      - /sysupgrade.tgz or /tmp/sysupgrade.tar existed (belt and braces for
+	#        the window where the archive is still around), or
 	#      - /tmp/.restore-enhanced-force exists (explicit manual test switch), or
 	#      - /opt is already mounted and carries the trigger marker (a normal boot
 	#        never satisfies this: /opt is mounted long after preinit).
-	if [ -f /sysupgrade.tgz ] || [ -f /tmp/sysupgrade.tar ]; then
+	if [ -f "$RESTORE_ENHANCED_PAYLOAD/$RESTORE_ENHANCED_TAR" ]; then
+		reason="payload unpacked from CONF_TAR by the official restore"
+	elif [ -f /sysupgrade.tgz ] || [ -f /tmp/sysupgrade.tar ]; then
 		reason="official restore pending"
 	elif [ -f "$RESTORE_ENHANCED_FORCE" ]; then
 		reason="forced by $RESTORE_ENHANCED_FORCE"
@@ -369,9 +418,9 @@ do_restore_backup_enhanced() {
 	fi
 	restore_enhanced_log "starting: $reason"
 
-	# 2. Only now locate the safe house (may mount p8 read-only and copy off it).
+	# 2. Only now locate the payload (nested copy first, p8 mount as last resort).
 	if ! restore_enhanced_locate; then
-		restore_enhanced_log "no safe house holding $RESTORE_ENHANCED_TAR; nothing restored"
+		restore_enhanced_log "no payload named $RESTORE_ENHANCED_TAR found; nothing restored"
 		restore_enhanced_unmount_store
 		rm -rf "$RESTORE_ENHANCED_STAGE"
 		return 0
