@@ -7,8 +7,8 @@
 # so this file is sourced into the running sysupgrade shell. Two things must
 # therefore happen at source time:
 #   1. stay completely inert when the caller only wants the backup list
-#      (CONF_BACKUP_LIST=1) - otherwise our own `sysupgrade --list-backup`
-#      call would re-source this file and recurse forever;
+#      (CONF_BACKUP_LIST=1) - that path already runs the hooks and prints the
+#      list, and registering ours there would only duplicate the work;
 #   2. append the worker function to $sysupgrade_init_conffiles so that
 #      create_backup_archive() -> run_hooks "$CONFFILES" ... actually calls it.
 #
@@ -33,12 +33,13 @@ BACKUP_ENHANCED_META="meta-enhanced.txt"
 # source-time behaviour
 # ---------------------------------------------------------------------------
 
-if [ "$CONF_BACKUP_LIST" = "1" ] || [ "$BACKUP_ENHANCED_LISTING" = "1" ]; then
+if [ "$CONF_BACKUP_LIST" = "1" ]; then
 	return 0
 fi
 
 # sysupgrade sets this before `include /lib/upgrade`; the fallback covers
 # a manual `. /lib/upgrade/backup-enhanced.sh` and the -b style invocations.
+# Keep the official list builder first: the hook reads the manifest it produces.
 if [ -z "$sysupgrade_init_conffiles" ]; then
 	sysupgrade_init_conffiles="build_list_of_backup_config_files"
 fi
@@ -181,16 +182,30 @@ backup_enhanced_hook() {
 		return 0
 	fi
 
-	# The nested sysupgrade must not re-source this file: both guards above
-	# fire for the child (it sets CONF_BACKUP_LIST=1 itself, and we export
-	# BACKUP_ENHANCED_LISTING=1 for good measure).
-	BACKUP_ENHANCED_LISTING=1 sysupgrade --list-backup > "$work/list" 2> "$work/list.err"
-	if [ ! -s "$work/list" ]; then
-		backup_enhanced_log "sysupgrade --list-backup produced no files; nothing written"
-		sed -n '1,3p' "$work/list.err" > /dev/kmsg 2>/dev/null
+	# Take the manifest from $1: run_hooks already built it and handed it over.
+	#   run_hooks() { local arg="$1"; shift; for func in "$@"; do eval "$func $arg"; done; }
+	# The official build_list_of_backup_config_files is registered first, so the
+	# file is complete by the time this hook runs.
+	#
+	# Never spawn `sysupgrade --list-backup` from here. That child inherits the
+	# exported CONFFILES=/tmp/sysupgrade.conffiles (/sbin/sysupgrade:37) and its
+	# list-backup branch ends with `rm -f "$CONFFILES"` (/sbin/sysupgrade:345).
+	# A child started inside this hook therefore deletes the *parent's* manifest;
+	# the parent's next steps -- `sed -i` then `tar c -T "$CONFFILES"` -- then fail
+	# on the missing file, create_backup_archive() returns non-zero, and sysupgrade
+	# exits via `|| exit` before writing anything. Net effect: the upgrade aborts
+	# silently right after "Saving config files...".
+	if [ ! -s "$conf_list" ]; then
+		backup_enhanced_log "empty manifest ($conf_list); nothing written"
 		rm -rf "$work"
 		return 0
 	fi
+	# Copy, never modify: the parent still needs the original for its own tar.
+	cp "$conf_list" "$work/list" || {
+		backup_enhanced_log "cannot read manifest $conf_list; nothing written"
+		rm -rf "$work"
+		return 0
+	}
 	backup_enhanced_log "manifest: $(wc -l < "$work/list") entries"
 
 	raw=$(backup_enhanced_collect_meta "$work/list" "$work/meta")
