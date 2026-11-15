@@ -56,6 +56,7 @@ clone_repo() {
     local args="$3"
     local target="$4"
     local attempt
+    local ok=0
 
     if [[ -d "${target}" ]]; then
         # 目录已存在，尝试更新
@@ -65,29 +66,38 @@ clone_repo() {
             if git -C "${target}" clean -fdx &&
                 git -C "${target}" restore . &&
                 git -C "${target}" pull; then
+                ok=1
                 break
-            else
-                log 'WARN' "Pull attempt ${attempt} failed, retrying..."
-                sleep $((attempt * 2)) # 递增等待时间：2s, 4s, 6s
             fi
+            log 'WARN' "Pull attempt ${attempt} failed, retrying..."
+            sleep $((attempt * 2)) # 递增等待时间：2s, 4s, 6s
         done
-    else
-        # 目录不存在，克隆新仓库
-        log 'INFO' "Cloning ${repo} ${branch} to ${target}, using args: ${args}"
-        for attempt in {1..3}; do
-            log 'INFO' "Clone attempt ${attempt}..."
-            # 将参数字符串拆分并传递给 git clone
-            if eval "git clone -b '${branch}' ${args} '${repo}' '${target}'"; then
-                break
-            else
-                log 'ERROR' "Clone attempt ${attempt} failed!"
-                sleep $((attempt * 2))
-                rm -rf "${target}" # 清理失败的半成品
-                if [[ "${attempt}" -eq 3 ]]; then
-                    fail "Failed to clone ${repo} after 3 attempts."
-                    return 1
-                fi
-            fi
-        done
+        # 三次都失败时此前会静默 return 0：调用方（diy-part1）据此认为依赖已就绪，
+        # 而实际上 custom-packages 仍是旧内容或 half-cloned 状态，缺陷一路带进固件。
+        if ((ok != 1)); then
+            fail "Failed to update ${repo} at ${target} after 3 attempts."
+            return 1
+        fi
+        return 0
     fi
+
+    # 目录不存在，克隆新仓库
+    log 'INFO' "Cloning ${repo} ${branch} to ${target}, using args: ${args}"
+    for attempt in {1..3}; do
+        log 'INFO' "Clone attempt ${attempt}..."
+        # 将参数字符串拆分并传递给 git clone
+        if eval "git clone -b '${branch}' ${args} '${repo}' '${target}'"; then
+            ok=1
+            break
+        fi
+        log 'ERROR' "Clone attempt ${attempt} failed!"
+        sleep $((attempt * 2))
+        rm -rf "${target}" # 清理失败的半成品
+    done
+
+    if ((ok != 1)); then
+        fail "Failed to clone ${repo} after 3 attempts."
+        return 1
+    fi
+    return 0
 }
