@@ -108,7 +108,7 @@ ensure_exec_permission 'files/usr/bin/restore-packages.sh' ||
   die "ensure_exec_permission 失败（restore-packages.sh 可执行位未设置）"
 
 # 固定 dae 版本
-set_dae_version "2.1.1" "880d56d2f4b80c009c29693a5ec1d6a44b4958aeba6323af879787934ee0e855" ||
+set_dae_version "2.1.2" "f03a6c66a2ce000e36310d66ccd270d05b3cf1dab293f084bcae5da9fa36c33e" ||
   die "set_dae_version 失败（dae 版本未固定，产出将不可复现）"
 
 # 修复 qbittorrent 依赖
