@@ -295,14 +295,32 @@ FW4_PATCH_EOF
 # 刷新 firewall4 fullcone 补丁
 #
 # 参数：
-#   $1 - (可选) 上游源码树根，默认 immortalwrt
+#   $1 - (可选) 上游源码树根；缺省自动探测（见下）
 #
 # 返回：
 #   0 - 成功（含「无需处理」的各种情况）
 #   1 - 写补丁失败
 #######################################
 refresh_firewall4_fullcone_patch() {
-    local root="${1:-immortalwrt}"
+    local root="${1:-}"
+
+    # 缺省根目录必须探测，不能写死 "immortalwrt"：
+    # 调用方 diy-part2.sh 会先 `cd` 到 immortalwrt 根，此时相对路径 immortalwrt
+    # 会解析成 immortalwrt/immortalwrt，补丁永远「找不到」而静默跳过——
+    # 实测就是这么静默失效的。因此两种布局都认：
+    #   · 当前目录是 immortalwrt 根（有 package/ 与 rules.mk）→ root="."
+    #   · 当前目录是仓库根（存在 immortalwrt/ 子目录）      → root="immortalwrt"
+    if [[ -z "${root}" ]]; then
+        if [[ -f "${_FW4_PATCH_REL}" ]]; then
+            root="."
+        elif [[ -f "immortalwrt/${_FW4_PATCH_REL}" ]]; then
+            root="immortalwrt"
+        else
+            log WARN "firewall4 fullcone patch not found in either layout, skipping."
+            return 0
+        fi
+    fi
+
     local patch_file="${root}/${_FW4_PATCH_REL}"
 
     if [[ ! -f "${patch_file}" ]]; then
