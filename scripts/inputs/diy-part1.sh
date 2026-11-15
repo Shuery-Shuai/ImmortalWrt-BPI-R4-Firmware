@@ -32,10 +32,18 @@ else
   exit 1
 fi
 # shellcheck source=scripts/libs/load.sh
-source "${_DIY_LIBS_DIR}/load.sh"
+# load.sh 失败会让 fail/die 未定义，后续所有 || die 都会变成 "command not found"，
+# 真实原因被掩盖。这里必须在脚本最早期就硬失败。
+source "${_DIY_LIBS_DIR}/load.sh" || {
+  printf 'ERROR: 无法加载 libs/load.sh（%s）\n' "${_DIY_LIBS_DIR}" >&2
+  exit 1
+}
 # 加载通用修改索引
 # shellcheck source=scripts/inputs/mods/load.sh
-source "${SCRIPT_DIR}/mods/load.sh"
+source "${SCRIPT_DIR}/mods/load.sh" || {
+  printf 'ERROR: 无法加载 mods/load.sh（%s）\n' "${SCRIPT_DIR}/mods" >&2
+  exit 1
+}
 
 # 切到 immortalwrt/ 根再干活。
 # 本脚本现位于 immortalwrt/diy/（由 copy_custom_files 放进去），而它操作的一切都在**上一级**：
@@ -75,12 +83,14 @@ log INFO "Cloning third-party packages for ImmortalWrt..."
 clone_repo 'https://github.com/anoixa/bpi-r4-pwm-fan' \
     'main' \
     '--depth=1' \
-    'custom-packages/bpi-r4-pwm-fan'
+    'custom-packages/bpi-r4-pwm-fan' ||
+    die "clone_repo 失败：bpi-r4-pwm-fan"
 
 clone_repo 'https://github.com/brainiac19/openwrt-packages' \
     'main' \
     '--filter=blob:none --sparse --depth=1' \
-    'custom-packages/brainiac19'
+    'custom-packages/brainiac19' ||
+    die "clone_repo 失败：openwrt-packages"
 (
     cd 'custom-packages/brainiac19' || exit 1
     git sparse-checkout set fonts
@@ -89,45 +99,58 @@ clone_repo 'https://github.com/brainiac19/openwrt-packages' \
 clone_repo 'https://github.com/rockjake/luci-app-fancontrol' \
     'main' \
     '--depth=1' \
-    'custom-packages/luci-app-fancontrol'
+    'custom-packages/luci-app-fancontrol' ||
+    die "clone_repo 失败：luci-app-fancontrol"
 
 clone_repo 'https://github.com/gdy666/luci-app-lucky' \
     'main' \
     '--depth=1' \
-    'custom-packages/luci-app-lucky'
+    'custom-packages/luci-app-lucky' ||
+    die "clone_repo 失败：luci-app-lucky"
 
 clone_repo 'https://github.com/zhanghua000/luci-app-nginx' \
     'master' \
     '--depth=1' \
-    'custom-packages/luci-app-nginx'
+    'custom-packages/luci-app-nginx' ||
+    die "clone_repo 失败：luci-app-nginx"
 
 clone_repo 'https://github.com/Shuery-Shuai/LuciFanXpert' \
     'main' \
     '--depth=1' \
-    'custom-packages/LuciFanXpert'
+    'custom-packages/LuciFanXpert' ||
+    die "clone_repo 失败：LuciFanXpert"
 
 clone_repo 'https://github.com/Shuery-Shuai/LuciRtfwUpgrade' \
     'main' \
     '--depth=1' \
-    'custom-packages/LuciRtfwUpgrade'
+    'custom-packages/LuciRtfwUpgrade' ||
+    die "clone_repo 失败：LuciRtfwUpgrade"
 
 clone_repo 'https://github.com/vernesong/OpenClash' \
     'dev' \
     '--depth=1' \
-    'custom-packages/openclash'
+    'custom-packages/openclash' ||
+    die "clone_repo 失败：OpenClash"
 
 clone_repo 'https://github.com/sbwml/openwrt-qBittorrent' \
     'master' \
     '--depth=1' \
-    'custom-packages/qbittorrent'
+    'custom-packages/qbittorrent' ||
+    die "clone_repo 失败：openwrt-qBittorrent"
 
 clone_repo 'https://github.com/sundaqiang/openwrt-packages-backup' \
     'main' \
     '--filter=blob:none --sparse --depth=1' \
-    'custom-packages/sundaqiang'
+    'custom-packages/sundaqiang' ||
+    die "clone_repo 失败：openwrt-packages-backup"
 (
     cd 'custom-packages/sundaqiang' || exit 1
     git sparse-checkout set luci/applications/luci-app-easyupdate
 )
 
 log INFO "Part 1 for ImmortalWrt completed."
+
+# 显式以 0 结束。此前脚本退出码取决于最后一条命令，而上一条恰是稀疏检出子 shell——
+# 它失败时整脚本会以非 0 结束，看似"接住了"，但每个 clone_repo 的失败却被完全吞掉。
+# 现在 clone_repo 一律 || die，能执行到这里即全部成功，故显式 exit 0 让语义确定。
+exit 0
