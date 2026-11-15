@@ -115,7 +115,7 @@ set_dae_version "2.1.2" "f03a6c66a2ce000e36310d66ccd270d05b3cf1dab293f084bcae5da
 fix_qbittorrent_deps || die "fix_qbittorrent_deps 失败（qBittorrent 依赖未修复）"
 
 # 固定 fan2go 版本
-set_fan2go_version "0.15.0" auto || die "set_fan2go_version 失败（fan2go 版本未固定）"
+set_fan2go_version "0.16.0" auto || die "set_fan2go_version 失败（fan2go 版本未固定）"
 
 # 修复 libnl-tiny 编译警告
 fix_libnl_tiny_compile || die "fix_libnl_tiny_compile 失败（libnl-tiny 编译修复未生效）"
