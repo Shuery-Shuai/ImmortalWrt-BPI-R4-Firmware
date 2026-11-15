@@ -11,6 +11,7 @@
 #       8. 重命名 qBittorrent 并修复依赖（ImmortalWrt 专用）
 #       9. 固定 fan2go 版本
 #      10. 修复 libnl-tiny 编译错误
+#      11. 刷新 firewall4 的 fullcone 补丁（适配上游 firewall4 >= 2026-11-08）
 # 依赖: scripts/libs/ + scripts/inputs/mods/ 的各个修改函数
 #
 # 定位约定：SCRIPT_DIR 取本文件所在目录，因此 libs/ 与 mods/ 必须与它同级。
@@ -95,5 +96,10 @@ fix_libnl_tiny_compile
 
 # 向 LuCI 模板注入「备份软件包恢复失败」提示（构建期补丁，不改 feeds 源文件）
 apply_restore_pkg_notice_patch
+
+# 刷新 firewall4 的 fullcone 补丁：上游把 firewall4 升到 2026-11-08 后，
+# ImmortalWrt 自带的补丁因上下文失效而无法应用（issue #2526）。
+# mod 只在检测到新版时替换补丁，旧版与上游修复后都会自动跳过。
+refresh_firewall4_fullcone_patch
 
 log INFO "Part 2 for ImmortalWrt completed."
