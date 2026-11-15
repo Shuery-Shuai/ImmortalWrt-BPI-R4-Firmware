@@ -22,8 +22,19 @@
 #     3. 把失败包名、按类去重后的失败原因内联成
 #        window.__RESTORE_PKG_NOTICE__ = {...}，并附内容指纹（FUSE 哈希 + 字节数）；
 #     4. 文件不存在 / 为空 / 没有可用记录时【不输出任何内容】。
-#   真正的界面逻辑在 files/www/luci-static/resources/restore-pkg-notice.js，
+#   真正的界面逻辑在 scripts/inputs/mods/assets/restore-pkg-notice.js，
 #   注入的这一行只负责把数据送到前端（登录页不保证加载得到 LuCI 的 JS 模块）。
+#
+# 前端资源由本 mod 自己投放（不再放仓库 files/）:
+#   资源随 mod 一起放在 assets/ 下，注入成功后才复制到 immortalwrt/files/
+#   www/luci-static/resources/。这样「注入」与「前端资源」同生共死：
+#     · 注入失败 => 返回非 0，且不投放 JS，固件里不会留下永不执行的死文件；
+#     · 取消本功能 => 删掉本 mod 与 assets/ 即可，不必再去 files/ 里找一个
+#       容易被遗忘的 js（旧做法就是这么埋下残留风险的）。
+#   时机上必须由 mod 投放而不是放 files/：files/ 在 copy_custom_files 阶段就被整体
+#   复制进 immortalwrt/，早于 DIY PART2；mod 此时往 immortalwrt/files/ 写，仍在
+#   打包 rootfs 之前，因此会正常进固件。这与 generate-release-info.sh 写
+#   immortalwrt/files/etc/uci-defaults/99-release-info 的模式一致。
 #
 # 幂等与断言（本脚本的硬约束）:
 #   · 注入前先用 grep -F 断言锚点原文存在；锚点不命中一律 log ERROR 并返回非 0，
@@ -165,6 +176,59 @@ _restore_pkg_notice_patch_one() {
 }
 
 #######################################
+# 投放前端资源到 immortalwrt/files/（供打包进 rootfs）
+#
+# 资源随 mod 放在自身目录下的 assets/，不预先存在于仓库 files/。
+# 这样「注入模板」与「投放 js」是同一件事的两半：注入没成功就不会有 js。
+#
+# 源路径以本文件所在目录解析，因此无论调用方 cwd 在哪都能找到 assets/。
+#
+# 参数：
+#   $1 - 目标根（immortalwrt 根，即 files/ 的父目录）
+#
+# 返回：
+#   0 - 已投放（或目标内容已是最新）
+#   1 - 源文件缺失 / 目录创建或复制失败
+#######################################
+_restore_pkg_notice_install_asset() {
+    local root="$1"
+    local src_dir=''
+    local src=''
+    local dst_dir=''
+    local dst=''
+
+    src_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/assets" || return 1
+    src="${src_dir}/restore-pkg-notice.js"
+    dst_dir="${root}/files/www/luci-static/resources"
+    dst="${dst_dir}/restore-pkg-notice.js"
+
+    if [[ ! -f "${src}" ]]; then
+        log ERROR "restore-pkg-notice: 前端资源缺失：${src}"
+        return 1
+    fi
+
+    if ! mkdir -p "${dst_dir}"; then
+        log ERROR "restore-pkg-notice: 无法创建目标目录：${dst_dir}"
+        return 1
+    fi
+
+    # 用 cp -f 而不是软链：rootfs 打包只收实体文件，软链在目标树里会断。
+    if ! cp -f -- "${src}" "${dst}"; then
+        log ERROR "restore-pkg-notice: 复制前端资源失败：${src} -> ${dst}"
+        return 1
+    fi
+
+    # 复核：目标必须存在且与源逐字节一致（防止 cp 半途失败留下截断文件）。
+    if ! cmp -s -- "${src}" "${dst}"; then
+        log ERROR "restore-pkg-notice: 前端资源复制后不一致：${dst}"
+        return 1
+    fi
+
+    log INFO "restore-pkg-notice: 已投放前端资源 ${dst}"
+    return 0
+}
+
+#######################################
 # 对全部目标模板应用注入
 #
 # 功能:
@@ -174,11 +238,14 @@ _restore_pkg_notice_patch_one() {
 #     B. argon footer_login.ut —— argon 登录页（主题自带 sysauth，不经过 luci-base footer.ut）
 #        锚点是 include page_scripts 的那一行，位于 </body> 之前。
 #
+#   两个锚点都注入成功后，才投放前端资源（js）。顺序刻意如此：
+#   注入失败时不应留下永远不会被引用的 js 死文件。
+#
 # 无参数。调用方 cwd 必须是 immortalwrt 根。
 #
 # 返回：
-#   0 - 两个目标均已注入（或此前已注入）
-#   1 - 任一目标失败
+#   0 - 两个目标均已注入（或此前已注入）且前端资源已投放
+#   1 - 任一目标失败，或前端资源投放失败
 #
 # 示例：
 #   apply_restore_pkg_notice_patch
@@ -223,10 +290,17 @@ apply_restore_pkg_notice_patch() {
 
     rm -rf -- "${payload_dir}"
 
+    # 只有注入全部成功才投放前端资源，避免留下无引用的死文件。
+    if [[ "${rc}" -eq 0 ]]; then
+        if ! _restore_pkg_notice_install_asset '.'; then
+            rc=1
+        fi
+    fi
+
     if [[ "${rc}" -eq 0 ]]; then
         log INFO "restore-pkg-notice: LuCI 恢复失败提示注入完成"
     else
-        log ERROR "restore-pkg-notice: LuCI 恢复失败提示注入未全部成功"
+        log ERROR "restore-pkg-notice: LuCI 恢复失败提示注入未全部成功（未投放前端资源）"
     fi
 
     return "${rc}"

@@ -1,6 +1,11 @@
 /*
- * 文件: files/www/luci-static/resources/restore-pkg-notice.js
+ * 文件: scripts/inputs/mods/assets/restore-pkg-notice.js
  * 用途: 在 LuCI 页面（含未登录的登录页）弹出「备份软件包恢复失败」提示。
+ *
+ * 本文件不直接放在仓库 files/ 下，而是由 14-luci-restore-pkg-notice.sh 在构建期
+ * 复制到 immortalwrt/files/www/luci-static/resources/ 再打包进固件。这样前端资源与
+ * 模板注入同生共死：注入失败就不投放本文件，固件里不会留下永不执行的死文件；
+ * 取消该功能时只需删掉 mod 与 assets/，不必再去 files/ 里找这份容易被遗忘的 js。
  *
  * 数据来源:
  *   服务端在页面里内联一段 script，把失败记录挂到 window.__RESTORE_PKG_NOTICE__，
