@@ -8,7 +8,7 @@
 ## 用法
 
 - 本仓库已是可直接使用的构建仓库，不需要「使用模板」生成副本；fork 后要先自建签名密钥，
-  见根 README 的「软件包签名密钥 → 移植（fork 本仓库）」。
+  见根 README 的「移植教程 · 第 1 步：准备密钥与仓库设置」。
 - 源码为 [ImmortalWrt](https://github.com/immortalwrt/immortalwrt)，目标机型与包选择由仓库根的 `.config`、
   `files/`、`libs/` 决定，不需要另行生成 `.config` 文件。
 - 在 Actions 页面选择 `ImmortalWrt Builder`，点 `Run workflow` 手动触发；日常由 `Update Checker`

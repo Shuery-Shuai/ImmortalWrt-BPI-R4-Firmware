@@ -22,6 +22,9 @@
 #   MAX_LOG_FILES         保留的历史日志文件数量 [默认: 5]
 #   RESTORE_STATE_FILE    尝试状态文件 [默认: /etc/backup/restore_pkg.state]
 #   RESTORE_FAILURE_FILE  失败记录 NDJSON [默认: /etc/backup/restore_pkg_failures.ndjson]
+#   RESTORE_NOTICE_FILE   提醒记录 NDJSON [默认: /etc/backup/restore_pkg_notices.ndjson]
+#                         与失败记录分开存：这里只放"不需要重试"的信息（如包已更名），
+#                         混进失败记录会让状态机误判成"二次失败"而锁死，且全量成功时会被一并删除。
 #   REBOOT_CMD            重启命令 [默认: reboot -f]
 #
 # 返回值：
@@ -66,6 +69,9 @@ readonly LOG_DEBUG=0 LOG_INFO=1 LOG_WARN=2 LOG_ERROR=3
 # 失败记录 schema 版本
 readonly FAILURE_SCHEMA="openwrt-apk-failure/1"
 
+# 提醒记录 schema 版本
+readonly NOTICE_SCHEMA="openwrt-apk-notice/1"
+
 # 可通过环境变量覆盖默认配置
 LOG_LEVEL=${LOG_LEVEL:-$LOG_INFO}
 LOG_TO_CONSOLE=${LOG_TO_CONSOLE:-0}
@@ -80,6 +86,14 @@ RESTORE_STATE_FILE="${RESTORE_STATE_FILE:-/etc/backup/restore_pkg.state}"
 
 # 失败记录（扁平 NDJSON，overlay，重启后保留）
 RESTORE_FAILURE_FILE="${RESTORE_FAILURE_FILE:-/etc/backup/restore_pkg_failures.ndjson}"
+
+# 提醒记录（扁平 NDJSON，overlay，重启后保留）
+#
+# 与失败记录刻意分开存：这里记的是「不需要重试、也不该让用户以为恢复失败」的信息
+# （例如包已更名）。若混进失败记录，会同时踩两个坑：
+#   1) failure_count > 0 会让状态机进入「二次失败终态保护」，把正常恢复锁死；
+#   2) 全部成功时 state_clear 会整份删除失败记录，提醒随之消失。
+RESTORE_NOTICE_FILE="${RESTORE_NOTICE_FILE:-/etc/backup/restore_pkg_notices.ndjson}"
 
 # 重启命令（测试时可用环境变量替换，避免真的重启）
 REBOOT_CMD="${REBOOT_CMD:-reboot -f}"
@@ -130,14 +144,19 @@ show_help() {
   第一次运行：全量 best-effort 安装，有失败包则写入失败记录并重启。
   重启后    ：只重试上次失败的包。
   二次仍失败：不再重启，保留失败记录，登录 LuCI 时弹窗提示。
+  包名变动  ：安装前按内置对照表改写清单——
+              改名（如 noto-fonts-cjk）自动换成新名继续装，拆分出的包全部装齐；
+              合并（如 luci-app-argon-config）功能已并入现有包，直接丢弃该项。
+              两类都记入提醒记录，不算失败、不触发重启。
 
 相关文件:
   状态文件   $RESTORE_STATE_FILE
   失败记录   $RESTORE_FAILURE_FILE
+  提醒记录   $RESTORE_NOTICE_FILE
 
 环境变量:
   LOG_LEVEL, LOG_TO_CONSOLE, MAX_LOG_FILES,
-  RESTORE_STATE_FILE, RESTORE_FAILURE_FILE, REBOOT_CMD
+  RESTORE_STATE_FILE, RESTORE_FAILURE_FILE, RESTORE_NOTICE_FILE, REBOOT_CMD
 EOF
 }
 
@@ -312,6 +331,256 @@ failure_packages() {
         awk 'NF && !seen[$0]++' >"$out_file" 2>/dev/null || true
 
     [ -s "$out_file" ]
+}
+
+#===============================================================================
+# 已更名软件包的提醒
+#===============================================================================
+
+#-----------------------------------------------------------------------
+# 函数：_renamed_replacement
+# 描述：查「旧包名 → 新包名」的对照表。只登记**上游确实改了名**的包，不靠猜。
+#
+#       为什么需要它：用户备份里留着旧包名，而旧名已随原第三方仓库失效，
+#       恢复时必然报「no such package」——先白重启一轮，再弹一句「包可能已更名」。
+#       这里提前识别，把旧名换成确切的新包名继续安装，用户无需手动处理。
+#
+#       为什么敢自动替换：新名在 feed 里确实能装到，替用户装好等于还原他备份时
+#       的状态，比丢下一句提示让他自己再来一次更有用。一个旧目录拆成多个包时
+#       （noto-fonts-cjk -> sans / sans-mono / serif）**全部列出**，少装一个就
+#       少一种字形，等于悄悄削减了他原本拥有的能力。
+#       唯一的代价是体积，这也是这些包在 .config 里保持 =m 而非 =y 的原因。
+#
+# 参数：$1 包名
+# 返回：0 = 已更名，stdout 输出新包名（**空格分隔，可能多个**）；1 = 不在表中
+#-----------------------------------------------------------------------
+_renamed_replacement() {
+    case "$1" in
+    # 一个旧目录可能拆成多个独立包：fonts/noto-fonts-cjk 产出下面三个，
+    # 三者的 install 段各自装不同字体文件，缺一个就少一种字形。
+    # 因此这里必须全部列出、全部安装，不能只挑最常用的那个。
+    noto-fonts-cjk)
+        printf '%s' 'noto-fonts-cjk-sans noto-fonts-cjk-sans-mono noto-fonts-cjk-serif'
+        ;;
+    noto-fonts-emoji) printf '%s' 'noto-fonts-color-emoji' ;;
+    luci-app-argon-config) printf '%s' 'luci-theme-argon' ;;
+    *) return 1 ;;
+    esac
+}
+
+#-----------------------------------------------------------------------
+# 函数：_rename_is_alias
+# 描述：判断某个旧包名是否只是 PROVIDES 别名（旧名仍能被 apk 解析）。
+#
+#       两类变动的处理必须不同，混为一谈会出错：
+#         · 真·改名（如 noto-fonts-cjk）：旧名已失效，安装必然失败。
+#           换成新名继续装，提到的那几个包一个都不能少。
+#         · 别名合并（如 luci-app-argon-config）：主题包用 PKG_PROVIDES 声明了
+#           这个名字，apk add 旧名能成功解析并装出 luci-theme-argon。而
+#           luci-theme-argon 本就在 .config 里以 =y 内置，功能已经在了——
+#           再装一遍没有意义，应当直接丢弃该项。
+#       因此别名类丢弃、真改名类换名安装。
+#
+# 参数：$1 旧包名
+# 返回：0 = 是别名（应丢弃）；1 = 真改名（应换名安装）
+#-----------------------------------------------------------------------
+_rename_is_alias() {
+    case "$1" in
+    luci-app-argon-config) return 0 ;;
+    *) return 1 ;;
+    esac
+}
+
+#-----------------------------------------------------------------------
+# 函数：record_notice
+# 描述：向提醒记录追加一条事件（扁平 NDJSON，风格同失败记录，但独立文件）
+#       同类别同包已记录过则跳过，重复执行不会堆叠重复条目。
+# 参数：$1 category  $2 package  $3 replacement  $4 message
+# 返回：0 已记录或已存在；1 写入失败
+#-----------------------------------------------------------------------
+record_notice() {
+    local category="$1"
+    local pkg="$2"
+    local replacement="$3"
+    local message="$4"
+    local dir needle
+
+    dir=$(dirname "$RESTORE_NOTICE_FILE")
+    mkdir -p "$dir" 2>/dev/null || true
+
+    # 去重：本函数写出的行没有空格，字段顺序固定为 category 前、package 后，
+    # 因此固定子串即可定位，不必上正则（包名里的 . + - 会被当元字符）。
+    needle="\"category\":\"$category\",\"package\":\"$pkg\""
+    if [ -f "$RESTORE_NOTICE_FILE" ] && grep -qF -- "$needle" "$RESTORE_NOTICE_FILE" 2>/dev/null; then
+        return 0
+    fi
+
+    local line
+    line=$(printf '{"schema":"%s","ts":"%s","host":"%s","arch":"%s","category":"%s","package":"%s","replacement":"%s","message":"%s"}' \
+        "$NOTICE_SCHEMA" \
+        "$(date '+%Y-%m-%dT%H:%M:%S%z')" \
+        "$(json_escape "$(hostname 2>/dev/null || echo unknown)")" \
+        "$(json_escape "$(get_apk_arch)")" \
+        "$category" \
+        "$(json_escape "$pkg")" \
+        "$(json_escape "$replacement")" \
+        "$(json_escape "$message")")
+
+    if printf '%s\n' "$line" >>"$RESTORE_NOTICE_FILE" 2>/dev/null; then
+        log_debug "$log_file" "已记录提醒事件: $line"
+        return 0
+    fi
+    log_error "$log_file" "无法写入提醒记录: $RESTORE_NOTICE_FILE"
+    return 1
+}
+
+#-----------------------------------------------------------------------
+# 函数：_prune_resolved_notices
+# 描述：删掉「用户已经把新包装上」的提醒条目，避免提示永远挂着。
+#
+#       提醒的目的是引导用户换包。一旦 replacement 已经装好，这条提醒就过期了——
+#       留着它只会让用户每次登录都看到一条待办，而事情其实早已办完。
+#       因此每次运行先自清理一次，不需要用户手动删文件。
+#
+#       只在 apk 可用时判定；apk 不可用就原样保留（宁可多提醒，不可误删）。
+# 参数：无（读 $RESTORE_NOTICE_FILE）
+# 返回：0 总是成功（清理失败不影响主流程）
+#-----------------------------------------------------------------------
+_prune_resolved_notices() {
+    [ -f "$RESTORE_NOTICE_FILE" ] || return 0
+    [ -s "$RESTORE_NOTICE_FILE" ] || return 0
+    command -v apk >/dev/null 2>&1 || return 0
+
+    local tmp="${RESTORE_NOTICE_FILE}.prune"
+    : >"$tmp" || return 0
+
+    local line pkg replacement removed=0
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+
+        # 取 package / replacement 两个字段；取不到就原样保留，不做猜测。
+        pkg=$(printf '%s' "$line" | sed -n 's/.*"package":"\([^"]*\)".*/\1/p')
+        replacement=$(printf '%s' "$line" | sed -n 's/.*"replacement":"\([^"]*\)".*/\1/p')
+
+        # replacement 可能是空格分隔的多个包名（一个旧目录拆成多个包）。
+        # 判据必须是「全部装好」才算过期：只看第一个会在其余几个还没装时就误删提醒，
+        # 用户于是失去"当初那个包该换成什么"的唯一线索。
+        if [ -n "$replacement" ]; then
+            _rp_all_done=1
+            for _rp_one in $replacement; do
+                [ -n "$_rp_one" ] || continue
+                if ! apk info --installed "$_rp_one" >/dev/null 2>&1; then
+                    _rp_all_done=0
+                    break
+                fi
+            done
+            if [ "$_rp_all_done" -eq 1 ]; then
+                removed=$((removed + 1))
+                continue
+            fi
+        fi
+        printf '%s\n' "$line" >>"$tmp" || true
+    done <"$RESTORE_NOTICE_FILE"
+
+    mv -f "$tmp" "$RESTORE_NOTICE_FILE" 2>/dev/null || {
+        rm -f "$tmp" 2>/dev/null || true
+        return 0
+    }
+
+    # 全部过期时删掉空文件：前端读到空文件同样不弹，但空文件留着没有意义。
+    if [ ! -s "$RESTORE_NOTICE_FILE" ]; then
+        rm -f "$RESTORE_NOTICE_FILE" 2>/dev/null || true
+    fi
+
+    if [ "$removed" -gt 0 ]; then
+        log_info "$log_file" "已清理 ${removed} 条过期提醒（对应的新包已安装）"
+    fi
+    return 0
+}
+#-----------------------------------------------------------------------
+# 函数：_apply_rename_table
+# 描述：按对照表就地改写安装清单。名字取 apply 而非 demote：两种策略里只有
+#       「合并」是丢弃，「改名」是换名后继续安装，用 demote（降级/摘除）会误导。
+#       分两种策略（见 _renamed_replacement / _rename_is_alias）：
+#         · 已合并（别名）→ 直接丢弃。功能已并入另一个包，旧名只是别名，
+#           再装一遍没有意义；合并后的包本就由 .config 内置。
+#         · 已改名         → 就地换成新包名继续安装。新名在 feed 里能装到，
+#           用户不必再手动装一次。
+#       在清单生成后、安装前调用，覆盖「首次全量」与「二次重试」两个入口。
+# 参数：$1 包列表文件（就地改写）  $2 日志文件
+# 返回：0 成功；1 改写失败
+# 副作用：_rp_demoted_count（丢弃数）、_rp_replaced_count（改名替换数）
+#-----------------------------------------------------------------------
+_apply_rename_table() {
+    local src_list="$1"
+    local log_file="$2"
+
+    _rp_demoted_count=0
+    _rp_replaced_count=0
+    [ -s "$src_list" ] || return 0
+
+    local kept="${src_list}.kept"
+    : >"$kept" || return 1
+
+    local pkg replacement
+    while IFS= read -r pkg; do
+        [ -n "$pkg" ] || continue
+
+        # 先清空再取：_renamed_replacement 未命中时返回 1 且不输出，
+        # 若直接 if assignment=$(...)，未命中会让变量保持上一次的旧值（或未定义），
+        # 后续拼接日志时就会引用到错的新包名。
+        replacement=''
+        if replacement=$(_renamed_replacement "$pkg") && [ -n "$replacement" ]; then
+            if _rename_is_alias "$pkg"; then
+                # 合并类：功能已并入另一个包，旧名只是别名。直接丢弃——
+                # 再装一遍旧名只会把合并后的包重复声明一次，没有意义；
+                # 而合并后的包本就在固件里（例如 luci-theme-argon 由 .config 内置）。
+                record_notice "merged_package" "$pkg" "$replacement" \
+                    "软件包已合并入 ${replacement}：${pkg} 的功能现由它提供，无需单独安装。" || true
+                log_info "$log_file" "包名已合并，丢弃该项: ${pkg}（功能由 ${replacement} 提供）"
+                _rp_demoted_count=$((_rp_demoted_count + 1))
+            else
+                # 改名类：旧名在 feed 里已不存在，但新名可以直接装。
+                # replacement 可能含多个包名（一个旧目录拆成多个包），逐个写入清单——
+                # 少装一个就等于少一种字形，而这正是用户当初装这个包的目的。
+                # 说明里用「、」分隔包名，避免三个包名挤在一起难以辨认；
+                # replacement 字段本身仍保持空格分隔（prune 靠它逐词判是否装齐）。
+                _rp_desc=$(printf '%s' "$replacement" | tr ' ' '、')
+                record_notice "renamed_package" "$pkg" "$replacement" \
+                    "软件包已更名：${pkg} 现拆分为 ${_rp_desc}，已自动改用新包名安装。" || true
+                log_info "$log_file" "包名已变更，改用新名安装: ${pkg} -> ${replacement}"
+                for _rp_new in $replacement; do
+                    [ -n "$_rp_new" ] || continue
+                    printf '%s\n' "$_rp_new" >>"$kept" || true
+                done
+                _rp_replaced_count=$((_rp_replaced_count + 1))
+            fi
+        else
+            printf '%s\n' "$pkg" >>"$kept" || true
+        fi
+    done <"$src_list"
+
+    # 同一个新包名可能被多个旧名映射到（或列表里本来就有），去重保序后写回。
+    if ! awk 'NF && !seen[$0]++' "$kept" >"${kept}.dedup" 2>/dev/null; then
+        rm -f "$kept" "${kept}.dedup" 2>/dev/null || true
+        log_error "$log_file" "无法去重安装清单"
+        return 1
+    fi
+
+    if ! mv -f "${kept}.dedup" "$src_list" 2>/dev/null; then
+        rm -f "$kept" "${kept}.dedup" 2>/dev/null || true
+        log_error "$log_file" "无法写回安装清单: $src_list"
+        return 1
+    fi
+    rm -f "$kept" 2>/dev/null || true
+
+    if [ "$_rp_demoted_count" -gt 0 ]; then
+        log_info "$log_file" "已丢弃 $_rp_demoted_count 个已合并项（功能由合并后的包提供）"
+    fi
+    if [ "$_rp_replaced_count" -gt 0 ]; then
+        log_info "$log_file" "已改用新包名 $_rp_replaced_count 个（无需手动处理）"
+    fi
+    return 0
 }
 
 #===============================================================================
@@ -676,7 +945,21 @@ _resolve_run_plan() {
         fi
     fi
 
+    # 先清掉已经过期的提醒（对应新包已装好），再在下面登记本轮新发现的。
+    _prune_resolved_notices || true
+
+    # 清单已定：把「已更名」的包摘出去，只记提醒、不安装。
+    # 必须在清单生成后、网络检测前执行：这一步纯本地判断，不依赖网络；
+    # 若拖到安装阶段，那两个包会先失败一次、再触发一次无意义的重启。
+    if ! _apply_rename_table "$_rp_work_list" "$log_file"; then
+        rm -f "$_rp_work_list"
+        log_error "$log_file" "摘除更名包时失败，中止本轮以暴露问题"
+        log_exit_summary "$log_file" 1 "$_rp_start_time"
+        return 1
+    fi
+
     if [ ! -s "$_rp_work_list" ]; then
+        # 清单里全是已更名包：没有要装的东西，但提醒已经写好了，按成功结束。
         log_info "$log_file" "本轮没有需要安装的包"
         rm -f "$_rp_work_list"
         log_exit_summary "$log_file" 0 "$_rp_start_time"
