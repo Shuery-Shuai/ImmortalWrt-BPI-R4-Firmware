@@ -338,6 +338,33 @@ prepare_inputs_fingerprint() {
     fi
   done
 
+
+  # feeds 状态：diy-part2 里的 set_dae_version / fix_* 等改的是 feeds 下的 Makefile，
+  # 而 feeds 目录本身不在上面的输入清单里。若 feeds 被 update/reset 回上游版本，
+  # 那些改写就丢了，但指纹看不出变化，于是 prepare 被幂等跳过——改写永远不会重放，
+  # 构建「成功」却用着旧版本（实测：报告成功，实际编译的是 dae 2.0.0 而不是 2.1.3）。
+  # 因此把每个 feed 的 HEAD 与工作区是否脏也纳入指纹：feeds 一旦被重置，指纹随之改变，
+  # prepare 必须重跑，改写得以重新应用。
+  if [[ -d "immortalwrt/feeds" ]]; then
+    local feed_state="" feed_dir feed_head feed_dirty
+    # 固定顺序遍历：目录列举顺序不同会让同一状态算出不同指纹。
+    while IFS= read -r feed_dir; do
+      feed_head="$(git -C "${feed_dir}" rev-parse HEAD 2>/dev/null || printf 'no-git')"
+      # 有未提交改动说明改写还在；干净说明改写已丢失或尚未应用。
+      if git -C "${feed_dir}" diff --quiet 2>/dev/null &&
+        git -C "${feed_dir}" diff --cached --quiet 2>/dev/null; then
+        feed_dirty="clean"
+      else
+        feed_dirty="dirty"
+      fi
+      feed_state+="${feed_dir##*/}=${feed_head}:${feed_dirty}"$'\n'
+    done < <(find immortalwrt/feeds -mindepth 1 -maxdepth 1 -type d 2>/dev/null | LC_ALL=C sort)
+    digest="$(printf '%s' "${feed_state}" | sha256sum | cut -d' ' -f1)"
+    inputs+=("immortalwrt-feeds:${digest:-unreadable}")
+  else
+    inputs+=("immortalwrt-feeds:absent")
+  fi
+
   printf '%s\n' "${inputs[@]}" | sha256sum | cut -d' ' -f1
 }
 
