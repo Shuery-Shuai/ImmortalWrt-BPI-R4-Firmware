@@ -55,6 +55,23 @@
                 '确认包名是否正确：该包可能已更名、合并进其它包，或已被上游移除。',
                 '执行 apk update 重新拉取完整索引；若仍缺失，需要更换包含该包的源。'
             ]
+        },
+        renamed_package: {
+            title: '软件包已更名（已自动处理）',
+            cause: '这些包在上游改了名字，旧名字已不存在。恢复时已自动改用新包名安装，无需手动处理。',
+            fix: [
+                '无需操作：拆分出的全部新包都已按原备份装好。',
+                '例如中日韩字体拆成 sans / sans-mono / serif 三个包，三个都会安装。',
+                '本提示在下次系统启动时自动清除。'
+            ]
+        },
+        merged_package: {
+            title: '软件包已合并（已自动跳过）',
+            cause: '这些包已被合并进另一个包，旧名字只是别名。恢复时已自动丢弃该项，不再重复安装。',
+            fix: [
+                '无需任何操作：功能已随合并后的包一起提供。',
+                '下次查看已安装列表时，会看到合并后的名字，这是正常现象。'
+            ]
         }
     };
 
@@ -95,6 +112,36 @@
         return out;
     }
 
+    /*
+     * 从更名说明里取旧包名。
+     * 服务端把说明写成「软件包已更名：<旧> 现名为 <新>，……」，这里只切出 <旧>。
+     * 取不到就返回空串——调用方会退化为不排除任何包（最坏是清单多一项），
+     * 而不是猜一个可能错的名字去排除真正的失败项。
+     */
+    function renameOldName(message) {
+        var text = str(message);
+        /* 两种说明前缀：改名用「现名为」，合并用「现由…提供」。
+         * 前缀对不上就返回空串，调用方会退化为不排除任何包。 */
+        var kinds = [
+            { head: '软件包已更名：', sep: ' 现名为' },
+            { head: '软件包已合并：', sep: ' 现由' }
+        ];
+
+        for (var k = 0; k < kinds.length; k++) {
+            var head = kinds[k].head;
+
+            if (text.indexOf(head) !== 0) {
+                continue;
+            }
+
+            var rest = text.slice(head.length);
+            var cut = rest.indexOf(kinds[k].sep);
+
+            return cut > 0 ? rest.slice(0, cut) : '';
+        }
+
+        return '';
+    }
     /* 读取 localStorage：隐私模式/被禁用时会抛异常，一律当作"没有存过"。 */
     function readStored() {
         try {
@@ -147,7 +194,32 @@
         var byClass = {};
         var groupList = [];
 
-        /* 包名去重并截断。 */
+        /* 先把更名类涉及的旧包名收集起来：服务端的 packages 列表是"失败 + 更名"的并集，
+         * 而"失败的软件包"清单里不该出现只是改了名的包——那会让人以为它安装失败。 */
+        var renameNames = {};
+        var preEntries = arr(data.entries);
+
+        for (i = 0; i < preEntries.length; i++) {
+            item = preEntries[i] || {};
+
+            if (tidy(item.class, 60) === 'renamed_package' || tidy(item.class, 60) === 'merged_package') {
+                /* 结构化字段优先：服务端会在 target 里放新名，在 message 里放整句说明。
+                 * 旧包名只从 message 的前缀解析，且解析失败时不影响主流程
+                 * （最坏情况是失败清单里多出一个包名，不会误删真正的失败项）。 */
+                var renamed = tidy(item.target, 120);
+                var oldName = tidy(renameOldName(item.message), 120);
+
+                if (oldName) {
+                    renameNames[oldName] = true;
+                }
+
+                if (renamed) {
+                    renameNames[renamed] = true;
+                }
+            }
+        }
+
+        /* 包名去重并截断；更名类涉及的包名排除在"失败清单"之外。 */
         var pkgs = arr(data.packages);
 
         for (i = 0; i < pkgs.length && out.packages.length < MAX_PACKAGES; i++) {
@@ -158,6 +230,11 @@
             }
 
             seenPkg[name] = true;
+
+            if (Object.prototype.hasOwnProperty.call(renameNames, name)) {
+                continue;
+            }
+
             out.packages.push(name);
         }
 
@@ -192,6 +269,21 @@
 
         out.groups = groupList;
 
+        /* 是否含真正的失败类（更名提醒不算失败）。标题与导语据此切换措辞：
+         * 只有提醒时若仍写"恢复失败"，用户会去排查一个并不存在的问题。 */
+        out.hasFailure = groupList.some(function (g) {
+            return g.cls !== 'renamed_package' && g.cls !== 'merged_package';
+        });
+        out.hasRename = groupList.some(function (g) {
+            return g.cls === 'renamed_package';
+        });
+
+        /* 只由更名提醒构成时，包名清单为空（提醒的旧包名已归入 groups 的 target），
+         * 这里不再补列表，由 renderGroup 逐条给出"旧 → 新"。 */
+        if (!out.hasFailure) {
+            out.packages = [];
+        }
+
         return out;
     }
 
@@ -206,11 +298,12 @@
     function renderGroup(group) {
         var guide = guidanceFor(group.cls);
         var section = el('div', 'rp-notice-group');
+        var isRename = group.cls === 'renamed_package' || group.cls === 'merged_package';
 
         section.appendChild(el('div', 'rp-notice-group-title', guide.title));
 
-        /* 每类失败的原因取自 error_class / stage / message / likely_cause。 */
-        section.appendChild(el('div', 'rp-notice-label', '失败原因'));
+        /* 更名不是失败：标签写「变更内容」，避免把改名说成出错。 */
+        section.appendChild(el('div', 'rp-notice-label', isRename ? '变更内容' : '失败原因'));
 
         var causeList = el('ul', 'rp-notice-list');
 
@@ -235,18 +328,28 @@
 
             detail = parts.join('，');
 
-            if (entry.cause) {
-                causeList.appendChild(el('li', null, entry.cause + (detail ? '（' + detail + '）' : '')));
-            } else if (detail) {
-                causeList.appendChild(el('li', null, detail));
-            }
+            if (isRename) {
+                /* 更名类把「旧 → 新」讲清楚，这是用户唯一需要的动作依据。 */
+                if (entry.message) {
+                    causeList.appendChild(el('li', null, entry.message));
+                }
+                if (detail) {
+                    causeList.appendChild(el('li', 'rp-notice-raw', detail));
+                }
+            } else {
+                if (entry.cause) {
+                    causeList.appendChild(el('li', null, entry.cause + (detail ? '（' + detail + '）' : '')));
+                } else if (detail) {
+                    causeList.appendChild(el('li', null, detail));
+                }
 
-            if (entry.message) {
-                causeList.appendChild(el('li', 'rp-notice-raw', '原始报错：' + entry.message));
-            }
+                if (entry.message) {
+                    causeList.appendChild(el('li', 'rp-notice-raw', '原始报错：' + entry.message));
+                }
 
-            if (entry.target) {
-                causeList.appendChild(el('li', 'rp-notice-raw', '相关目标：' + entry.target));
+                if (entry.target) {
+                    causeList.appendChild(el('li', 'rp-notice-raw', '相关目标：' + entry.target));
+                }
             }
         });
 
@@ -278,7 +381,9 @@
 
         var header = el('div', 'rp-notice-header');
 
-        header.appendChild(el('div', 'rp-notice-title', '备份软件包恢复失败'));
+        /* 标题按内容区分：只有更名提醒时不说"失败"，否则会误导用户以为恢复出了问题。 */
+        header.appendChild(el('div', 'rp-notice-title',
+            model.hasFailure ? '备份软件包恢复失败' : '备份软件包提示'));
 
         var closeBtn = el('button', 'rp-notice-close', '×');
 
@@ -293,25 +398,33 @@
         var intro = el('p', 'rp-notice-intro');
 
         intro.appendChild(document.createTextNode(
-            '设备启动时恢复备份软件包未完全成功（已重试一轮，共 '
-            + model.packages.length + ' 个包受影响）。为避免反复重启，脚本已停止重试。'
-            + '以下包需要你手动处理：'
+            model.hasFailure
+                ? ('设备启动时恢复备份软件包未完全成功（已重试一轮，共 '
+                    + model.packages.length + ' 个包受影响）。为避免反复重启，脚本已停止重试。'
+                    + '以下包需要你手动处理：')
+                : (model.hasRename
+                    ? '设备启动时发现有软件包已更名，恢复程序已自动改用新包名安装。以下为变更说明：'
+                    : '设备启动时发现有软件包已合并进其它包，旧名已自动跳过（功能由合并后的包提供）。'
+                        + '以下为变更说明：')
         ));
         body.appendChild(intro);
 
-        /* 一、失败包名列表。 */
-        body.appendChild(el('div', 'rp-notice-label', '失败的软件包'));
+        /* 一、失败包名列表。纯更名提醒时没有"失败的包"，整段跳过——
+         * 否则会渲染一个"（未能解析出包名）"，看起来像是解析出了故障。 */
+        if (model.hasFailure) {
+            body.appendChild(el('div', 'rp-notice-label', '失败的软件包'));
 
-        if (model.packages.length) {
-            var pkgWrap = el('div', 'rp-notice-pkgs');
+            if (model.packages.length) {
+                var pkgWrap = el('div', 'rp-notice-pkgs');
 
-            model.packages.forEach(function (name) {
-                pkgWrap.appendChild(el('code', 'rp-notice-pkg', name));
-            });
+                model.packages.forEach(function (name) {
+                    pkgWrap.appendChild(el('code', 'rp-notice-pkg', name));
+                });
 
-            body.appendChild(pkgWrap);
-        } else {
-            body.appendChild(el('p', 'rp-notice-raw', '（未能解析出包名，详见下方原因）'));
+                body.appendChild(pkgWrap);
+            } else {
+                body.appendChild(el('p', 'rp-notice-raw', '（未能解析出包名，详见下方原因）'));
+            }
         }
 
         /* 二、每类失败的原因；三、解决方案（与原因同段呈现，便于对照）。 */
@@ -321,7 +434,9 @@
 
         /* 提示用户：关闭后不会再次自动弹出，除非失败内容发生变化。 */
         body.appendChild(el('p', 'rp-notice-foot',
-            '关闭后，同样的失败内容不会再次弹出；若之后出现新的失败，会再次提示。'));
+            model.hasFailure
+                ? '关闭后，同样的失败内容不会再次弹出；若之后出现新的失败，会再次提示。'
+                : '关闭后同样内容不再弹出；装好新包之后，本提示会在下次启动时自动清除。'));
 
         card.appendChild(body);
 

@@ -14,6 +14,7 @@
 - [✨ 项目特点](#-项目特点)
 - [📦 固件内置组件](#-固件内置组件)
 - [🧩 可选扩展包](#-可选扩展包)
+  - [📋 软件包变动记录](#-软件包变动记录)
 - [🚀 快速开始](#-快速开始)
 - [🔐 软件包签名密钥](#-软件包签名密钥)
 - [🧳 移植教程：换机型与自建仓库](#-移植教程换机型与自建仓库)
@@ -76,8 +77,6 @@
 |          | `luci-app-openclash`            | OpenClash 代理工具                                   |
 |          | `dockerd`                       | Docker 容器引擎                                      |
 | 资源下载 | `luci-app-qbittorrent-original` | 原版 qBittorrent 下载器                              |
-| 补充字体 | `noto-fonts-cjk`                | 中日韩字体                                           |
-|          | `noto-fonts-emoji`              | Emoji 字体                                           |
 
 > [!IMPORTANT]
 >
@@ -86,10 +85,41 @@
 
 <!-- 警告块分隔符 -->
 
+> [!NOTE]
+>
+> **中文字体与 Emoji 字体已预选为模组（`=m`）**：编译进仓库但不内置，
+> 需要时在「系统 → 软件包」里安装，不占固件默认体积。
+> 包名与原因见下方[📋 软件包变动记录](#-软件包变动记录)。
+>
+> 四个包合计约 121 MB（三份 CJK 可变字体 116 MB + emoji 4.8 MB），
+> 因此**不做内置**；若你确实需要开机即有，把它们在 `.config` 里改成 `=y` 即可。
+
+<!-- 说明块分隔符 -->
+
 > [!TIP]
 >
 > 大多数软件包安装无需另外支持。
 > 若需要其他软件包请在 [Issues](https://github.com/Shuery-Shuai/ImmortalWrt-BPI-R4-Firmware/issues) 中提出。
+
+### 📋 软件包变动记录
+
+只记录**会影响用户安装**的变动（包名变更、不再提供等）。仅影响构建过程、对用户无感的
+内部调整不在此列，见 [🛠 构建系统](#-构建系统)。
+
+下表中的新包名都已在本仓库 `.config` 里以 `=m` 预选：编译进仓库但不内置固件，
+需要时从「系统 → 软件包」安装即可，无需自行添加 feed。
+
+| 包名                    | 项目                                                                                                | 原因                                                                                                                                                                                                                         |
+| :---------------------- | :-------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `luci-app-argon-config` | 不再单独提供；<br />并入：`luci-theme-argon`                                                        | [immortalwrt/luci][immortalwrt_luci] 已把配置界面合进主题包：主题 Makefile 以 `PKG_PROVIDES:=luci-app-argon-config` 声明该别名。`luci-theme-argon` 本就在 `.config` 里内置（`=y`），配置界面随主题一起装出，无需再单独安装。 |
+| `noto-fonts-cjk`        | 改变来源；<br />包名改为：`noto-fonts-cjk-sans`、`noto-fonts-cjk-sans-mono`、`noto-fonts-cjk-serif` | 原引用的第三方仓库 [brainiac19/openwrt-packages][brainiac19_packages] 已删除，改用 [openwrt/packages][openwrt_packages] 官方包（[`50de700`][c-cjk]）。                                                                       |
+| `noto-fonts-emoji`      | 改变来源；<br />包名改为：`noto-fonts-color-emoji`                                                  | 原引用的第三方仓库 [brainiac19/openwrt-packages][brainiac19_packages] 已删除，改用 [openwrt/packages][openwrt_packages] 官方包（[`14a26a5`][c-emoji]）。                                                                     |
+
+[immortalwrt_luci]: https://github.com/immortalwrt/luci
+[brainiac19_packages]: https://github.com/brainiac19/openwrt-packages
+[openwrt_packages]: https://github.com/openwrt/packages
+[c-cjk]: https://github.com/openwrt/packages/commit/50de700b0cf97f649116ac667b6015e0d60ae6b3
+[c-emoji]: https://github.com/openwrt/packages/commit/14a26a5bfa3f632f9f7d931e36e4ab7f32023943
 
 ## 🚀 快速开始
 
@@ -180,7 +210,12 @@ compose 文件，复用同一个服务定义。
 > 并通知用户重新导入新公钥；旧私钥对应的公钥仍在设备上被信任，删不回来。
 
 公钥**不再随仓库分发**：`keys/public-key.pem` 已从版本库移除，改由编译期从私钥派生（上游 `rules.mk` 的 `BUILD_KEY_APK_PUB`，由 `package/Makefile` 用
-`openssl ec -pubout` 生成），部署时随发布树一起发布到 Pages 并拷入镜像。因此仓库里**没有公钥文件可提交**，fork 者克隆后必须自带一对密钥才能构建。
+`openssl ec -pubout` 生成），部署时随发布树一起发布到 Pages 并拷入镜像。因此仓库里**没有公钥文件可提交**。
+
+> [!NOTE]
+>
+> fork 本仓库时必须自带一对密钥才能构建，步骤见 [移植教程 · 第 1 步](#第-1-步准备密钥与仓库设置)。
+> 本节其余内容讲的是「密钥如何被使用与信任」，与 fork 无关。
 
 | 位置                                     | 说明                                                   |
 | :--------------------------------------- | :----------------------------------------------------- |
@@ -208,44 +243,10 @@ compose 文件，复用同一个服务定义。
 > 这类设备导入一次即可长期使用：密钥固定不轮换，仓库索引始终由同一把私钥签名，
 > 所以**不刷固件也能持续 `apk update` 装包**。apk 会信任 `/etc/apk/keys/` 下的所有密钥，新旧公钥可共存。
 
-### 移植（fork 本仓库）
+### 门禁如何校验密钥
 
-本仓库**不含任何密钥文件**，fork 后必须生成自己的密钥对并写进仓库设置，否则构建会因为缺少 `APK_PUBLIC_KEY_SHA256` 门禁基准而失败。整个过程只做一次（EC
-P-256，与上游`BUILD_KEY_APK_SEC` / `BUILD_KEY_APK_PUB` 一致），命令与 `scripts/ci/check-apk-signing-key.sh`缺变量时打印的指引逐字相同：
-
-```sh
-mkdir -p keys
-openssl ecparam -name prime256v1 -genkey -noout -out keys/private-key.pem
-openssl ec -in keys/private-key.pem -pubout -out keys/public-key.pem
-base64 -w0 keys/private-key.pem                  # → Secret   APK_PRIVATE_KEY_B64
-sha256sum keys/public-key.pem | awk '{print $1}' # → Variable APK_PUBLIC_KEY_SHA256
-```
-
-命令请在**仓库根**执行：`mkdir -p keys` 是相对仓库根的路径，两个生成物都落在 `keys/` 下（`keys/private-key.pem` 正是本地构建缺省查找的位置）。这两行已被 `.gitignore`
-的`keys/private-key.pem` 与 `keys/public-key.pem` 忽略，但入库与否最终由你负责：执行完用 `git status --short` 确认里面**看不到**这两个文件，再 `git add`。
-
-拿到两串值后，在本仓库 **Settings → Secrets and variables → Actions** 里添加：
-
-| 类型     | 名称                    | 值                                       |
-| :------- | :---------------------- | :--------------------------------------- |
-| Secret   | `APK_PRIVATE_KEY_B64`   | 第 2 步 `base64 -w0` 的整行输出          |
-| Variable | `APK_PUBLIC_KEY_SHA256` | 第 2 步 `sha256sum` 输出的 64 位十六进制 |
-
-> [!CAUTION]
->
-> - `keys/private-key.pem` 与 `keys/public-key.pem` **都不要入库**：二者都在 `.gitignore` 里，
->   且公钥由构建期从私钥派生，提交进来反而多一份要同步的信任锚副本。
-> - **私钥一旦泄漏**（误提交、误粘贴、发给他人），唯一正确的处置是**立刻轮换密钥对**：
->   按上面的命令重新生成，把新的 Secret/Variable 更新到仓库设置。
->   历史提交里的旧私钥删不掉，撤回也无意义——旧公钥仍被已刷机设备信任。
-> - 轮换是**破坏性**的，要分两类用户处理：刷本仓库固件的设备**刷一次新固件即自动换新公钥**
->   （公钥随镜像下发，见 [软件包签名密钥](#-软件包签名密钥) 的 IMPORTANT）；没刷本仓库固件的
->   设备必须重新走一遍上面的 `wget` 导入，否则 `apk` 会因签名不匹配而拒绝装包。
-> - 也正因轮换有代价，密钥应当**固定**：它同时服务「没刷本仓库固件的用户」与「不刷固件只更新
->   软件包的用户」，频繁更换会让这两类用户的导入反复失效。
-
-门禁行为：**基准指纹有两块来源，取值链与私钥一致**——环境变量 `APK_PUBLIC_KEY_SHA256`（CI 的 Variable）优先，缺失时回退到本地 `keys/public-key.pem` 的
-sha256（与本地直接读 `keys/private-key.pem` 同一思路）。
+基准指纹有两块来源，取值链与私钥一致：环境变量 `APK_PUBLIC_KEY_SHA256`（CI 的 Variable）优先，
+缺失时回退到本地 `keys/public-key.pem` 的 sha256（与本地直接读 `keys/private-key.pem` 同一思路）。
 
 | 场景                             | 基准来源     | 结果                                                |
 | -------------------------------- | ------------ | --------------------------------------------------- |
@@ -255,6 +256,7 @@ sha256（与本地直接读 `keys/private-key.pem` 同一思路）。
 | 两者都没有                       | —            | CI 硬失败；本地降级为告警，用一次性密钥也能编出固件 |
 
 本地公钥因此不再是只写不读的死文件：它既用来算基准，也让本地与 CI 走同一条校验路径。
+fork 时如何从零生成这对密钥，见 [移植教程 · 第 1 步](#第-1-步准备密钥与仓库设置)。
 
 ## 🧳 移植教程：换机型与自建仓库
 
@@ -276,20 +278,42 @@ flowchart LR
     H -->|否| J[查 apk_pubkey 步骤]
 ```
 
-> [!IMPORTANT]
->
-> 顺序不能颠倒：**先密钥、再机型**。CI 的 job 第一步就是密钥门禁，密钥没配好会在编译开始前
-> 失败，这时改机型没有任何意义。
-
 ### 第 1 步：准备密钥与仓库设置
 
-按上文 [移植（fork 本仓库）](#移植fork-本仓库) 生成 EC P-256 密钥对并写入设置项。除此之外 CI 还需要一个 PAT —— `update-checker` 靠它派发 Builder：
+**这一步必须最先做**：CI 的 job 第一步就是密钥门禁，密钥没配好会在编译开始前失败，
+此时改机型没有任何意义。
+
+本仓库**不含任何密钥文件**，fork 后必须生成自己的密钥对。整个过程只做一次（EC P-256，与上游
+`BUILD_KEY_APK_SEC` / `BUILD_KEY_APK_PUB` 一致），命令与 `scripts/ci/check-apk-signing-key.sh`
+缺变量时打印的指引逐字相同：
+
+```sh
+mkdir -p keys
+openssl ecparam -name prime256v1 -genkey -noout -out keys/private-key.pem
+openssl ec -in keys/private-key.pem -pubout -out keys/public-key.pem
+base64 -w0 keys/private-key.pem                  # → Secret   APK_PRIVATE_KEY_B64
+sha256sum keys/public-key.pem | awk '{print $1}' # → Variable APK_PUBLIC_KEY_SHA256
+```
+
+命令请在**仓库根**执行：`mkdir -p keys` 是相对仓库根的路径，两个生成物都落在 `keys/` 下
+（`keys/private-key.pem` 正是本地构建缺省查找的位置）。这两个文件已被 `.gitignore` 忽略，
+但入库与否最终由你负责：执行完用 `git status --short` 确认里面**看不到**它们，再 `git add`。
+
+> [!CAUTION]
+>
+> `keys/private-key.pem` 与 `keys/public-key.pem` **都不要入库**：二者都在 `.gitignore` 里，
+> 且公钥由构建期从私钥派生，提交进来反而多一份要同步的信任锚副本。
+
+拿到两串值后，在本仓库 **Settings → Secrets and variables → Actions** 里添加：
 
 | 类型     | 名称                    | 用途                                          |
 | :------- | :---------------------- | :-------------------------------------------- |
 | Secret   | `APK_PRIVATE_KEY_B64`   | 包签名私钥；缺了它镜像会改用一次性密钥        |
 | Variable | `APK_PUBLIC_KEY_SHA256` | 公钥指纹；缺了它 CI 在门禁处直接失败          |
 | Secret   | `ACTIONS_TRIGGER_PAT`   | 定时巡检发现上游新提交后，派发 Builder 需要它 |
+
+`ACTIONS_TRIGGER_PAT` 与密钥无关，是 `update-checker` 派发 Builder 用的；密钥两项缺一会怎样、
+轮换为什么有代价，见 [🔐 软件包签名密钥](#-软件包签名密钥)。
 
 > [!NOTE]
 >
@@ -384,7 +408,7 @@ REPO_BRANCH: master
 > 刷完即生效，**不需要手动导入**；之后更换密钥也只是再刷一次新固件。
 > 真正的风险在**别人**身上：沿用旧仓库（或从旧仓库迁移）的设备上留着旧公钥，你的新私钥签出的包
 > 会被它们拒绝。这不受本教程控制，只能通过通知用户重新导入公钥来兜底，见
-> [软件包签名密钥](#-软件包签名密钥) 的 IMPORTANT 块。
+> [🔐 软件包签名密钥](#-软件包签名密钥) 的 IMPORTANT 块。
 
 ### 不用改的部分
 
@@ -428,6 +452,7 @@ flowchart TD
 | `/etc/backup/installed_packages.txt`      | sysupgrade 生成的原始包列表，格式 `包名<TAB>rom\|overlay\|unknown`  |
 | `/etc/backup/restore_pkg.state`           | 尝试状态，扁平 `key=value`：`attempt`（0/1/2）、`stage`、`last_run` |
 | `/etc/backup/restore_pkg_failures.ndjson` | 失败记录，**扁平 NDJSON**，每行一个独立 JSON 对象，追加写入         |
+| `/etc/backup/restore_pkg_notices.ndjson`  | 提醒记录（如包已更名），独立文件，不参与重试与状态判定              |
 
 `attempt` 语义：已完成的安装轮次计数。
 
@@ -486,6 +511,56 @@ sed -n 's/.*"missing_packages":\[\([^]]*\)\].*/\1/p' /etc/backup/restore_pkg_fai
 >
 > 这套 `tr` 方案能处理的包名字符集是 apk 实际使用的 `[a-z0-9.+-]`。
 > 含逗号或引号的异常包名会被 `tr` 劈开，因此脚本生成数组时会过滤掉非法字符并记 WARN。
+
+### 包名变动处理（更名与合并）
+
+旧包名若照常安装，会先失败、触发一次**毫无意义的重启**，最后弹一句"包可能已更名"的推测。
+为此脚本在安装前按对照表（`_renamed_replacement`）就地改写安装清单，既不重试也不重启。
+
+对照表只登记上游确实变动过的包，**两类走不同策略**：
+
+| 旧包名                  | 现状                                                                                    | 处理             |
+| :---------------------- | :-------------------------------------------------------------------------------------- | :--------------- |
+| `noto-fonts-cjk`        | 拆分为 `noto-fonts-cjk-sans`、`noto-fonts-cjk-sans-mono`、`noto-fonts-cjk-serif` 三个包 | 三个全部安装     |
+| `noto-fonts-emoji`      | 改名为 `noto-fonts-color-emoji`                                                         | 自动改用新名安装 |
+| `luci-app-argon-config` | 并入 `luci-theme-argon`（别名）                                                         | 自动丢弃该项     |
+
+> [!NOTE]
+>
+> **改名 → 自动换新名安装**：新名在 feed 里能装到，替用户装好即可，不必让他再手动来一次。
+> 一个旧目录拆成多个包时**全部安装**：`noto-fonts-cjk` 产出 `-sans` / `-sans-mono` / `-serif`
+> 三个包，三者的 install 段各自装不同字体文件（常规、等宽、衬线），少装一个就少一种字形。
+> 对照表里用空格分隔的多个包名因此会被逐个写进安装清单。
+>
+> **合并 → 自动丢弃**：`luci-app-argon-config` 只是 `PKG_PROVIDES` 声明的别名，
+> 功能已并入 `luci-theme-argon`，而后者本就在 `.config` 里内置。此时再装一遍旧名没有意义，
+> 因此直接从清单里丢掉，只留一条 `merged_package` 说明。
+>
+> 两者都**不会**让用户以为安装失败——它们进的是提醒记录，不是失败记录。
+
+提醒写入独立文件 `/etc/backup/restore_pkg_notices.ndjson`，字段：
+
+| 字段                      | 说明                                                         |
+| :------------------------ | :----------------------------------------------------------- |
+| `schema`                  | 固定 `openwrt-apk-notice/1`                                  |
+| `category`                | `renamed_package`（已换名安装）或 `merged_package`（已丢弃） |
+| `package` / `replacement` | 旧包名 / 新包名                                              |
+| `message`                 | 展示给用户的一行说明                                         |
+
+**为什么与失败记录分开存**：混在一起会同时踩两个坑——`failure_count > 0` 会让状态机
+进入"二次失败终态保护"，把一次正常恢复锁死；而全部安装成功时 `state_clear` 会整份删除
+失败记录，提醒随之消失。
+
+提醒会自动过期：每次运行先执行 `_prune_resolved_notices`，把"新包已经装好"的条目录删掉，
+全部过期时连文件一起删除。因此**不需要用户手动清理**。
+
+> [!TIP]
+>
+> 改名类的提醒通常会被下一次运行立刻清掉——因为清单改写后新名当场就装上了。
+> 这不是缺陷：提示的作用是解释"为什么备份里的包名变了"，看过一次就够。
+>
+> 一个旧目录拆成多个包时，判据是**全部装好**才算过期：只看第一个会在其余几个
+> 还没装时就误删提醒，用户于是失去"当初那个包该换成什么"的唯一线索。
 
 ### 失败提示（LuCI）
 

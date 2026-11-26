@@ -263,7 +263,7 @@ bash scripts/ci/generate-summary.sh [build|update-checker|dependency-auditor|syn
 | 明细（`dependency-auditor` / `syntax-linter`）     | 按 `DETAIL_SEQUENCE` 把长正文折叠进 `<details>`                  | `DETAIL_SEQUENCE` + `DETAIL_<KEY>`                                                               |
 
 选源不靠 mtime：日志文件名是**规则命名**（`build-<stage>.log` 这类固定名），选哪一份由`LOG_NAME_CATALOG` 这份可 review 的清单决定，mtime 只用来排目录列表的顺序。原因见
-[本地构建](#-本地构建)的日志说明：mtime 只能答「谁最后写」，答不出「哪份属于这次构建」——按 mtime 挑，恰好会挑到摘要步骤自己刚写的那份空日志。
+[🚀 本地构建](#-本地构建)的日志说明：mtime 只能答「谁最后写」，答不出「哪份属于这次构建」——按 mtime 挑，恰好会挑到摘要步骤自己刚写的那份空日志。
 
 失败摘录是「诊断辅助」而非「原因判定」：它扫描的是选中日志的末尾若干行并按关键字过滤，真正的原因仍以该日志为准，摘要只负责把人带到那一行。
 

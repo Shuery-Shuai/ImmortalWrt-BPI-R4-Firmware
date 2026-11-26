@@ -86,16 +86,17 @@ clone_repo 'https://github.com/anoixa/bpi-r4-pwm-fan' \
     'custom-packages/bpi-r4-pwm-fan' ||
     die "clone_repo 失败：bpi-r4-pwm-fan"
 
-clone_repo 'https://github.com/brainiac19/openwrt-packages' \
-    'main' \
-    '--filter=blob:none --sparse --depth=1' \
-    'custom-packages/brainiac19' ||
-    die "clone_repo 失败：openwrt-packages"
-(
-    cd 'custom-packages/brainiac19' || exit 1
-    git sparse-checkout set fonts
-)
-
+# Noto 字体（noto-fonts-*）：本仓库不再自行注入。
+#
+# 这里曾克隆第三方镜像 https://github.com/brainiac19/openwrt-packages 再稀疏取 fonts/。
+# 该仓库已被删除，HTTPS 拉取退化为凭据提示，在 CI 里恒定报
+#   fatal: could not read Username for 'https://github.com': No such device or address
+# 并中断整个 DIY PART1，故整段移除。
+#
+# 也没有改成直接克隆 openwrt/packages：字体包属于 packages feed 的内容，应由 feed 提供，
+# 而不是绕开 feed 在构建脚本里另存一份副本——两份来源迟早会各自漂移。
+# 包是否可用取决于 feed；真实包名见 README「可选扩展包」。
+#
 clone_repo 'https://github.com/rockjake/luci-app-fancontrol' \
     'main' \
     '--depth=1' \

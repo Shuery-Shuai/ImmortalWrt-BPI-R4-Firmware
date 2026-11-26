@@ -120,6 +120,9 @@ set_fan2go_version "0.16.0" auto || die "set_fan2go_version 失败（fan2go 版�
 # 修复 libnl-tiny 编译警告
 fix_libnl_tiny_compile || die "fix_libnl_tiny_compile 失败（libnl-tiny 编译修复未生效）"
 
+# 修复 dae 的 go-mod 目录布局（源码包自带离线依赖在源码树内，会被 go list 误扫）
+fix_dae_go_mod || die "fix_dae_go_mod 失败（dae 编译修复未生效）"
+
 # 向 LuCI 模板注入「备份软件包恢复失败」提示（构建期补丁，不改 feeds 源文件）
 apply_restore_pkg_notice_patch || die "apply_restore_pkg_notice_patch 失败（恢复失败提示未注入）"
 
