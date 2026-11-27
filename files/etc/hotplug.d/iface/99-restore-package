@@ -24,8 +24,8 @@
 #   RESTORE_SCRIPT  恢复脚本路径 [默认: /usr/bin/restore-packages.sh]
 #   TRIGGER_LOG     触发过程与恢复脚本的输出日志文件
 #                   [默认: /var/log/restore-packages-trigger.log]
-#   BOOT_WINDOW     开机窗口（秒）：/proc/uptime 超过该值就不再执行恢复
-#                   [默认: 900，即开机 15 分钟内]
+#   RESTORE_MAX_UPTIME 硬上限（秒）：/proc/uptime 超过该值就不再执行恢复
+#                   [默认: 21600，即开机 6 小时]；防重拨的常规判据是 /tmp 下的完成标记
 #
 # 说明：
 #   - 整个检测和执行过程在后台子 shell 中运行，不阻塞 hotplug 主进程。
@@ -40,7 +40,7 @@ CHECK_INTERVAL="${CHECK_INTERVAL:-10}"
 PING_TARGET="${PING_TARGET:-8.8.8.8}"
 RESTORE_SCRIPT="${RESTORE_SCRIPT:-/usr/bin/restore-packages.sh}"
 TRIGGER_LOG="${TRIGGER_LOG:-/var/log/restore-packages-trigger.log}"
-BOOT_WINDOW="${BOOT_WINDOW:-900}"
+
 # 互斥锁路径（可用 LOCKFILE 覆盖，便于测试与只读根文件系统场景）
 LOCKFILE="${LOCKFILE:-/var/run/restore-hotplug.lock}"
 
@@ -64,26 +64,39 @@ case "$CHECK_INTERVAL" in
     CHECK_INTERVAL=10
     ;;
 esac
-case "$BOOT_WINDOW" in
-'' | *[!0-9]*)
-    logger -t "$LOGGER_TAG" "警告: BOOT_WINDOW 值无效，使用默认值 900 秒"
-    BOOT_WINDOW=900
-    ;;
-esac
 
 #===============================================================================
-# 开机窗口判断（调度层的时间窗口）
-#   /proc/uptime 第一列是开机至今的秒数（可能带小数）。
-#   超过 BOOT_WINDOW 说明这次 ifup 不是开机首连（典型是 WAN 重拨/闪断），
-#   直接退出，避免把正在进行的恢复流程重复拉起。
+# 开机窗口判断 —— 用「本次开机是否已恢复过」代替按 uptime 卡时间窗
+#
+# 旧实现：uptime > BOOT_WINDOW(900s) 就跳过。
+# 问题很实际：慢设备从开机到 WAN 拨号成功常常超过 15 分钟
+# （eMMC 上电、btrfs 挂载、PPPoE 重协商），于是**恢复一次都不会发生**；
+# 而设备跑久了 WAN 闪断重连，同样会被这个窗口永久挡在外面。
+# 判据应当是"这次开机做过没有"，而不是"开机多久了"。
+#
+# 现在改用状态文件：
+#   RESTORE_DONE 存在 → 本次开机已经恢复过，跳过（防重拨重复触发）
+#   文件在 /tmp（tmpfs）→ 下次重启自然消失，正好实现"每次开机一次"
+#
+# 仍然保留一个很宽松的硬上限（RESTORE_MAX_UPTIME，默认 6 小时）：
+# 用它兜住"标记文件被误删后设备跑了很久又被 ifup 拉起"这种极端情况，
+# 避免开机几天的设备突然重新跑一遍全量恢复。
 #===============================================================================
+RESTORE_DONE_FILE="/tmp/.restore-packages.done"
+RESTORE_MAX_UPTIME="${RESTORE_MAX_UPTIME:-21600}"
+
+if [ -e "$RESTORE_DONE_FILE" ]; then
+    logger -t "$LOGGER_TAG" "本次开机已完成恢复，跳过"
+    exit 0
+fi
+
 if [ -r /proc/uptime ]; then
     uptime_secs=$(cut -d' ' -f1 /proc/uptime 2>/dev/null | cut -d. -f1)
     case "$uptime_secs" in
     '' | *[!0-9]*) uptime_secs=0 ;;
     esac
-    if [ "$uptime_secs" -gt "$BOOT_WINDOW" ]; then
-        logger -t "$LOGGER_TAG" "已开机 ${uptime_secs}s，超出开机窗口 ${BOOT_WINDOW}s，跳过恢复"
+    if [ "$uptime_secs" -gt "$RESTORE_MAX_UPTIME" ]; then
+        logger -t "$LOGGER_TAG" "已开机 ${uptime_secs}s，超过硬上限 ${RESTORE_MAX_UPTIME}s，跳过恢复"
         exit 0
     fi
 fi
@@ -111,6 +124,64 @@ else
     fi
 fi
 
+#===============================================================================
+# 等待「软件源已确定」
+#
+# 88-replace-apk-source 会测速、可能改写 distfeeds、然后才注释失效源。
+# 恢复脚本若与它并行开工，可能：
+#   · 在 sed 改到一半时读 distfeeds，拿到新旧混杂的地址；
+#   · 用旧源装包，而新源其实快得多。
+#
+# 判据完全来自换源脚本自己声明的两个状态文件（见 88 脚本的握手协议说明）：
+#   RUNNING 存在 → 正在处理，等它
+#   READY   存在 → 已结束，立即开工
+#   两个都没有 → 本机没有换源机制（被裁剪/删除/没装进来），立即开工
+#
+# 这样做的关键好处：不需要靠"脚本文件是否存在"去猜，也不需要每次都等到超时。
+# 没有换源脚本的机器是零等待的，而不是白等 SOURCE_WAIT 秒。
+#
+# 只在"有 RUNNING 却迟迟没有 READY"时才用超时兜底——那说明换源脚本崩了。
+#===============================================================================
+SOURCE_WAIT="${SOURCE_WAIT:-180}"          # 硬上限：无论什么情况都不等超过它
+SOURCE_STUCK_WAIT="${SOURCE_STUCK_WAIT:-240}" # 有 RUNNING 却无 READY 时，认定它崩了
+SOURCE_ABSENT_WAIT="${SOURCE_ABSENT_WAIT:-8}" # 连 RUNNING 都没有时，认定无此机制
+SOURCE_READY_FILE="/tmp/.apk-source-ready"
+SOURCE_RUNNING_FILE="/tmp/.apk-source-running"
+
+wait_for_source_ready() {
+    s_waited=0
+
+    while [ "$s_waited" -lt "$SOURCE_WAIT" ]; do
+        # 已完成：立即开工。
+        if [ -f "$SOURCE_READY_FILE" ]; then
+            logger -t "$LOGGER_TAG" "软件源已就绪（等待 ${s_waited}s）"
+            return 0
+        fi
+
+        # 换源脚本声明过"这台机器有我"（RUNNING），但迟迟不结束 → 它崩了。
+        # 只在这种情况下才用超时兜底；没有 RUNNING 的机器不算卡住，见下。
+        if [ -f "$SOURCE_RUNNING_FILE" ] && [ "$s_waited" -ge "$SOURCE_STUCK_WAIT" ]; then
+            logger -t "$LOGGER_TAG" "换源脚本已运行 ${s_waited}s 仍未结束，按现有配置继续恢复"
+            return 0
+        fi
+
+        # 既没有 RUNNING 也没有 READY，且已经等够宽限期：
+        # 说明这台机器上根本没有换源机制（脚本被裁剪/删除/没装进 hotplug）。
+        # 宽限期是必要的——换源脚本和恢复脚本都在 WAN ifup 时被拉起，
+        # 谁先执行并不确定，必须给它一点时间先写下 RUNNING。
+        if [ ! -f "$SOURCE_RUNNING_FILE" ] && [ "$s_waited" -ge "$SOURCE_ABSENT_WAIT" ]; then
+            logger -t "$LOGGER_TAG" "本机无换源脚本，不再等待（${s_waited}s）"
+            return 0
+        fi
+
+        sleep 1
+        s_waited=$((s_waited + 1))
+    done
+
+    logger -t "$LOGGER_TAG" "等待软件源就绪超时 (${SOURCE_WAIT}s)，按现有配置继续恢复"
+    return 0
+}
+
 logger -t "$LOGGER_TAG" "WAN 接口上线，开始等待网络就绪..."
 
 #===============================================================================
@@ -120,10 +191,20 @@ logger -t "$LOGGER_TAG" "WAN 接口上线，开始等待网络就绪..."
     waited=0
     while [ "$waited" -lt "$MAX_WAIT" ]; do
         if ping -c 1 -W 2 "$PING_TARGET" >/dev/null 2>&1; then
-            logger -t "$LOGGER_TAG" "网络已就绪，启动恢复脚本: $RESTORE_SCRIPT"
+            logger -t "$LOGGER_TAG" "网络已就绪，等待软件源确定..."
+            wait_for_source_ready
+
+            logger -t "$LOGGER_TAG" "启动恢复脚本: $RESTORE_SCRIPT"
 
             "$RESTORE_SCRIPT" >>"$TRIGGER_LOG" 2>&1
             exit_code=$?
+
+            # 无论成败都标记"本次开机已尝试过"：
+            #   成功 → 不该再跑；
+            #   失败(1) → 恢复脚本已进入终态保护，重跑也只会立刻退出，
+            #             真正需要重试时由用户在 LuCI 侧介入或手动 --force。
+            # 不标记的话，WAN 每次重拨都会再拉起一次完整恢复。
+            : > "$RESTORE_DONE_FILE"
 
             # 退出码语义（由 restore-packages.sh 保证）：
             #   0 = 完成（含「已处于二次失败终态，直接跳过」）

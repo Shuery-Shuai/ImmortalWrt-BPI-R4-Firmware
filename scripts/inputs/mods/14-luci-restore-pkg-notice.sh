@@ -16,7 +16,7 @@
 #   静默替换掉，缺陷只在运行时才暴露。注入一行则可以与上游的其余改动共存。
 #
 # 注入内容:
-#   一个单行的 ucode 模板块（{% ... %}），职责：
+#   一个 ucode 模板块（{% ... %}，可跨行），职责：
 #     1. 用 fs 模块的 readfile 读 /etc/backup/restore_pkg_failures.ndjson；
 #     2. 逐行 json() 解析（纯 ucode 内建，不调 jq、不起子进程）；
 #     3. 把失败包名、按类去重后的失败原因内联成
@@ -40,7 +40,7 @@
 #   · 注入前先用 grep -F 断言锚点原文存在；锚点不命中一律 log ERROR 并返回非 0，
 #     绝不静默跳过——静默跳过的后果是用户永远收不到提示且没人知道。
 #   · 已注入过（能 grep 到 script 资源路径）就跳过，重复执行不会重复插入。
-#   · 注入后用「下一行逐字节等于 payload」+「标记串恰好出现 1 次」做双重复核。
+#   · 注入后用「锚点后 payload_lines 行逐字节等于 payload」+「标记串恰好出现 1 次」双重复核。
 #
 # 上游升级时的维护动作:
 #   若 LuCI 改了 footer.ut / argon footer_login.ut 的 include 写法，本脚本会在构建期
@@ -67,19 +67,168 @@ if ! type -t log &>/dev/null; then
 fi
 
 #######################################
-# 输出要注入的 ucode 模板块（单行）
+# 输出要注入的 ucode 模板块（多行）
 #
 # 用带引号的 heredoc 原样输出：里面的 $ / ` / \ 都不做 shell 展开，
 # 因此这段 ucode 可以直接按字面维护，不必为 shell 转义再套一层。
 #
+# 为什么可以跨行：ucode 模板模式的语句标签以 %} 收尾，块内的换行只是普通空白
+# （见 ucode 手册 Templates 一章，其中的多行 {% function ... %} 示例即此写法）。
+# 早先这段被压成一行，纯粹是被注入复核「只比锚点下一行」的实现限制住；
+# 复核改成比对整段行范围后，载荷就能按语句分行书写，便于审阅与改动。
+#
 # 变量统一以 rp 前缀命名，避免与模板作用域里的 theme / version / dispatcher 撞名。
 #
 # 输出:
-#   stdout: 恰好一行 {% ... %}（heredoc 自带的行尾换行）
+#   stdout: 一整个 {% ... %} 模板块（heredoc 自带的行尾换行）
 #######################################
 _restore_pkg_notice_emit_payload() {
     cat <<'RESTORE_PKG_NOTICE_PAYLOAD_EOF'
-{% import { readfile } from 'fs'; try { const rpFF = '/etc/backup/restore_pkg_failures.ndjson'; const rpNF = '/etc/backup/restore_pkg_notices.ndjson'; let rpRaw = ''; try { const rpA = readfile(rpFF); if (type(rpA) == 'string') rpRaw += rpA; } catch (rpEA) { } let rpNote = ''; try { const rpB = readfile(rpNF); if (type(rpB) == 'string') rpNote += rpB; } catch (rpEB) { } rpRaw += rpNote; if (length(trim(rpRaw))) { let rpHash = 2166136261; for (let rpI = 0; rpI < length(rpRaw); rpI++) rpHash = ((rpHash ^ ord(rpRaw, rpI)) * 16777619) % 4294967296; let rpSeen = {}; let rpPkgs = []; let rpIdx = {}; let rpEnts = []; for (let rpLine in split(rpRaw, '\n')) { rpLine = trim(rpLine); if (!length(rpLine)) continue; let rpRec = null; try { rpRec = json(rpLine); } catch (rpE) { rpRec = null; } if (type(rpRec) != 'object') continue; let rpNames = []; if (type(rpRec.package) == 'string' && length(rpRec.package)) push(rpNames, rpRec.package); if (type(rpRec.missing_packages) == 'array') for (let rpN in rpRec.missing_packages) if (type(rpN) == 'string' && length(rpN)) push(rpNames, rpN); for (let rpN in rpNames) if (!(rpN in rpSeen)) { rpSeen[rpN] = true; if (length(rpPkgs) < 50) push(rpPkgs, rpN); } let rpClass = (type(rpRec.error_class) == 'string') ? rpRec.error_class : ''; let rpStage = (type(rpRec.stage) == 'string') ? rpRec.stage : ''; let rpMsg = (type(rpRec.message) == 'string') ? rpRec.message : ''; let rpCause = (type(rpRec.likely_cause) == 'string') ? rpRec.likely_cause : ''; let rpKey = rpClass + '\t' + rpStage + '\t' + rpMsg + '\t' + rpCause; if (rpKey in rpIdx) { rpIdx[rpKey].count++; continue; } if (length(rpEnts) >= 20) continue; let rpEnt = { class: rpClass, stage: rpStage, message: rpMsg, cause: rpCause, target: (type(rpRec.target) == 'string') ? rpRec.target : '', tool: (type(rpRec.tool) == 'string') ? rpRec.tool : '', exit: (type(rpRec.exit_code) == 'int') ? rpRec.exit_code : null, count: 1 }; rpIdx[rpKey] = rpEnt; push(rpEnts, rpEnt); } for (let rpL2 in split(rpNote, '\n')) { rpL2 = trim(rpL2); if (!length(rpL2)) continue; let rpR2 = null; try { rpR2 = json(rpL2); } catch (rpE2) { rpR2 = null; } if (type(rpR2) != 'object') continue; let rpOld = (type(rpR2.package) == 'string') ? rpR2.package : ''; let rpNew = (type(rpR2.replacement) == 'string') ? rpR2.replacement : ''; let rpMsg2 = (type(rpR2.message) == 'string') ? rpR2.message : ''; let rpCat = (type(rpR2.category) == 'string' && length(rpR2.category)) ? rpR2.category : 'renamed_package'; if (!length(rpOld)) continue; if (!(rpOld in rpSeen)) { rpSeen[rpOld] = true; if (length(rpPkgs) < 50) push(rpPkgs, rpOld); } let rpK2 = rpCat + '\t' + rpOld + '\t' + rpNew; if (rpK2 in rpIdx) { rpIdx[rpK2].count++; continue; } if (length(rpEnts) >= 20) continue; let rpE2 = { class: rpCat, stage: '', message: rpMsg2, cause: '', target: rpNew, tool: '', exit: null, count: 1 }; rpIdx[rpK2] = rpE2; push(rpEnts, rpE2); } if (length(rpEnts)) { let rpOut = { fingerprint: sprintf('%08x', rpHash) + '-' + sprintf('%x', length(rpRaw)), total: length(rpEnts), packages: rpPkgs, entries: rpEnts }; print('\n<script>window.__RESTORE_PKG_NOTICE__='); print(replace(replace(replace(sprintf('%J', rpOut), /</g, '\\u003c'), /\u2028/g, '\\u2028'), /\u2029/g, '\\u2029')); print(';</script><script src="/luci-static/resources/restore-pkg-notice.js"></script>\n'); } } } catch (rpTop) { } %}
+{% import { readfile } from 'fs';
+
+/*
+ * 把两份 NDJSON 折成 window.__RESTORE_PKG_NOTICE__。
+ *
+ * 数据来自两份文件，但只有**一份列表、一次遍历**，靠 category 分两类：
+ *   失败记录 restore_pkg_failures.ndjson —— 有 error_class，没有 category
+ *   提醒记录 restore_pkg_notices.ndjson  —— 有 category（renamed_package / merged_package）
+ *
+ *   有 category   → 提醒（更名/合并）：只进 entries，带 legacy 旧名，不进 packages
+ *   没有 category → 失败：进 packages（失败包名清单）与 entries
+ *
+ * 之所以必须分开：提醒若落进失败分支，它的 class 会是空串，前端只好回落到
+ * 「安装失败」兜底文案，用户就会去排查一个已经自动修好的问题。
+ */
+
+try {
+    const rpFF = '/etc/backup/restore_pkg_failures.ndjson';
+    const rpNF = '/etc/backup/restore_pkg_notices.ndjson';
+    let rpRaw = '';
+    let rpNote = '';
+
+    /* 文件缺失或不可读都不算错误：读不到就当没有这一类记录。 */
+    try {
+        const rpA = readfile(rpFF);
+        if (type(rpA) == 'string') rpRaw += rpA;
+    } catch (rpEA) { }
+
+    try {
+        const rpB = readfile(rpNF);
+        if (type(rpB) == 'string') rpNote += rpB;
+    } catch (rpEB) { }
+
+    rpRaw += rpNote;
+
+    if (length(trim(rpRaw))) {
+        /* FNV-1a 指纹：内容一变指纹就变，前端据此决定要不要重新弹。 */
+        let rpHash = 2166136261;
+        for (let rpI = 0; rpI < length(rpRaw); rpI++)
+            rpHash = ((rpHash ^ ord(rpRaw, rpI)) * 16777619) % 4294967296;
+
+        let rpSeen = {};
+        let rpPkgs = [];
+        let rpIdx = {};
+        let rpEnts = [];
+
+        for (let rpLine in split(rpRaw, '\n')) {
+            rpLine = trim(rpLine);
+            if (!length(rpLine)) continue;
+
+            let rpRec = null;
+            try {
+                rpRec = json(rpLine);
+            } catch (rpE) {
+                rpRec = null;
+            }
+            if (type(rpRec) != 'object') continue;
+
+            let rpCat = (type(rpRec.category) == 'string') ? rpRec.category : '';
+            let rpMsg = (type(rpRec.message) == 'string') ? rpRec.message : '';
+
+            /* ── 第一类：提醒（更名 / 合并），不是失败 ── */
+            if (length(rpCat)) {
+                let rpOld = (type(rpRec.package) == 'string') ? rpRec.package : '';
+                if (!length(rpOld)) continue;
+
+                let rpNew = (type(rpRec.replacement) == 'string') ? rpRec.replacement : '';
+                let rpK2 = rpCat + '\t' + rpOld + '\t' + rpNew;
+
+                if (rpK2 in rpIdx) {
+                    rpIdx[rpK2].count++;
+                    continue;
+                }
+                if (length(rpEnts) >= 20) continue;
+
+                let rpE2 = {
+                    class: rpCat,
+                    stage: '',
+                    message: rpMsg,
+                    cause: '',
+                    target: rpNew,
+                    legacy: rpOld,
+                    tool: '',
+                    exit: null,
+                    count: 1
+                };
+                rpIdx[rpK2] = rpE2;
+                push(rpEnts, rpE2);
+                continue;
+            }
+
+            /* ── 第二类：失败 ── */
+            let rpNames = [];
+            if (type(rpRec.package) == 'string' && length(rpRec.package))
+                push(rpNames, rpRec.package);
+            if (type(rpRec.missing_packages) == 'array')
+                for (let rpN in rpRec.missing_packages)
+                    if (type(rpN) == 'string' && length(rpN))
+                        push(rpNames, rpN);
+
+            for (let rpN in rpNames)
+                if (!(rpN in rpSeen)) {
+                    rpSeen[rpN] = true;
+                    if (length(rpPkgs) < 50)
+                        push(rpPkgs, rpN);
+                }
+
+            let rpErr = (type(rpRec.error_class) == 'string') ? rpRec.error_class : '';
+            let rpStage = (type(rpRec.stage) == 'string') ? rpRec.stage : '';
+            let rpCause = (type(rpRec.likely_cause) == 'string') ? rpRec.likely_cause : '';
+            let rpKey = rpErr + '\t' + rpStage + '\t' + rpMsg + '\t' + rpCause;
+
+            if (rpKey in rpIdx) {
+                rpIdx[rpKey].count++;
+                continue;
+            }
+            if (length(rpEnts) >= 20) continue;
+
+            let rpEnt = {
+                class: rpErr,
+                stage: rpStage,
+                message: rpMsg,
+                cause: rpCause,
+                target: (type(rpRec.target) == 'string') ? rpRec.target : '',
+                tool: (type(rpRec.tool) == 'string') ? rpRec.tool : '',
+                exit: (type(rpRec.exit_code) == 'int') ? rpRec.exit_code : null,
+                count: 1
+            };
+            rpIdx[rpKey] = rpEnt;
+            push(rpEnts, rpEnt);
+        }
+
+        if (length(rpEnts)) {
+            let rpOut = {
+                fingerprint: sprintf('%08x', rpHash) + '-' + sprintf('%x', length(rpRaw)),
+                total: length(rpEnts),
+                packages: rpPkgs,
+                entries: rpEnts
+            };
+            print('\n<script>window.__RESTORE_PKG_NOTICE__=');
+            print(replace(replace(replace(sprintf('%J', rpOut), /</g, '\\u003c'), /\u2028/g, '\\u2028'), /\u2029/g, '\\u2029'));
+            print(';</script><script src="/luci-static/resources/restore-pkg-notice.js"></script>\n');
+        }
+    }
+} catch (rpTop) { } %}
 RESTORE_PKG_NOTICE_PAYLOAD_EOF
 }
 
@@ -89,7 +238,7 @@ RESTORE_PKG_NOTICE_PAYLOAD_EOF
 # 参数：
 #   $1 - 目标模板路径（相对 immortalwrt 根）
 #   $2 - 锚点原文（必须逐字节匹配；用 grep -F 固定串匹配，不做正则）
-#   $3 - payload 文件路径（内容恰好一行）
+#   $3 - payload 文件路径（多行，内容是一整个 {% ... %} 模板块）
 #   $4 - 幂等标记串（注入后应恰好出现 1 次）
 #
 # 返回：
@@ -107,6 +256,7 @@ _restore_pkg_notice_patch_one() {
     local lineno=''
     local inserted=''
     local expected=''
+    local payload_lines=0
 
     if [[ ! -f "${target}" ]]; then
         log ERROR "restore-pkg-notice: 目标模板不存在：${target}（feeds 是否已 update？）"
@@ -147,19 +297,31 @@ _restore_pkg_notice_patch_one() {
         return 1
     fi
 
+    # payload 的行数决定插入多少行，也决定复核 1 要比对的行范围。
+    # 空行同样是 payload 的一部分（ucode 块内换行是普通空白），必须计入。
+    payload_lines="$(wc -l <"${payload_file}" | tr -d ' ')"
+    if [[ -z "${payload_lines}" || "${payload_lines}" -lt 1 ]]; then
+        log ERROR "restore-pkg-notice: payload 为空或行数无法确定：${payload_file}"
+        return 1
+    fi
+
     # 用 sed 的 r 命令「在指定行之后插入文件内容」：
     # payload 从文件读入，因此其内部的 / \ $ ` " 等字符完全不需要再做 sed 转义，
-    # 比把长行拼进 sed 的 a\ 命令要稳得多。
+    # 比把整段拼进 sed 的 a\ 命令要稳得多。
     if ! sed -i "${lineno}r ${payload_file}" "${target}"; then
         log ERROR "restore-pkg-notice: sed 注入失败：${target}"
         return 1
     fi
 
-    # 复核 1：锚点的下一行必须逐字节等于 payload（证明插在了正确位置、且只插了一行）。
-    inserted="$(sed -n "$((lineno + 1))p" "${target}")"
+    # 复核 1：锚点之后、恰好 payload_lines 行的整段内容必须逐字节等于 payload。
+    # 这里刻意比对**行范围**而不是单行：
+    #   只取第 lineno+1 行去比整份 payload 的写法，在多行 payload 下永远不成立，
+    #   会把一次正确的注入判成失败（或者反过来，逼着 payload 必须压成一行）。
+    #   比较整段既证明「插对了位置」，也证明「既没多插也没少插」。
+    inserted="$(sed -n "$((lineno + 1)),$((lineno + payload_lines))p" "${target}")"
     expected="$(cat "${payload_file}")"
     if [[ "${inserted}" != "${expected}" ]]; then
-        log ERROR "restore-pkg-notice: 注入结果校验失败（锚点下一行与 payload 不一致）：${target}"
+        log ERROR "restore-pkg-notice: 注入结果校验失败（锚点后 ${payload_lines} 行与 payload 不一致）：${target}"
         return 1
     fi
 
@@ -232,7 +394,7 @@ _restore_pkg_notice_install_asset() {
 # 对全部目标模板应用注入
 #
 # 功能:
-#   把单行 ucode payload 注入两个锚点，覆盖「已登录页面」与「未登录登录页」：
+#   把 ucode payload 注入两个锚点，覆盖「已登录页面」与「未登录登录页」：
 #     A. luci-base footer.ut —— 所有 include('footer') 的页面（view/sysauth/error404/csrftoken）
 #        锚点是 include 主题 footer 的那一行，因此注入内容落在主题页脚之后。
 #     B. argon footer_login.ut —— argon 登录页（主题自带 sysauth，不经过 luci-base footer.ut）

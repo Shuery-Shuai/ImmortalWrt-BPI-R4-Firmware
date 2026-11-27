@@ -33,10 +33,11 @@
 #
 # 状态机（详见仓库 .tmp-design/DESIGN.md）：
 #   attempt=0                 → 全量安装
-#   第一次有失败（attempt=1） → 写失败记录后重启
+#   第一次有失败（attempt=1） → 写失败记录后重启（仅当本轮装上了包）
 #   attempt=1                 → 只重试失败记录里的包
 #   二次仍有失败（attempt=2） → 写失败记录，不重启，退出并等 LuCI 提示
 #   attempt=2 且失败记录还在  → 直接退出，防止重启循环
+#   重启判据                  → 本轮真实安装数 > 0；全部"已安装跳过"时不重启
 #
 # 说明：
 #   该脚本专为 OpenWrt/ImmortalWrt 环境设计，使用 apk 包管理器。
@@ -98,6 +99,22 @@ RESTORE_NOTICE_FILE="${RESTORE_NOTICE_FILE:-/etc/backup/restore_pkg_notices.ndjs
 # 重启命令（测试时可用环境变量替换，避免真的重启）
 REBOOT_CMD="${REBOOT_CMD:-reboot -f}"
 
+# ── 即时重试策略 ──
+#
+# 背景：状态机的第二轮要等整机重启才发生，一次网络抖动就可能白白浪费
+# 整整一次重启（BPI-R4 这类设备一次开机要几分钟）。因此在**单轮之内**补一层
+# 廉价重试：把瞬时故障（下载中断、镜像临时 5xx）就地消化掉，避免升级成"失败"。
+#
+# 只对 fetch 类失败重试。package_not_found 是索引/包名的确定性问题，
+# 同一轮内重试必然得到同样结果，重试只会拖长流程。
+#
+# 默认 1 次：足以覆盖绝大多数瞬时抖动，同时把最坏耗时限制在可控范围。
+# 调大 APK_ADD_RETRIES 会成倍拉长最坏情况（每个失败包多花 retries × backoff）。
+APK_ADD_RETRIES="${APK_ADD_RETRIES:-1}"
+APK_ADD_RETRY_BACKOFF="${APK_ADD_RETRY_BACKOFF:-3}"
+APK_UPDATE_RETRIES="${APK_UPDATE_RETRIES:-2}"
+APK_UPDATE_RETRY_BACKOFF="${APK_UPDATE_RETRY_BACKOFF:-5}"
+
 # ================================================================
 # 全局状态变量（必须为全局，因为 trap 函数中需要访问）
 # ================================================================
@@ -113,12 +130,6 @@ opt_debug=0
 opt_quiet=0
 opt_console=0
 opt_force=0
-
-# ================================================================
-# 可用网络检测工具（脚本运行时自动探测）
-# ================================================================
-NET_TOOL=""
-NET_TOOL_OPTS=()
 
 #===============================================================================
 # 函数：show_help
@@ -141,22 +152,31 @@ show_help() {
                  $DEFAULT_BACKUP_FILE
 
 行为说明:
-  第一次运行：全量 best-effort 安装，有失败包则写入失败记录并重启。
+  第一次运行：全量 best-effort 安装。只要本轮装上了包就重启一次让它生效；
+              一个包都没装上则不重启（重启不会改变结果）。
   重启后    ：只重试上次失败的包。
   二次仍失败：不再重启，保留失败记录，登录 LuCI 时弹窗提示。
-  包名变动  ：安装前按内置对照表改写清单——
+  包名变动  ：安装前按内置对照表改写清单（改动只作用于本轮清单，不动原备份）——
               改名（如 noto-fonts-cjk）自动换成新名继续装，拆分出的包全部装齐；
-              合并（如 luci-app-argon-config）功能已并入现有包，直接丢弃该项。
-              两类都记入提醒记录，不算失败、不触发重启。
+              合并（如 luci-app-argon-config）功能已并入现有包，直接丢弃该项；
+              移除（_removed_package 表，默认空）旧名已不存在且无替代包，直接跳过。
+              三类都记入提醒记录，不算失败、不触发重启。
 
 相关文件:
   状态文件   $RESTORE_STATE_FILE
   失败记录   $RESTORE_FAILURE_FILE
   提醒记录   $RESTORE_NOTICE_FILE
 
+即时重试:
+  单轮内对瞬时故障就地重试，避免一次网络抖动就浪费掉整机重启：
+    apk update 失败     → 重试 APK_UPDATE_RETRIES 次（默认 2），间隔 APK_UPDATE_RETRY_BACKOFF 秒
+    apk add 下载类失败  → 重试 APK_ADD_RETRIES 次（默认 1），间隔 APK_ADD_RETRY_BACKOFF 秒
+  包不存在（package_not_found）是确定性失败，不重试。
+
 环境变量:
   LOG_LEVEL, LOG_TO_CONSOLE, MAX_LOG_FILES,
-  RESTORE_STATE_FILE, RESTORE_FAILURE_FILE, RESTORE_NOTICE_FILE, REBOOT_CMD
+  RESTORE_STATE_FILE, RESTORE_FAILURE_FILE, RESTORE_NOTICE_FILE, REBOOT_CMD,
+  APK_ADD_RETRIES, APK_ADD_RETRY_BACKOFF, APK_UPDATE_RETRIES, APK_UPDATE_RETRY_BACKOFF
 EOF
 }
 
@@ -210,6 +230,46 @@ parse_args() {
 #===============================================================================
 # 函数：apply_log_options
 #===============================================================================
+#-----------------------------------------------------------------------
+# 函数：_clamp_retry_config
+# 描述：把重试相关变量收敛成合法整数；非整数/负数一律回落到调用方给的默认值
+#       重试次数写错不该让脚本在 [ -gt ] 处崩掉——那会把一次可恢复的失败
+#       变成"环境不可用"，用户更难判断。
+# 参数：$1 变量名（按名字读取全局）  $2 默认值  $3 允许的最大值
+# 返回：无（就地改写全局变量）
+#-----------------------------------------------------------------------
+_clamp_retry_config() {
+    local name="$1"
+    local def="$2"
+    local max="$3"
+    local val="${!name:-}"
+
+    case "${val}" in
+    '' | *[!0-9]*) val="${def}" ;;
+    esac
+
+    # 上限保护：重试次数写成 100 会让一次失败卡住几十分钟
+    if [ "${val}" -gt "${max}" ]; then
+        val="${max}"
+    fi
+
+    printf -v "${name}" '%s' "${val}"
+}
+
+#-----------------------------------------------------------------------
+# 函数：apply_retry_options
+# 描述：在参数解析后统一收敛重试配置
+#-----------------------------------------------------------------------
+apply_retry_options() {
+    _clamp_retry_config APK_ADD_RETRIES 1 5
+    _clamp_retry_config APK_ADD_RETRY_BACKOFF 3 60
+    _clamp_retry_config APK_UPDATE_RETRIES 2 5
+    _clamp_retry_config APK_UPDATE_RETRY_BACKOFF 5 60
+
+    log_info "$log_file" "重试策略: apk add 重试 ${APK_ADD_RETRIES} 次(间隔 ${APK_ADD_RETRY_BACKOFF}s)，apk update 重试 ${APK_UPDATE_RETRIES} 次(间隔 ${APK_UPDATE_RETRY_BACKOFF}s)"
+    return 0
+}
+
 apply_log_options() {
     log_header "$log_file" "应用日志配置" "调试: $opt_debug, 静默: $opt_quiet, 控制台输出: $opt_console"
     [ "$opt_debug" -eq 1 ] && LOG_LEVEL=$LOG_DEBUG
@@ -220,27 +280,6 @@ apply_log_options() {
     return 0
 }
 
-#===============================================================================
-# 函数：detect_net_tool
-#===============================================================================
-detect_net_tool() {
-    log_header "$log_file" "探测可用的网络检测工具"
-    if command -v curl >/dev/null 2>&1; then
-        NET_TOOL="curl"
-        NET_TOOL_OPTS=(--connect-timeout 5 -kIs)
-    elif command -v wget >/dev/null 2>&1; then
-        NET_TOOL="wget"
-        NET_TOOL_OPTS=(--timeout=5 --no-check-certificate -q --spider)
-    elif command -v ping >/dev/null 2>&1; then
-        NET_TOOL="ping"
-        NET_TOOL_OPTS=(-c 1 -W 5)
-    else
-        NET_TOOL=""
-    fi
-    log_header "$log_file" "网络检测工具探测结果" "使用工具: ${NET_TOOL:-无}"
-}
-
-#===============================================================================
 # 状态文件读写（扁平 key=value，便于无 jq 解析）
 #===============================================================================
 
@@ -334,7 +373,7 @@ failure_packages() {
 }
 
 #===============================================================================
-# 已更名软件包的提醒
+# 包名变动（移除 / 改名 / 合并）的提醒
 #===============================================================================
 
 #-----------------------------------------------------------------------
@@ -364,6 +403,31 @@ _renamed_replacement() {
         ;;
     noto-fonts-emoji) printf '%s' 'noto-fonts-color-emoji' ;;
     luci-app-argon-config) printf '%s' 'luci-theme-argon' ;;
+    *) return 1 ;;
+    esac
+}
+
+#-----------------------------------------------------------------------
+# 函数：_removed_package
+# 描述：查「上游已彻底移除、没有替代包」的对照表。
+#
+#       为什么需要第三类：改名与合并都能落到某个现存的新包上，而有些包是真的
+#       被上游删掉了（依赖组件消失、维护者退出）。这类包照常安装必然走
+#       package_not_found → 白重启一轮 → 弹窗说"包可能已更名"，而它其实
+#       根本没得换。直接丢弃并说明，比让用户去找一个不存在的替代品好。
+#
+#       为什么表默认是空的：网上流传的"移除清单"里混着改名与临时下架，
+#       照着抄会把本该能装的包当成移除丢掉（少装 = 悄悄削减用户能力）。
+#       只登记**亲眼确认过**的移除项，一次一个，附上依据。
+#       宁可留空表让它走正常的失败提示，也不猜。
+#
+# 参数：$1 包名
+# 返回：0 = 已移除，stdout 输出一句移除原因（可为空）；1 = 不在表中
+#-----------------------------------------------------------------------
+_removed_package() {
+    case "$1" in
+    # 登记格式（去掉行首 # 即生效，原因必填，会展示给用户）：
+    #   some-old-pkg) printf '%s' '上游已移除该包，功能不再提供' ;;
     *) return 1 ;;
     esac
 }
@@ -501,7 +565,9 @@ _prune_resolved_notices() {
 # 函数：_apply_rename_table
 # 描述：按对照表就地改写安装清单。名字取 apply 而非 demote：两种策略里只有
 #       「合并」是丢弃，「改名」是换名后继续安装，用 demote（降级/摘除）会误导。
-#       分两种策略（见 _renamed_replacement / _rename_is_alias）：
+#       分三种策略（见 _removed_package / _renamed_replacement / _rename_is_alias）：
+#         · 已移除         → 直接跳过。旧名已不存在且没有替代包，
+#           照常安装只会失败并白白消耗一次整机重启。
 #         · 已合并（别名）→ 直接丢弃。功能已并入另一个包，旧名只是别名，
 #           再装一遍没有意义；合并后的包本就由 .config 内置。
 #         · 已改名         → 就地换成新包名继续安装。新名在 feed 里能装到，
@@ -511,56 +577,85 @@ _prune_resolved_notices() {
 # 返回：0 成功；1 改写失败
 # 副作用：_rp_demoted_count（丢弃数）、_rp_replaced_count（改名替换数）
 #-----------------------------------------------------------------------
-_apply_rename_table() {
-    local src_list="$1"
+# 函数：_classify_package
+# 描述：判定单个包在对照表里属于哪一类，并给出应当写入清单的替换项
+#
+# 三类互斥，判定顺序即优先级：
+#   移除 → 没有替代包，直接跳过（不装、不重试、不算失败）
+#   合并 → 旧名只是 PROVIDES 别名，功能已在合并后的包里，丢弃该项
+#   改名 → 旧名失效但新名能装，用新名继续
+#
+# 参数：$1 包名  $2 日志文件
+# 输出：stdout 每行一个应写入清单的包名（空表示跳过该项）
+# 返回：恒为 0；计数器通过全局 _rp_*_count 累加
+#-----------------------------------------------------------------------
+_classify_package() {
+    local pkg="$1"
     local log_file="$2"
+    local replacement="" remove_reason=""
 
-    _rp_demoted_count=0
-    _rp_replaced_count=0
-    [ -s "$src_list" ] || return 0
+    # 变量必须先清空再取：查表函数未命中时返回 1 且不输出，
+    # 若直接 if assignment=$(...)，未命中会让变量保留上一次的旧值，
+    # 后续拼接日志时就会引用到错的包名。
+    if remove_reason=$(_removed_package "$pkg"); then
+        # 被上游移除：不装、不重试、不算失败，只留一条说明。
+        # 若当作失败处理，会先消耗一次整机重启去重试一个不可能装上的包。
+        record_notice "removed_package" "$pkg" "" \
+            "旧包名 ${pkg} 已被上游移除${remove_reason:+（${remove_reason}）}，恢复时已自动跳过。" || true
+        log_info "$log_file" "包已被上游移除，跳过该项: ${pkg}${remove_reason:+（${remove_reason}）}"
+        _rp_removed_count=$((_rp_removed_count + 1))
+        return 0
+    fi
 
-    local kept="${src_list}.kept"
-    : >"$kept" || return 1
-
-    local pkg replacement
-    while IFS= read -r pkg; do
-        [ -n "$pkg" ] || continue
-
-        # 先清空再取：_renamed_replacement 未命中时返回 1 且不输出，
-        # 若直接 if assignment=$(...)，未命中会让变量保持上一次的旧值（或未定义），
-        # 后续拼接日志时就会引用到错的新包名。
-        replacement=''
-        if replacement=$(_renamed_replacement "$pkg") && [ -n "$replacement" ]; then
-            if _rename_is_alias "$pkg"; then
-                # 合并类：功能已并入另一个包，旧名只是别名。直接丢弃——
-                # 再装一遍旧名只会把合并后的包重复声明一次，没有意义；
-                # 而合并后的包本就在固件里（例如 luci-theme-argon 由 .config 内置）。
-                record_notice "merged_package" "$pkg" "$replacement" \
-                    "软件包已合并入 ${replacement}：${pkg} 的功能现由它提供，无需单独安装。" || true
-                log_info "$log_file" "包名已合并，丢弃该项: ${pkg}（功能由 ${replacement} 提供）"
-                _rp_demoted_count=$((_rp_demoted_count + 1))
-            else
-                # 改名类：旧名在 feed 里已不存在，但新名可以直接装。
-                # replacement 可能含多个包名（一个旧目录拆成多个包），逐个写入清单——
-                # 少装一个就等于少一种字形，而这正是用户当初装这个包的目的。
-                # 说明里用「、」分隔包名，避免三个包名挤在一起难以辨认；
-                # replacement 字段本身仍保持空格分隔（prune 靠它逐词判是否装齐）。
-                _rp_desc=$(printf '%s' "$replacement" | tr ' ' '、')
-                record_notice "renamed_package" "$pkg" "$replacement" \
-                    "软件包已更名：${pkg} 现拆分为 ${_rp_desc}，已自动改用新包名安装。" || true
-                log_info "$log_file" "包名已变更，改用新名安装: ${pkg} -> ${replacement}"
-                for _rp_new in $replacement; do
-                    [ -n "$_rp_new" ] || continue
-                    printf '%s\n' "$_rp_new" >>"$kept" || true
-                done
-                _rp_replaced_count=$((_rp_replaced_count + 1))
-            fi
-        else
-            printf '%s\n' "$pkg" >>"$kept" || true
+    replacement=""
+    if replacement=$(_renamed_replacement "$pkg") && [ -n "$replacement" ]; then
+        if _rename_is_alias "$pkg"; then
+            # 合并类：功能已并入另一个包，旧名只是别名。直接丢弃——
+            # 再装一遍旧名只会把合并后的包重复声明一次，没有意义；
+            # 而合并后的包本就在固件里（例如 luci-theme-argon 由 .config 内置）。
+            record_notice "merged_package" "$pkg" "$replacement" \
+                "旧包名 ${pkg} 已并入 ${replacement}，功能由合并后的包提供，无需单独安装。" || true
+            log_info "$log_file" "包名已合并，丢弃该项: ${pkg}（功能由 ${replacement} 提供）"
+            _rp_demoted_count=$((_rp_demoted_count + 1))
+            return 0
         fi
-    done <"$src_list"
 
-    # 同一个新包名可能被多个旧名映射到（或列表里本来就有），去重保序后写回。
+        # 改名类：旧名在 feed 里已不存在，但新名可以直接装。
+        # replacement 可能含多个包名（一个旧目录拆成多个包），逐个输出——
+        # 少装一个就等于少一种字形，而这正是用户当初装这个包的目的。
+        #
+        # 文案只说「旧名已不存在、已改用新名」，不在这里拼新包名：
+        #   · 新包名清单由 replacement 字段逐词给出，前端按数组渲染成等宽标签；
+        #   · 曾经用 tr 把空格换成「、」拼进文案，但 tr 按字节映射——
+        #     一个 3 字节的中文字符会连续吃掉后面 3 个字节，实际产出是乱码。
+        # 文案统一以「旧包名 」开头，前端据此切出旧包名（见 renameOldName）。
+        record_notice "renamed_package" "$pkg" "$replacement" \
+            "旧包名 ${pkg} 在上游已不存在，恢复时已自动改用下列新包名安装。" || true
+        log_info "$log_file" "包名已变更，改用新名安装: ${pkg} -> ${replacement}"
+        _rp_replaced_count=$((_rp_replaced_count + 1))
+        for _rp_new in $replacement; do
+            [ -n "$_rp_new" ] || continue
+            printf '%s\n' "$_rp_new"
+        done
+        return 0
+    fi
+
+    # 不在对照表里：原样保留
+    printf '%s\n' "$pkg"
+    return 0
+}
+
+#-----------------------------------------------------------------------
+# 函数：_rewrite_list_dedup
+# 描述：把去重后的清单原子写回原文件（保持首次出现的顺序）
+# 参数：$1 目标清单文件  $2 待写入的中间文件  $3 日志文件
+# 返回：0 成功；1 去重或写回失败（已清理临时文件）
+#-----------------------------------------------------------------------
+_rewrite_list_dedup() {
+    local src_list="$1"
+    local kept="$2"
+    local log_file="$3"
+
     if ! awk 'NF && !seen[$0]++' "$kept" >"${kept}.dedup" 2>/dev/null; then
         rm -f "$kept" "${kept}.dedup" 2>/dev/null || true
         log_error "$log_file" "无法去重安装清单"
@@ -573,13 +668,54 @@ _apply_rename_table() {
         return 1
     fi
     rm -f "$kept" 2>/dev/null || true
+    return 0
+}
 
+#-----------------------------------------------------------------------
+# 函数：_log_rename_summary
+# 描述：输出本轮包名变动的汇总（只在对应计数 > 0 时各记一条）
+# 参数：$1 日志文件
+# 返回：恒为 0
+#-----------------------------------------------------------------------
+_log_rename_summary() {
+    local log_file="$1"
+
+    if [ "$_rp_removed_count" -gt 0 ]; then
+        log_info "$log_file" "已跳过 $_rp_removed_count 个被上游移除的包（无替代包）"
+    fi
     if [ "$_rp_demoted_count" -gt 0 ]; then
         log_info "$log_file" "已丢弃 $_rp_demoted_count 个已合并项（功能由合并后的包提供）"
     fi
     if [ "$_rp_replaced_count" -gt 0 ]; then
         log_info "$log_file" "已改用新包名 $_rp_replaced_count 个（无需手动处理）"
     fi
+    return 0
+}
+
+#-----------------------------------------------------------------------
+_apply_rename_table() {
+    local src_list="$1"
+    local log_file="$2"
+    local kept pkg
+
+    _rp_demoted_count=0
+    _rp_replaced_count=0
+    _rp_removed_count=0
+    [ -s "$src_list" ] || return 0
+
+    kept="${src_list}.kept"
+    : >"$kept" || return 1
+
+    # 逐行分类后写入 kept；具体判定与文案都在 _classify_package 里
+    while IFS= read -r pkg; do
+        [ -n "$pkg" ] || continue
+        _classify_package "$pkg" "$log_file" >>"$kept" || true
+    done <"$src_list"
+
+    # 同一个新包名可能被多个旧名映射到（或列表里本来就有），去重保序后写回
+    _rewrite_list_dedup "$src_list" "$kept" "$log_file" || return 1
+
+    _log_rename_summary "$log_file"
     return 0
 }
 
@@ -699,11 +835,13 @@ _failure_extra_field() {
         local raw="${value#@}"
         local -a arr_items=()
         if [ -n "$raw" ]; then
-            local IFS_SAVE="$IFS"
+            # 局部名用小写：Google 风格里大写只留给全局常量，
+            # 而且这里存的是"旧分隔符"而不是常量，名字也要如实反映语义。
+            local saved_ifs="$IFS"
             IFS=','
             # shellcheck disable=SC2206
             arr_items=($raw)
-            IFS="$IFS_SAVE"
+            IFS="$saved_ifs"
         fi
         fragment=",\"$key\":$(json_string_array "${arr_items[@]:-}")"
     elif [ "$key" = "exit_code" ] && [[ "$value" =~ ^-?[0-9]+$ ]]; then
@@ -871,11 +1009,14 @@ log_exit_summary() {
 # 名字统一带 _rp_ 前缀，避免与已有全局（backup_resolv_flag / firewall_type / log_file）混淆。
 _rp_start_time=0   # 脚本启动时间（epoch 秒），用于耗时统计
 _rp_backup_file="" # 备份包列表文件路径
-_rp_test_url=""    # 用于连通性检测与失败记录的软件源 URL
+_rp_test_url=""    # 首个软件源 URL（仅用于日志与失败记录的 target 字段）
 _rp_work_list=""   # 本轮待安装包清单（临时文件）
 _rp_attempt_prev=0 # 进入本轮前的 attempt 值
 _rp_is_retry=0     # 本轮是否为「只重试失败包」
 _rp_failed_count=0 # 本轮安装失败的包数
+_rp_index_fresh=0  # 连通性检测阶段是否已经成功刷新过索引（1=是，可跳过重复刷新）
+_rp_installed_count=0 # 本轮真正装上的包数（已安装而跳过的不算）
+_rp_attempted_count=0 # 本轮实际尝试过的包数（用于区分「没装」与「没跑」）
 
 #-----------------------------------------------------------------------
 # 函数：_acquire_lock
@@ -972,6 +1113,8 @@ _resolve_run_plan() {
 #-----------------------------------------------------------------------
 # 函数：_ensure_network
 # 描述：第一阶段——确保软件源可达；首次失败则临时改 DNS 与放行防火墙后重试一次
+#       判定方式见 check_network：用 apk update 的真实结果，
+#       只要还有源能取到索引就继续，全部取不到才中止。
 # 返回：0 可达；1 不可达（已记录错误与退出摘要，且本轮不推进状态）
 # 副作用：置 backup_resolv_flag / firewall_type 供 EXIT trap 复原
 #-----------------------------------------------------------------------
@@ -1032,33 +1175,92 @@ _install_phase() {
     # 失败计数通过全局变量回传，不用 $(...) 捕获：
     # 控制台模式下日志函数会写 stdout，用命令替换取返回值会被日志污染。
     INSTALL_FAILED_COUNT=0
+    INSTALL_OK_COUNT=0
+    INSTALL_ATTEMPTED_COUNT=0
+    INSTALL_RETRIED_COUNT=0
     install_packages_one_by_one "$_rp_work_list" "$((_rp_attempt_prev + 1))" "$log_file" || true
     _rp_failed_count="${INSTALL_FAILED_COUNT:-0}"
     [[ "$_rp_failed_count" =~ ^[0-9]+$ ]] || _rp_failed_count=0
+    _rp_installed_count="${INSTALL_OK_COUNT:-0}"
+    [[ "$_rp_installed_count" =~ ^[0-9]+$ ]] || _rp_installed_count=0
+    _rp_attempted_count="${INSTALL_ATTEMPTED_COUNT:-0}"
+    [[ "$_rp_attempted_count" =~ ^[0-9]+$ ]] || _rp_attempted_count=0
 
     rm -f "$_rp_work_list"
-    log_info "$log_file" "本轮安装完成，失败包数量: $_rp_failed_count"
+
+    # 「靠重试救回来」是镜像健康度的直接指标：
+    # 这个数字持续大于 0，说明镜像不稳；一直为 0 而失败数很高，说明是包本身的问题。
+    if [ "${INSTALL_RETRIED_COUNT:-0}" -gt 0 ]; then
+        log_info "$log_file" "其中 ${INSTALL_RETRIED_COUNT} 个包在第 2 次尝试才装成功（镜像可能不稳定）"
+    fi
+
+    log_info "$log_file" "本轮安装完成：实际安装 $_rp_installed_count 个，失败 $_rp_failed_count 个（共尝试 $_rp_attempted_count 个）"
+
+    # 清理单次的 apk 输出。必须放在这里而不是安装循环里：
+    # _record_* 系列函数要在失败当场读 APK_LAST_OUTPUT 做分类与摘录，
+    # 提前删掉会让失败记录失去 message / related_warning。
+    # 每轮只留最后一份（同名覆盖），一次运行最多 2 个文件，
+    # 但恢复进程会在开机早期反复触发，不留就会在 tmpfs 里累积到重启。
+    rm -f /tmp/apk-add-*.log /tmp/apk-update-*.log 2>/dev/null || true
+
     return 0
 }
 
 #-----------------------------------------------------------------------
 # 函数：_finalize_all_success
-# 描述：全部成功的收尾：清状态；首次全量成功则删备份并重启一次
+# 描述：全部成功的收尾。是否重启只看一件事：本轮**有没有真的装上新包**。
+#
+#       为什么不再看 attempt_prev / is_retry：
+#         · 旧条件「attempt_prev=0 且 is_retry=0」把「首次全量」当成重启理由，
+#           可第二轮若因失败记录缺失而回退成全量，is_retry 仍是 0，
+#           于是第二轮成功也会被当成首次全量，白白多重启一次；
+#         · 真正需要重启的唯一理由是「有包刚装进磁盘、需要重新初始化」。
+#           一个包都没装（全部已安装而跳过、或清单本来就空）时重启毫无意义，
+#           反而会让用户多等一次重启。
+#       因此判据换成 _rp_installed_count > 0。
+#
+#       删备份必须先于 state_clear 之后再谈重启：
+#       旧实现「先删备份再重启」，一旦重启命令失败或中途断电，备份已经没了，
+#       下次开机只会看到「备份文件不存在」并永久跳过恢复。现在改为
+#       重启成功返回后才删，重启失败则保留备份，下次开机仍可继续。
 # 返回：main 的退出码（重启失败时为 1，其余 0）
 #-----------------------------------------------------------------------
 _finalize_all_success() {
+    local rc=0
+
     state_clear
 
-    if [ "$_rp_attempt_prev" -eq 0 ] && [ "$_rp_is_retry" -eq 0 ]; then
-        # 首次全量成功：保持既有行为，删除备份文件并重启一次
-        rm -f "$_rp_backup_file" 2>/dev/null || true
-        log_info "$log_file" "已删除备份文件: $_rp_backup_file"
-        do_reboot "$_rp_start_time" "$log_file"
-        return $?
+    if [ "$_rp_installed_count" -gt 0 ]; then
+        # 判据只认"有没有装上新包"，不认"第几轮"：
+        # 第二轮补装的包同样需要重新初始化才生效，跳过重启会让用户以为装好了其实没有。
+        # 代价是重试轮成功后还会再重启一次；这是正确性优先的选择。
+        if [ "$_rp_is_retry" -eq 1 ]; then
+            log_info "$log_file" "重试轮补装 $_rp_installed_count 个包，同样需要重启才能生效"
+        else
+            log_info "$log_file" "本轮新安装 $_rp_installed_count 个包，重启以使其生效"
+        fi
+
+        # 先重启，成功返回后再消费备份：重启失败时备份必须留着，
+        # 否则下一次开机将因「备份文件不存在」而永久跳过恢复。
+        if do_reboot "$_rp_start_time" "$log_file"; then
+            rm -f "$_rp_backup_file" 2>/dev/null || true
+            log_info "$log_file" "已删除备份文件: $_rp_backup_file"
+        else
+            log_warn "$log_file" "重启未成功，保留备份文件以便下次开机继续: $_rp_backup_file"
+            rc=1
+        fi
+        return "$rc"
     fi
 
-    # 第二轮成功（或首轮无失败）：按需求「结束」，不再重启
-    log_header "$log_file" "恢复完成" "所有软件包验证成功"
+    # 一个包都没装：不重启。备份仍然删掉——它已经完成使命，
+    # 留着只会让下次开机重复解析一遍同样的清单。
+    if [ "$_rp_attempted_count" -gt 0 ]; then
+        log_header "$log_file" "恢复完成" "全部软件包已就绪，本轮无需安装，不重启"
+    else
+        log_header "$log_file" "恢复完成" "所有软件包验证成功"
+    fi
+    rm -f "$_rp_backup_file" 2>/dev/null || true
+    log_info "$log_file" "已删除备份文件: $_rp_backup_file"
     log_exit_summary "$log_file" 0 "$_rp_start_time"
     return 0
 }
@@ -1076,10 +1278,22 @@ _finalize_with_failures() {
     state_write "$attempt_now" "failed"
 
     if [ "$attempt_now" -eq 1 ]; then
-        # 第一次失败 → 重启，重启后只重试失败包
-        log_warn "$log_file" "第一次尝试仍有 $_rp_failed_count 个包失败，记录后将重启重试"
-        do_reboot "$_rp_start_time" "$log_file"
-        return $?
+        if [ "$_rp_installed_count" -gt 0 ]; then
+            # 第一次失败 → 重启重试。状态已写盘，重启后只重试失败包。
+            # 备份绝不能在这里删：第二轮还要靠失败记录重试，备份是兜底清单。
+            log_warn "$log_file" "第一次尝试：装好 $_rp_installed_count 个，仍有 $_rp_failed_count 个失败，记录后将重启重试"
+            do_reboot "$_rp_start_time" "$log_file"
+            return $?
+        fi
+
+        # 一个包都没装成功，重启也不会改变结果（下一轮同样是全失败），
+        # 因此不重启，直接留失败记录等 LuCI 提示；把 attempt 落到 2，
+        # 免得下次开机又白跑一遍注定失败的完整清单。
+        state_write 2 "failed"
+        log_error "$log_file" "第一次尝试 $_rp_failed_count 个包全部失败，无包可装，不重启"
+        log_info "$log_file" "失败明细见: $RESTORE_FAILURE_FILE"
+        log_exit_summary "$log_file" 1 "$_rp_start_time"
+        return 1
     fi
 
     # attempt=2：二次失败，不再重启
@@ -1116,7 +1330,7 @@ main() {
 
     parse_args "$@"
     apply_log_options
-    detect_net_tool
+    apply_retry_options
 
     _acquire_lock || exit 1
 
@@ -1128,7 +1342,6 @@ main() {
 
     log_header "$log_file" "脚本启动" "备份文件=$_rp_backup_file"
     log_info "$log_file" "日志级别: $LOG_LEVEL, 控制台输出: $LOG_TO_CONSOLE"
-    [ -n "$NET_TOOL" ] && log_info "$log_file" "网络检测工具: $NET_TOOL"
 
     # 第零阶段：状态判定（决定装哪些包）。10 = 本轮无事可做，按成功结束。
     _resolve_run_plan || phase_rc=$?
@@ -1248,7 +1461,9 @@ extract_user_packages() {
 
 #-----------------------------------------------------------------------
 # 函数：get_apk_repo_url
-# 描述：从系统 apk 配置中获取第一个可用的软件源 URL
+# 描述：从系统 apk 配置中获取第一个软件源 URL
+#       仅用于日志与失败记录的 target 字段——连通性判断已改由 apk update 自己做，
+#       不再用这个 URL 单独探测（探测方式与 apk 实际取索引不等价）。
 #-----------------------------------------------------------------------
 get_apk_repo_url() {
     local url=""
@@ -1311,7 +1526,20 @@ init_log_file() {
 
 #-----------------------------------------------------------------------
 # 函数：check_network
-# 描述：使用探测到的网络工具测试与软件源的连通性
+# 描述：用 apk update 判断「软件源到底能不能取到索引」
+#
+#       为什么不再用 curl/wget/ping 探一个 URL：
+#         · 固件不一定带 curl 或 wget（只带 uclient-fetch 时探测全部失效），
+#           最终会回落到 ping；而 ping 只证明主机活着，证明不了索引可取——
+#           一个 404 的 packages.adb 在 ping 看来完全正常。
+#         · HEAD 请求和 apk 真实取索引的方式不等价（重定向/UA/Range 都可能不同）。
+#       判据只有一条：apk 自己说不可用的源，是否已经等于源的总数。
+#         · 全部不可用  → 真的是网络/源配置问题，本轮中止；
+#         · 部分不可用  → 网络是通的，个别源失效由 replace-apk-source.sh 处理，
+#                         不该在这里拦下整个恢复流程。
+#
+# 参数：$1 测试 URL（仅用于日志，实际探测走 repositories）  $2 日志文件
+# 返回：0 = 至少有一个源可用；1 = 所有源都取不到（或 apk 不可用）
 #-----------------------------------------------------------------------
 check_network() {
     local test_url="$1"
@@ -1319,42 +1547,75 @@ check_network() {
     local retries=3
     local i=1
 
-    if [ -z "$NET_TOOL" ]; then
-        log_error "$log_file" "无可用的网络检测工具 (curl/wget/ping 均未找到)"
+    if ! command -v apk >/dev/null 2>&1; then
+        log_error "$log_file" "apk 不可用，无法判断软件源连通性"
         return 1
     fi
 
     while [ "$i" -le "$retries" ]; do
-        log_debug "$log_file" "尝试连接 $test_url (第 $i/$retries 次) 使用 $NET_TOOL..."
-        local success=0
-        local err_out=""
+        local out rc unavail total
 
-        case "$NET_TOOL" in
-        curl)
-            err_out=$(curl "${NET_TOOL_OPTS[@]}" "$test_url" 2>&1) && success=1 || true
-            ;;
-        wget)
-            err_out=$(wget "${NET_TOOL_OPTS[@]}" "$test_url" 2>&1) && success=1 || true
-            ;;
-        ping)
-            local host
-            host=$(echo "$test_url" | awk -F/ '{print $3}')
-            err_out=$(ping "${NET_TOOL_OPTS[@]}" "$host" 2>&1) && success=1 || true
-            ;;
-        esac
+        # --cache-max-age 0 强制真正联网；命中缓存的话"网络已断"也会显示 OK。
+        # 不指定 --repositories-file，就用系统真实配置——这才是要验证的对象。
+        out=$(apk update --cache-max-age 0 2>&1) && rc=0 || rc=$?
 
-        if [ "$success" -eq 1 ]; then
-            log_info "$log_file" "网络连接正常 (URL: $test_url)"
+        unavail=$(printf '%s\n' "$out" |
+            sed -n 's/^\([0-9][0-9]*\) unavailable.*/\1/p' | head -n 1)
+        [ -n "$unavail" ] || unavail=0
+
+        total=$(count_configured_sources)
+
+        if [ "$rc" -eq 0 ]; then
+            log_info "$log_file" "软件源索引刷新成功（$test_url）"
+            # 索引刚刚联网拉过，第二阶段的 apk update 可以直接跳过：
+            # 同一轮里连续两次全量刷新既慢又没意义（第二次只是命中刚写的缓存）。
+            _rp_index_fresh=1
             return 0
-        else
-            log_warn "$log_file" "网络检查失败 (尝试 $i/$retries): URL=$test_url, 工具=$NET_TOOL"
-            log_debug "$log_file" "错误输出: $err_out"
         fi
-        sleep $((i * 2))
+
+        # 部分源失效：网络是通的。把结论说清楚，但放行本轮恢复，
+        # 别让一个社区仓库 404 卡住整台设备的软件包恢复。
+        if [ "$total" -gt 0 ] && [ "$unavail" -lt "$total" ]; then
+            log_warn "$log_file" "部分软件源不可用（$unavail/$total），网络本身正常，继续恢复"
+            return 0
+        fi
+
+        log_warn "$log_file" "软件源全部不可用（$unavail/$total，退出码 $rc），第 $i/$retries 次"
+        if [ "$i" -lt "$retries" ]; then
+            sleep $((i * 2))
+        fi
         i=$((i + 1))
     done
-    log_error "$log_file" "网络不可达，所有重试已用完"
+
+    log_error "$log_file" "所有软件源均无法访问，所有重试已用完"
     return 1
+}
+
+#-----------------------------------------------------------------------
+# 函数：count_configured_sources
+# 描述：统计系统当前生效的软件源条数（跳过注释与空行）
+#       与 check_network 的分母：apk 只报"不可用数量"，不给总数，
+#       因此总数必须自己数，才能区分"部分失效"与"全部失效"。
+# 返回：stdout 输出条数（0 表示没有配置任何源）
+#-----------------------------------------------------------------------
+count_configured_sources() {
+    local total=0 f n
+
+    for f in /etc/apk/repositories; do
+        [ -f "$f" ] || continue
+        n=$(awk '/^[[:space:]]*#/ {next} /^https?:\/\// {c++} END {print c+0}' "$f" 2>/dev/null || echo 0)
+        total=$((total + n))
+    done
+
+    if [ -d /etc/apk/repositories.d ]; then
+        for f in /etc/apk/repositories.d/*.list; do
+            [ -f "$f" ] || continue
+            n=$(awk '/^[[:space:]]*#/ {next} /^https?:\/\// {c++} END {print c+0}' "$f" 2>/dev/null || echo 0)
+            total=$((total + n))
+        done
+    fi
+
+    printf '%s' "$total"
 }
 
 #-----------------------------------------------------------------------
@@ -1365,22 +1626,52 @@ check_network() {
 #-----------------------------------------------------------------------
 update_package_lists() {
     local log_file="${1:-/dev/null}"
+    local attempt=0
+    local max_attempts=$((APK_UPDATE_RETRIES + 1))
+    local ret=0
+
+    # 连通性检测阶段刚刚联网刷新过索引：这一轮不必再全量刷一次。
+    # 但 APK_LAST_OUTPUT 仍要准备一个文件，下游 extract_last_warning 可能读它。
+    if [ "$_rp_index_fresh" -eq 1 ]; then
+        log_info "$log_file" "索引刚在连通性检测阶段刷新过，跳过重复刷新"
+        APK_LAST_OUTPUT="/tmp/apk-update-$$.log"
+        : >"$APK_LAST_OUTPUT" 2>/dev/null || true
+        return 0
+    fi
+
     log_info "$log_file" "开始更新软件包列表..."
 
     APK_LAST_OUTPUT="/tmp/apk-update-$$.log"
-    local ret=0
-    apk update >"$APK_LAST_OUTPUT" 2>&1 || ret=$?
 
-    if [ "$ret" -ne 0 ]; then
-        log_warn "$log_file" "软件源更新部分失败 (退出码 $ret)"
-        {
-            echo "--- apk update 输出开始 ---"
-            cat "$APK_LAST_OUTPUT" 2>/dev/null || true
-            echo "--- apk update 输出结束 ---"
-        } >>"$log_file"
-    else
-        log_info "$log_file" "软件源更新成功"
-    fi
+    # 索引是后续逐包安装的前提：索引没下来，逐包 apk add 会成片失败，
+    # 而那会直接消耗掉状态机仅有的一次重试机会（要整机重启才轮到第二轮）。
+    # 因此这里就地重试，把镜像抖动挡在重启之前。
+    while [ "$attempt" -lt "$max_attempts" ]; do
+        attempt=$((attempt + 1))
+        ret=0
+        apk update >"$APK_LAST_OUTPUT" 2>&1 || ret=$?
+
+        if [ "$ret" -eq 0 ]; then
+            if [ "$attempt" -gt 1 ]; then
+                log_info "$log_file" "软件源更新在第 $attempt 次尝试成功"
+            else
+                log_info "$log_file" "软件源更新成功"
+            fi
+            return 0
+        fi
+
+        if [ "$attempt" -lt "$max_attempts" ]; then
+            log_warn "$log_file" "软件源更新失败 (退出码 $ret)，第 $attempt/$max_attempts 次；${APK_UPDATE_RETRY_BACKOFF}s 后重试"
+            sleep "$APK_UPDATE_RETRY_BACKOFF"
+        fi
+    done
+
+    log_warn "$log_file" "软件源更新共尝试 $attempt 次仍失败 (退出码 $ret)，继续尝试逐包安装"
+    {
+        echo "--- apk update 输出开始 ---"
+        cat "$APK_LAST_OUTPUT" 2>/dev/null || true
+        echo "--- apk update 输出结束 ---"
+    } >>"$log_file"
     return "$ret"
 }
 
@@ -1531,23 +1822,58 @@ _install_one_package() {
     fi
 
     APK_LAST_OUTPUT="/tmp/apk-add-$$.log"
-    apk add --no-cache "$pkg" >"$APK_LAST_OUTPUT" 2>&1 || ret=$?
 
-    if [ "$ret" -eq 0 ]; then
-        log_info "$log_file" "安装成功: $pkg"
-        return 0
-    fi
+    # 单轮内的即时重试：只针对 fetch 类（下载中断、镜像临时不可用）。
+    # package_not_found 是确定性的——同一轮里重试得到的是同一个结果，
+    # 只会白白拖长流程，所以第一次就放弃。
+    local try=0
+    local max_tries=$((APK_ADD_RETRIES + 1))
+    local cls stage error_class
 
-    log_warn "$log_file" "安装失败: $pkg (退出码 $ret)"
+    while [ "$try" -lt "$max_tries" ]; do
+        try=$((try + 1))
+        ret=0
+        apk add --no-cache "$pkg" >"$APK_LAST_OUTPUT" 2>&1 || ret=$?
+
+        if [ "$ret" -eq 0 ]; then
+            if [ "$try" -gt 1 ]; then
+                log_info "$log_file" "安装成功: $pkg（第 $try 次尝试）"
+                INSTALL_RETRIED_COUNT=$((INSTALL_RETRIED_COUNT + 1))
+            else
+                log_info "$log_file" "安装成功: $pkg"
+            fi
+            INSTALLED_THIS_PKG=1
+            return 0
+        fi
+
+        cls=$(classify_apk_failure "$APK_LAST_OUTPUT")
+        stage="${cls%%|*}"
+        error_class="${cls##*|}"
+
+        # 确定性失败：不重试
+        if [ "$error_class" != "fetch_error" ]; then
+            break
+        fi
+
+        if [ "$try" -lt "$max_tries" ]; then
+            log_warn "$log_file" "安装失败: $pkg (退出码 $ret，下载类问题)，${APK_ADD_RETRY_BACKOFF}s 后第 $try/$max_tries 次重试"
+            sleep "$APK_ADD_RETRY_BACKOFF"
+        fi
+    done
+
+    log_warn "$log_file" "安装失败: $pkg (退出码 $ret，已尝试 $try 次)"
 
     # ---- 失败分类与 NDJSON 记录 ----
-    local cls stage error_class message related_warning
-    cls=$(classify_apk_failure "$APK_LAST_OUTPUT")
-    stage="${cls%%|*}"
-    error_class="${cls##*|}"
+    local message related_warning
 
     message=$(_failure_message_line "$APK_LAST_OUTPUT" "apk add failed with exit code $ret")
     related_warning=$(sed -n 's/^WARNING:[[:space:]]*//p' "$APK_LAST_OUTPUT" 2>/dev/null | head -n 1 || true)
+
+    # 重试次数一并记进失败记录：事后能区分"一次就挂"与"重试过仍挂"，
+    # 前者多半是真问题，后者更像持续性的镜像故障。
+    if [ "$try" -gt 1 ]; then
+        related_warning="${related_warning:+${related_warning}; }重试 $((try - 1)) 次后仍失败"
+    fi
 
     if [ "$error_class" = "package_not_found" ]; then
         _record_package_not_found "$APK_LAST_OUTPUT" "$pkg" "$attempt" "$message" "$related_warning"
@@ -1572,6 +1898,8 @@ install_packages_one_by_one() {
     local attempt="$2"
     local log_file="$3"
     local failed=0
+    local installed=0
+    local attempted=0
     local idx=0
     local total
     total=$(wc -l <"$pkg_list" | tr -d ' ')
@@ -1585,12 +1913,26 @@ install_packages_one_by_one() {
             printf '\r[%d/%d] 安装 %-40s' "$idx" "$total" "$pkg" >&2
         fi
 
-        _install_one_package "$pkg" "$attempt" "$log_file" || failed=$((failed + 1))
+        # 每次调用前清零，由 _install_one_package 在「apk add 真的成功」时置 1。
+        # 已安装而跳过的不置位：那没有改变系统状态，不该让本轮被算成"装上了包"。
+        INSTALLED_THIS_PKG=0
+        if ! _install_one_package "$pkg" "$attempt" "$log_file"; then
+            failed=$((failed + 1))
+        fi
+        attempted=$((attempted + 1))
+
+        if [ "${INSTALLED_THIS_PKG:-0}" -eq 1 ]; then
+            installed=$((installed + 1))
+        fi
     done <"$pkg_list"
 
     [ "${LOG_TO_CONSOLE:-0}" -eq 1 ] && printf '\n' >&2
 
     INSTALL_FAILED_COUNT="$failed"
+    INSTALL_OK_COUNT="$installed"
+    INSTALL_ATTEMPTED_COUNT="$attempted"
+    # INSTALL_RETRIED_COUNT 由 _install_one_package 直接累加，这里不覆盖：
+    # 它是"跨包累计"的计数，重置只能发生在 _install_phase 开始时。
     return 0
 }
 
@@ -1609,6 +1951,15 @@ backup_resolv_config() {
     } >/etc/resolv.conf 2>/dev/null || true
 }
 
+#-----------------------------------------------------------------------
+# 函数：detect_firewall_type
+# 描述：探测系统正在使用的防火墙实现
+#
+#       先试 nft 再试 iptables：OpenWrt 22.03+ 默认 nftables，
+#       但老机型仍可能只有 iptables。两个都不可用时返回空串，
+#       调用方据此跳过临时规则（而不是假装设置成功）。
+# 返回：stdout "nftables" / "iptables" / ""
+#-----------------------------------------------------------------------
 detect_firewall_type() {
     if command -v nft >/dev/null 2>&1 && nft list ruleset >/dev/null 2>&1; then
         echo "nftables"
@@ -1619,6 +1970,16 @@ detect_firewall_type() {
     fi
 }
 
+#-----------------------------------------------------------------------
+# 函数：set_temp_firewall_rules
+# 描述：临时放行出站 DNS/HTTP/HTTPS，让恢复流程能连上软件源
+#
+#       只放行出站四类流量，不碰入站、不改默认策略：
+#       恢复只需要下载，多余的口子会在最不该出事的时刻扩大攻击面。
+#       这些规则必须由 restore_original_config 清掉（EXIT trap 负责调用）。
+# 参数：$1 防火墙类型（nftables/iptables）  $2 日志文件
+# 返回：恒为 0（单条规则失败只记日志，不影响恢复主流程）
+#-----------------------------------------------------------------------
 set_temp_firewall_rules() {
     local fw_type="$1"
     local log_file="$2"
@@ -1645,6 +2006,17 @@ set_temp_firewall_rules() {
     esac
 }
 
+#-----------------------------------------------------------------------
+# 函数：restore_original_config
+# 描述：还原 resolv.conf 与防火墙（由 main 的 EXIT trap 调用）
+#
+#       无论恢复流程成功、失败还是被中断，这段都必须执行——
+#       否则设备会带着临时 DNS（8.8.8.8）和放行规则继续运行。
+#       因此它挂在 trap 上而不是流程末尾，且每一步都容错（|| true），
+#       保证"清理本身失败"不会阻塞后续清理步骤。
+# 参数：$1 resolv 是否被改过（0/1）  $2 防火墙类型  $3 日志文件
+# 返回：恒为 0
+#-----------------------------------------------------------------------
 restore_original_config() {
     local backup_resolv_flag="$1"
     local firewall_type="$2"

@@ -65,6 +65,15 @@
                 '本提示在下次系统启动时自动清除。'
             ]
         },
+        removed_package: {
+            title: '软件包已被上游移除（已自动跳过）',
+            cause: '这些包已被上游彻底删除，且没有替代包。恢复时已自动跳过，不算失败。',
+            fix: [
+                '无需操作：旧名已失效，跳过是正确结果。',
+                '若仍需要这项功能，需自行确认上游是否提供了其它包，或改用替代方案。',
+                '本提示在下次系统启动时自动清除。'
+            ]
+        },
         merged_package: {
             title: '软件包已合并（已自动跳过）',
             cause: '这些包已被合并进另一个包，旧名字只是别名。恢复时已自动丢弃该项，不再重复安装。',
@@ -87,6 +96,20 @@
     };
 
     /* ---------------------------------------------------------------- 工具函数 */
+
+    /*
+     * 三类"提醒"：它们都只说明包名变动，不代表安装失败。
+     * 集中在这里判定，避免每加一类就漏改某处判断。
+     */
+    var NOTICE_CLASSES = {
+        renamed_package: true,
+        merged_package: true,
+        removed_package: true
+    };
+
+    function isNoticeClass(cls) {
+        return Object.prototype.hasOwnProperty.call(NOTICE_CLASSES, cls);
+    }
 
     /* 安全取字符串：服务端字段缺失或类型不对时统一成空串。 */
     function str(value) {
@@ -113,16 +136,17 @@
     }
 
     /*
-     * 从更名说明里取旧包名。
-     * 服务端把说明写成「软件包已更名：<旧> 现名为 <新>，……」，这里只切出 <旧>。
+     * 从提醒说明里取旧包名。
+     * 现在的服务端文案统一写成「旧包名 <旧> 在上游已不存在……」，这里只切出 <旧>；
+     * 早期文案是「软件包已更名：<旧> 现名为 <新>」，保留解析以便旧记录仍能正确展示。
      * 取不到就返回空串——调用方会退化为不排除任何包（最坏是清单多一项），
      * 而不是猜一个可能错的名字去排除真正的失败项。
      */
     function renameOldName(message) {
         var text = str(message);
-        /* 两种说明前缀：改名用「现名为」，合并用「现由…提供」。
-         * 前缀对不上就返回空串，调用方会退化为不排除任何包。 */
+        /* 结构化字段缺失时的兜底解析；前缀对不上就返回空串。 */
         var kinds = [
+            { head: '旧包名 ', sep: ' 在' },
             { head: '软件包已更名：', sep: ' 现名为' },
             { head: '软件包已合并：', sep: ' 现由' }
         ];
@@ -202,12 +226,12 @@
         for (i = 0; i < preEntries.length; i++) {
             item = preEntries[i] || {};
 
-            if (tidy(item.class, 60) === 'renamed_package' || tidy(item.class, 60) === 'merged_package') {
-                /* 结构化字段优先：服务端会在 target 里放新名，在 message 里放整句说明。
-                 * 旧包名只从 message 的前缀解析，且解析失败时不影响主流程
+            if (isNoticeClass(tidy(item.class, 60))) {
+                /* 结构化字段优先：服务端在 legacy 里放旧名、在 target 里放新名（空格分隔可能多个）。
+                 * 只有旧记录没有 legacy 时才回退到解析 message 前缀，且解析失败不影响主流程
                  * （最坏情况是失败清单里多出一个包名，不会误删真正的失败项）。 */
                 var renamed = tidy(item.target, 120);
-                var oldName = tidy(renameOldName(item.message), 120);
+                var oldName = tidy(item.legacy, 120) || tidy(renameOldName(item.message), 120);
 
                 if (oldName) {
                     renameNames[oldName] = true;
@@ -261,6 +285,10 @@
                 message: tidy(item.message, 400),
                 cause: tidy(item.cause, 400),
                 target: tidy(item.target, 300),
+                legacy: tidy(item.legacy, 120),
+                /* replacement 用空格分隔多个新包名（一个旧目录拆成多个包），
+                 * 这里只做展示拆分；判"是否全装齐"的逻辑在服务端，不在这里。 */
+                targets: tidy(item.target, 300).split(' ').filter(function (s) { return s; }),
                 tool: tidy(item.tool, 40),
                 exit: num(item.exit),
                 count: num(item.count) || 1
@@ -272,10 +300,15 @@
         /* 是否含真正的失败类（更名提醒不算失败）。标题与导语据此切换措辞：
          * 只有提醒时若仍写"恢复失败"，用户会去排查一个并不存在的问题。 */
         out.hasFailure = groupList.some(function (g) {
-            return g.cls !== 'renamed_package' && g.cls !== 'merged_package';
+            return !isNoticeClass(g.cls);
         });
         out.hasRename = groupList.some(function (g) {
             return g.cls === 'renamed_package';
+        });
+        /* 只有移除项时，"恢复程序已自动改用新包名安装"这句是错的：
+         * 移除意味着没有新名可换。因此单独标记，导语据此换措辞。 */
+        out.hasRemoved = groupList.some(function (g) {
+            return g.cls === 'removed_package';
         });
 
         /* 只由更名提醒构成时，包名清单为空（提醒的旧包名已归入 groups 的 target），
@@ -294,11 +327,66 @@
 
     /* ---------------------------------------------------------------- 渲染 */
 
+    /* 行内代码块：包名是标识符，用等宽 + 浅底与正文区分开。 */
+    function codeNode(name) {
+        return el('code', 'rp-notice-pkg', name);
+    }
+
+    /*
+     * 更名/合并条目的说明行：把包名从句子里的普通文本提升为 <code>。
+     * 结构固定为「旧名 + 说明 + 新名列表」，因此不再整句复用服务端 message——
+     * 那句话里的包名没法加样式，混排后会看不出哪一段是名字。
+     * 只有缺结构化字段（旧记录）时才退回原始 message。
+     */
+    function renameSummary(entry, cls) {
+        var li = el('li', null);
+        var oldName = entry.legacy || tidy(renameOldName(entry.message), 120);
+        var targets = entry.targets || [];
+        var isMerged = cls === 'merged_package';
+        var isRemoved = cls === 'removed_package';
+
+        if (!oldName) {
+            li.textContent = entry.message;
+            return li;
+        }
+
+        /* 已移除没有替代包：不渲染"→ 新名"，否则会让人以为换成那个包就装好了。 */
+        if (isRemoved) {
+            li.appendChild(codeNode(oldName));
+            li.appendChild(document.createTextNode(' 已被上游移除，没有替代包，恢复时已自动跳过。'));
+            return li;
+        }
+
+        /* 改名与合并是两件不同的事，措辞也必须不同：
+         * 改名是"新包名装好了"，合并是"这项功能本来就在合并后的包里、没有再装"。 */
+        li.appendChild(codeNode(oldName));
+        li.appendChild(document.createTextNode(isMerged ? ' 已并入 ' : ' 已更名为 '));
+
+        targets.forEach(function (name, idx) {
+            if (idx > 0) {
+                li.appendChild(document.createTextNode('、'));
+            }
+            li.appendChild(codeNode(name));
+        });
+
+        if (!targets.length) {
+            /* 服务端未给出新名时的兜底措辞：不能对改名项说"合并后的包"。 */
+            li.appendChild(document.createTextNode(isMerged ? '合并后的包' : '新的包'));
+        }
+
+        li.appendChild(document.createTextNode(
+            isMerged
+                ? '，功能由它提供，恢复时已自动跳过旧名。'
+                : '，已自动按新包名安装完成。'
+        ));
+        return li;
+    }
+
     /* 渲染一个类别的「原因 + 解决方案」小节。 */
     function renderGroup(group) {
         var guide = guidanceFor(group.cls);
         var section = el('div', 'rp-notice-group');
-        var isRename = group.cls === 'renamed_package' || group.cls === 'merged_package';
+        var isRename = isNoticeClass(group.cls);
 
         section.appendChild(el('div', 'rp-notice-group-title', guide.title));
 
@@ -329,10 +417,12 @@
             detail = parts.join('，');
 
             if (isRename) {
-                /* 更名类把「旧 → 新」讲清楚，这是用户唯一需要的动作依据。 */
-                if (entry.message) {
-                    causeList.appendChild(el('li', null, entry.message));
-                }
+                /* 更名类把「旧 → 新」讲清楚，这是用户唯一需要的动作依据。
+                 * 包名一律用 <code> 渲染：它们是标识符，混在中文句子里既难扫读，
+                 * 也会因为和正文同样式而看不出哪一截是名字、哪一截是说明。
+                 * 因此这里不再直接整句输出 message，而是按结构化字段重排。 */
+                causeList.appendChild(renameSummary(entry, group.cls));
+
                 if (detail) {
                     causeList.appendChild(el('li', 'rp-notice-raw', detail));
                 }
@@ -348,7 +438,13 @@
                 }
 
                 if (entry.target) {
-                    causeList.appendChild(el('li', 'rp-notice-raw', '相关目标：' + entry.target));
+                    var targetLi = el('li', 'rp-notice-raw');
+
+                    targetLi.appendChild(document.createTextNode('相关目标：'));
+                    /* 包名与 URL 都会被放在这里，两者都适合等宽显示；
+                     * 用 <code> 而不是普通文本，避免长串在中文里挤成一团。 */
+                    targetLi.appendChild(codeNode(entry.target));
+                    causeList.appendChild(targetLi);
                 }
             }
         });
@@ -397,16 +493,31 @@
         /* 概览：说明这次失败发生在第二次尝试之后，脚本已不再自动重启。 */
         var intro = el('p', 'rp-notice-intro');
 
-        intro.appendChild(document.createTextNode(
-            model.hasFailure
-                ? ('设备启动时恢复备份软件包未完全成功（已重试一轮，共 '
-                    + model.packages.length + ' 个包受影响）。为避免反复重启，脚本已停止重试。'
-                    + '以下包需要你手动处理：')
-                : (model.hasRename
-                    ? '设备启动时发现有软件包已更名，恢复程序已自动改用新包名安装。以下为变更说明：'
-                    : '设备启动时发现有软件包已合并进其它包，旧名已自动跳过（功能由合并后的包提供）。'
-                        + '以下为变更说明：')
-        ));
+        /* 导语必须把「已自动处理」与「真需要手动处理」分开说：
+         * 更名/合并类记录也已经写进同一个数据源，若仍按总数写"共 N 个包受影响、
+         * 以下需要你手动处理"，用户就会跑去排查一个已经自动修好的问题。 */
+        var introText;
+
+        if (model.hasFailure) {
+            introText = '设备启动时恢复备份软件包未完全成功（已重试一轮，共 '
+                + model.packages.length + ' 个包受影响）。为避免反复重启，脚本已停止重试。'
+                + '以下包需要你处理：';
+
+            if (model.hasRename) {
+                introText += '其余已更名的软件包已自动换用新包名装好，不是失败，变更说明附在后面。';
+            }
+        } else if (model.hasRename) {
+            introText = '设备启动时发现有软件包已更名，恢复程序已自动改用新包名安装完成，'
+                + '无需你处理。以下为变更说明：';
+        } else if (model.hasRemoved) {
+            introText = '设备启动时发现有软件包已被上游移除，恢复程序已自动跳过，'
+                + '无需你处理。以下为变更说明：';
+        } else {
+            introText = '设备启动时发现有软件包已合并进其它包，旧名已自动跳过，无需你处理'
+                + '（功能由合并后的包提供）。以下为变更说明：';
+        }
+
+        intro.appendChild(document.createTextNode(introText));
         body.appendChild(intro);
 
         /* 一、失败包名列表。纯更名提醒时没有"失败的包"，整段跳过——
