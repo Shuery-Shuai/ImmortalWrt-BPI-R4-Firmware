@@ -1,5 +1,86 @@
 #!/bin/sh
-[ "$ACTION" = "ifup" ] && [ "$INTERFACE" = "wan" ] && {
-    sleep 30
-    /usr/bin/replace-apk-source.sh
-}
+# Hotplug 触发：重启后**首次**接通网络时检查一次软件源。
+#
+# 为什么必须是"首次"：
+#   本脚本会清空 apk 索引缓存并重新下载全部索引来测速（约 10 秒、1.5MB）。
+#   WAN 重拨、闪断都会再次触发 ifup，若每次都跑，一次断网重连就要重新下载一遍索引，
+#   既费流量也拖慢恢复。用状态文件保证整个启动周期内只执行一次。
+#
+# 为什么不是"开机 N 秒窗口"：
+#   旧实现在恢复脚本里用 BOOT_WINDOW=900 判 uptime：开机快于 15 分钟才跑。
+#   慢设备（eMMC 上电、btrfs 挂载）常常超时，于是恢复根本不会发生。
+#   "首次联网"是事件而不是时间窗，慢设备同样能命中。
+#
+# ── 与恢复脚本的握手协议 ──
+#
+# 本脚本用两个状态文件向恢复脚本声明"我在干什么"，而不是让恢复脚本去猜：
+#
+#   /tmp/.apk-source-running   本脚本已经开始处理（测速/换源进行中）
+#   /tmp/.apk-source-ready     本脚本已经结束，源已定下来，可以用索引了
+#
+# 为什么必须由本脚本主动声明，而不是让恢复脚本检查文件是否存在：
+#   "脚本存在"不等于"它会跑"——hotplug 目录可能没被装进来、被用户删了、
+#   或固件裁剪掉了本脚本。恢复脚本无从区分"还没开始"和"永远不会开始"，
+#   只能靠超时，而超时会白白拖慢每一次开机。
+#   让本脚本自己写标志，恢复脚本就能准确判断：
+#     两个都没有 → 本机没有换源机制 → 立即开工，不等待
+#     只有 RUNNING → 正在处理 → 等它
+#     有 READY     → 已结束 → 立即开工
+#
+# 两个文件都在 /tmp（tmpfs）：重启后自然消失，"每次开机一次"由文件系统保证，
+#   不会像 /etc 下的文件那样跨重启残留、变成"永远不再执行"。
+
+[ "$ACTION" = "ifup" ] && [ "$INTERFACE" = "wan" ] || exit 0
+
+RUNNING="/tmp/.apk-source-running"
+READY="/tmp/.apk-source-ready"
+
+# 已经结束过：本启动周期内不再重复处理。
+if [ -e "$READY" ]; then
+    logger -t replace-apk-source "本次开机的源检查已完成，跳过"
+    exit 0
+fi
+
+# 已经在处理中（另一个 ifup 触发的实例）：不重复启动。
+# 用 noclobber 原子创建，两个并发 ifup 也只有一个能拿到。
+if ! ( set -C; : > "$RUNNING" ) 2>/dev/null; then
+    logger -t replace-apk-source "另一实例正在处理，跳过"
+    exit 0
+fi
+
+logger -t replace-apk-source "重启后首次接通 WAN，开始检查软件源"
+
+# 后台执行，不阻塞 hotplug 主进程。
+# 这里的 5 秒是给 WAN 一点时间稳定（DHCP 完成、路由就绪），
+# 不是旧的 30 秒固定延迟：脚本内部自己会用 apk update 判断源是否真的可用。
+(
+    sleep 5
+
+    # 换源脚本可能被裁剪掉（精简固件）或没有执行权限：
+    # 这种情况不能卡住恢复流程，直接置 READY 放行。
+    if [ ! -x /usr/bin/replace-apk-source.sh ]; then
+        logger -t replace-apk-source "换源脚本不存在或不可执行，跳过（恢复流程不受影响）"
+        : > "$READY"
+        rm -f "$RUNNING"
+        exit 0
+    fi
+
+    /usr/bin/replace-apk-source.sh >>/var/log/replace-apk-source.log 2>&1
+    rc=$?
+
+    if [ "$rc" -eq 0 ]; then
+        logger -t replace-apk-source "软件源检查完成（退出码 0）"
+    else
+        logger -t replace-apk-source "软件源检查失败（退出码 $rc），下次 ifup 可重试"
+    fi
+
+    # 无论成败都置 READY 并清掉 RUNNING：
+    #   · 源检查失败时，"用现有配置去装包"至少还有机会成功；
+    #   · 让恢复永远等下去则什么也做不成。
+    # 失败时不保留 RUNNING，才能让下一次 ifup 重新尝试。
+    : > "$READY"
+    rm -f "$RUNNING"
+    logger -t replace-apk-source "已通知恢复流程可以开始"
+) &
+
+exit 0

@@ -107,6 +107,14 @@ modify_rust_build_config || die "modify_rust_build_config 失败（Rust 构建�
 ensure_exec_permission 'files/usr/bin/restore-packages.sh' ||
   die "ensure_exec_permission 失败（restore-packages.sh 可执行位未设置）"
 
+# replace-apk-source.sh 由 hotplug 直接执行（不是 . source），必须有执行位。
+# 它曾在 git 里是 100644，而这里又没补权限，导致设备上
+# 「/usr/bin/replace-apk-source.sh: Permission denied」，源检查从未生效过。
+# git 模式已改为 100755，这里再保一道：clone 时的 core.fileMode 差异
+# 或用户本地覆盖都可能让执行位丢失。
+ensure_exec_permission 'files/usr/bin/replace-apk-source.sh' ||
+  die "ensure_exec_permission 失败（replace-apk-source.sh 可执行位未设置）"
+
 # 固定 dae 版本
 set_dae_version "2.1.3" "c0373588bbaaabcc9a48d4ba7738febe7b405f06f839695307035d5ba3aca6e3" ||
   die "set_dae_version 失败（dae 版本未固定，产出将不可复现）"
